@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 
 const chapters: Record<string, string[]> = {
@@ -44,15 +44,10 @@ type Message = {
 
 export default function ReaderPage() {
   const searchParams = useSearchParams();
-  const book =
-  searchParams.get("book") ||
-  searchParams.get("pdf") ||
-  localStorage.getItem("uploadedPdfName") ||
-  "Artificial Intelligence";
 
-
-
-const currentPage = searchParams.get("page") || "1";
+  const [pdfText, setPdfText] = useState("");
+  const [pdfName, setPdfName] = useState("");
+  const [pdfPages, setPdfPages] = useState("");
   const [question, setQuestion] = useState("");
   const [savedNotes, setSavedNotes] = useState<string[]>([]);
   const [darkMode, setDarkMode] = useState(false);
@@ -60,16 +55,48 @@ const currentPage = searchParams.get("page") || "1";
   const [activeChapter, setActiveChapter] = useState("Introduction");
   const [isThinking, setIsThinking] = useState(false);
 
-  const [messages, setMessages] = useState<Message[]>([
-    {
-      type: "ai",
-      text: `Welcome! I am your AI Tutor for ${book}.
-  
-  Currently analyzing page ${currentPage}.
-  
-  Ask me to summarize, explain, quiz, translate, or simplify this content.`,
-    },
-  ]);
+  const currentPage = searchParams.get("page") || "1";
+
+  const book =
+    searchParams.get("book") ||
+    searchParams.get("pdf") ||
+    pdfName ||
+    "Artificial Intelligence";
+
+  const isPdfMode = Boolean(pdfText);
+
+  const activeContent = isPdfMode
+    ? pdfText.slice(0, 5000)
+    : chapters[activeChapter].join(" ");
+
+  const [messages, setMessages] = useState<Message[]>([]);
+
+  useEffect(() => {
+    const storedPdfText = localStorage.getItem("uploadedPdfText") || "";
+    const storedPdfName = localStorage.getItem("uploadedPdfName") || "";
+    const storedPdfPages = localStorage.getItem("uploadedPdfPages") || "";
+
+    setPdfText(storedPdfText);
+    setPdfName(storedPdfName);
+    setPdfPages(storedPdfPages);
+
+    setMessages([
+      {
+        type: "ai",
+        text: storedPdfText
+          ? `Welcome! I am your AI Tutor for ${storedPdfName || "your uploaded PDF"}.
+
+Currently analyzing page ${currentPage}.
+
+I have access to extracted PDF text. Ask me to summarize, explain, quiz, translate, or simplify this PDF.`
+          : `Welcome! I am your AI Tutor for ${book}.
+
+Currently analyzing page ${currentPage}.
+
+Ask me to summarize, explain, quiz, translate, or simplify this content.`,
+      },
+    ]);
+  }, []);
 
   async function addAIMessage(questionText: string) {
     setIsThinking(true);
@@ -83,8 +110,8 @@ const currentPage = searchParams.get("page") || "1";
         body: JSON.stringify({
           question: questionText,
           book,
-          chapter: activeChapter,
-          content: chapters[activeChapter].join(" "),
+          chapter: isPdfMode ? `PDF Page ${currentPage}` : activeChapter,
+          content: activeContent,
         }),
       });
 
@@ -96,7 +123,10 @@ const currentPage = searchParams.get("page") || "1";
           type: "ai",
           text:
             data.answer ||
-            `AI response for ${activeChapter}: ${chapters[activeChapter].join(" ")}`,
+            `AI response using ${isPdfMode ? "uploaded PDF content" : activeChapter}: ${activeContent.slice(
+              0,
+              500
+            )}...`,
         },
       ]);
     } catch {
@@ -104,7 +134,9 @@ const currentPage = searchParams.get("page") || "1";
         ...prev,
         {
           type: "ai",
-          text: `Demo AI answer: ${questionText}. This platform can explain, summarize, quiz, translate, and personalize learning from this book.`,
+          text: `Demo AI answer based on ${
+            isPdfMode ? "your uploaded PDF" : activeChapter
+          }: ${questionText}. This system can summarize, explain, quiz, translate, and personalize learning from real document content.`,
         },
       ]);
     }
@@ -116,10 +148,8 @@ const currentPage = searchParams.get("page") || "1";
     if (!question.trim()) return;
 
     const userQuestion = question;
-
     setMessages((prev) => [...prev, { type: "user", text: userQuestion }]);
     setQuestion("");
-
     addAIMessage(userQuestion);
   }
 
@@ -142,11 +172,11 @@ const currentPage = searchParams.get("page") || "1";
       ...prev,
       {
         type: "user",
-        text: `Explain ${activeChapter} in ${language}`,
+        text: `Explain this content in ${language}`,
       },
       {
         type: "ai",
-        text: `Demo ${language} explanation: ${activeChapter} can be explained in a simple regional-language format so students, elderly learners, and rural users can understand the concept easily. In production, this will connect to multilingual AI translation and tutoring.`,
+        text: `Demo ${language} explanation: This content can be explained in simple regional-language format for students, elderly learners, rural users, and multilingual readers. In production, this will connect to multilingual AI translation and tutoring.`,
       },
     ]);
   }
@@ -154,7 +184,9 @@ const currentPage = searchParams.get("page") || "1";
   function saveCurrentNote() {
     setSavedNotes((prev) => [
       ...prev,
-      `${activeChapter}: ${chapters[activeChapter][0]}`,
+      isPdfMode
+        ? `PDF Page ${currentPage}: ${activeContent.slice(0, 250)}...`
+        : `${activeChapter}: ${chapters[activeChapter][0]}`,
     ]);
   }
 
@@ -190,29 +222,44 @@ const currentPage = searchParams.get("page") || "1";
         <h2 className="text-3xl font-bold mt-8">AI Reader</h2>
 
         <p className="text-slate-400 mt-2 text-sm">
-          Smart multilingual learning workspace.
+          {isPdfMode ? "PDF-aware AI learning workspace." : "Smart multilingual learning workspace."}
         </p>
 
         <div className="mt-8">
           <p className="text-xs uppercase tracking-widest text-slate-500">
-            Chapters
+            {isPdfMode ? "PDF Context" : "Chapters"}
           </p>
 
-          <div className="mt-4 space-y-3">
-            {Object.keys(chapters).map((chapter) => (
-              <button
-                key={chapter}
-                onClick={() => setActiveChapter(chapter)}
-                className={
-                  activeChapter === chapter
-                    ? "w-full text-left bg-blue-600 p-4 rounded-2xl shadow-lg"
-                    : "w-full text-left bg-slate-900 hover:bg-slate-800 p-4 rounded-2xl transition"
-                }
-              >
-                {chapter}
-              </button>
-            ))}
-          </div>
+          {isPdfMode ? (
+            <div className="mt-4 bg-slate-900 rounded-2xl p-4">
+              <p className="font-bold break-words">{pdfName || book}</p>
+              <p className="text-xs text-slate-400 mt-2">
+                Page: {currentPage}
+              </p>
+              <p className="text-xs text-slate-400 mt-1">
+                Pages: {pdfPages || "Detected after upload"}
+              </p>
+              <p className="text-xs text-green-400 mt-3">
+                PDF text loaded for AI analysis
+              </p>
+            </div>
+          ) : (
+            <div className="mt-4 space-y-3">
+              {Object.keys(chapters).map((chapter) => (
+                <button
+                  key={chapter}
+                  onClick={() => setActiveChapter(chapter)}
+                  className={
+                    activeChapter === chapter
+                      ? "w-full text-left bg-blue-600 p-4 rounded-2xl shadow-lg"
+                      : "w-full text-left bg-slate-900 hover:bg-slate-800 p-4 rounded-2xl transition"
+                  }
+                >
+                  {chapter}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
 
         <div className="mt-8 bg-slate-900 p-5 rounded-3xl">
@@ -223,7 +270,7 @@ const currentPage = searchParams.get("page") || "1";
           </div>
 
           <p className="text-xs text-slate-400 mt-3">
-            58% of this book completed
+            58% of this learning session completed
           </p>
         </div>
       </aside>
@@ -238,20 +285,25 @@ const currentPage = searchParams.get("page") || "1";
         <div className="max-w-5xl mx-auto">
           <div className="rounded-3xl bg-gradient-to-r from-indigo-700 via-blue-700 to-purple-700 p-10 text-white shadow-2xl">
             <p className="uppercase text-sm tracking-widest opacity-80">
-              AI-powered learning mode
+              {isPdfMode ? "AI analyzing uploaded PDF" : "AI-powered learning mode"}
             </p>
 
             <h1 className="text-5xl font-bold mt-3">{book}</h1>
 
             <p className="mt-4 text-blue-100 max-w-3xl">
-              Ask questions, summarize chapters, translate into Indian languages,
-              generate quizzes, save notes, and learn in a personalized way.
+              {isPdfMode
+                ? `AI is using extracted PDF text and currently focusing on page ${currentPage}.`
+                : "Ask questions, summarize chapters, translate into Indian languages, generate quizzes, save notes, and learn in a personalized way."}
             </p>
 
             <div className="flex gap-3 mt-6 flex-wrap">
               <button
                 onClick={() =>
-                  addAIMessage(`Summarize ${activeChapter} in simple points.`)
+                  addAIMessage(
+                    isPdfMode
+                      ? `Summarize the uploaded PDF content around page ${currentPage}.`
+                      : `Summarize ${activeChapter} in simple points.`
+                  )
                 }
                 className="bg-white text-black px-5 py-3 rounded-xl font-semibold"
               >
@@ -260,7 +312,11 @@ const currentPage = searchParams.get("page") || "1";
 
               <button
                 onClick={() =>
-                  addAIMessage(`Explain ${activeChapter} for a beginner.`)
+                  addAIMessage(
+                    isPdfMode
+                      ? `Explain the uploaded PDF content around page ${currentPage} for a beginner.`
+                      : `Explain ${activeChapter} for a beginner.`
+                  )
                 }
                 className="bg-black/30 border border-white/20 px-5 py-3 rounded-xl font-semibold"
               >
@@ -281,8 +337,9 @@ const currentPage = searchParams.get("page") || "1";
               <p className="text-sm text-slate-500">AI Summary</p>
               <h3 className="text-xl font-bold mt-2">Key Takeaways</h3>
               <p className="text-slate-600 mt-3 text-sm leading-6">
-                This chapter explains how AI-enabled digital libraries can turn
-                passive reading into guided, personalized learning.
+                {isPdfMode
+                  ? "The AI reader has received extracted text from your uploaded PDF and can now answer questions based on that document."
+                  : "This chapter explains how AI-enabled digital libraries can turn passive reading into guided, personalized learning."}
               </p>
             </div>
 
@@ -309,11 +366,17 @@ const currentPage = searchParams.get("page") || "1";
               <p className="text-sm text-slate-500">Practice</p>
               <h3 className="text-xl font-bold mt-2">Quick Quiz</h3>
               <p className="text-sm text-slate-600 mt-3">
-                What is the main benefit of AI in digital libraries?
+                Generate questions from this {isPdfMode ? "PDF page" : "chapter"}.
               </p>
 
               <button
-                onClick={() => addAIMessage(`Create a quiz from ${activeChapter}.`)}
+                onClick={() =>
+                  addAIMessage(
+                    isPdfMode
+                      ? `Create a quiz from the uploaded PDF content around page ${currentPage}.`
+                      : `Create a quiz from ${activeChapter}.`
+                  )
+                }
                 className="bg-blue-600 text-white px-4 py-2 rounded-xl mt-4"
               >
                 Generate Quiz
@@ -328,7 +391,9 @@ const currentPage = searchParams.get("page") || "1";
                 : "mt-8 bg-white rounded-3xl p-10 shadow-xl text-slate-800"
             }
           >
-            <h2 className="text-4xl font-bold">{activeChapter}</h2>
+            <h2 className="text-4xl font-bold">
+              {isPdfMode ? `PDF Page ${currentPage} AI Context` : activeChapter}
+            </h2>
 
             {selectedText && (
               <button
@@ -340,17 +405,22 @@ const currentPage = searchParams.get("page") || "1";
             )}
 
             <div className="mt-8 space-y-8 text-lg leading-9">
-              {chapters[activeChapter].map((paragraph, index) => (
-                <p key={index}>{paragraph}</p>
-              ))}
+              {isPdfMode ? (
+                <p>{activeContent.slice(0, 1800)}...</p>
+              ) : (
+                chapters[activeChapter].map((paragraph, index) => (
+                  <p key={index}>{paragraph}</p>
+                ))
+              )}
             </div>
 
             <div className="mt-10 bg-yellow-100 text-black border-l-4 border-yellow-500 p-6 rounded-2xl">
               <p className="font-bold">Highlighted by AI</p>
 
               <p className="mt-2">
-                “AI-first libraries combine reading, tutoring, notes, quizzes,
-                and revision into one experience.”
+                {isPdfMode
+                  ? "AI has loaded this PDF text and can summarize, simplify, translate, and generate quizzes from it."
+                  : "AI-first libraries combine reading, tutoring, notes, quizzes, and revision into one experience."}
               </p>
 
               <button
@@ -368,7 +438,9 @@ const currentPage = searchParams.get("page") || "1";
         <div className="flex items-center justify-between">
           <div>
             <h2 className="text-2xl font-bold">AI Tutor</h2>
-            <p className="text-xs text-gray-400">Context: {activeChapter}</p>
+            <p className="text-xs text-gray-400">
+              Context: {isPdfMode ? `PDF Page ${currentPage}` : activeChapter}
+            </p>
           </div>
 
           <button
@@ -381,12 +453,12 @@ const currentPage = searchParams.get("page") || "1";
 
         <div className="grid grid-cols-2 gap-2 mt-5">
           {[
-            ["Summarize", `Summarize ${activeChapter}.`],
-            ["Explain", `Explain ${activeChapter} simply.`],
-            ["Quiz", `Create quiz for ${activeChapter}.`],
-            ["Flashcards", `Create flashcards for ${activeChapter}.`],
-            ["Hindi", `Explain ${activeChapter} in Hindi.`],
-            ["Voice", `Prepare a voice-friendly explanation for ${activeChapter}.`],
+            ["Summarize", `Summarize this ${isPdfMode ? "PDF content" : activeChapter}.`],
+            ["Explain", `Explain this ${isPdfMode ? "PDF content" : activeChapter} simply.`],
+            ["Quiz", `Create quiz for this ${isPdfMode ? "PDF content" : activeChapter}.`],
+            ["Flashcards", `Create flashcards for this ${isPdfMode ? "PDF content" : activeChapter}.`],
+            ["Hindi", `Explain this content in Hindi.`],
+            ["Voice", `Prepare a voice-friendly explanation for this content.`],
           ].map(([label, prompt]) => (
             <button
               key={label}
@@ -480,7 +552,7 @@ const currentPage = searchParams.get("page") || "1";
             ...prev,
             {
               type: "ai",
-              text: "Floating AI Assistant opened. Ask me anything about this book, chapter, summary, quiz, translation, or learning path.",
+              text: "Floating AI Assistant opened. Ask me anything about this book, PDF, page, summary, quiz, translation, or learning path.",
             },
           ])
         }

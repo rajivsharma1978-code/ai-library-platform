@@ -28,6 +28,7 @@ export default function ReadPage() {
   const [speechRate, setSpeechRate] = useState(1);
   const [lastCommand, setLastCommand] = useState("No command yet");
   const [isExtracting, setIsExtracting] = useState(false);
+  const [isAiReady, setIsAiReady] = useState(false);
 
   useEffect(() => {
     async function setupPdfWorker() {
@@ -52,6 +53,8 @@ export default function ReadPage() {
     if (!file) return;
 
     setPdfName(file.name);
+    setIsAiReady(false);
+
     localStorage.setItem("uploadedPdfName", file.name);
     setPdfFile(URL.createObjectURL(file));
 
@@ -70,8 +73,13 @@ export default function ReadPage() {
 
       localStorage.setItem("uploadedPdfText", data.text || "");
       localStorage.setItem("uploadedPdfPages", String(data.pages || ""));
+
+      if (data.text) {
+        setIsAiReady(true);
+      }
     } catch (error) {
       console.error("PDF extraction failed", error);
+      setIsAiReady(false);
     } finally {
       setIsExtracting(false);
     }
@@ -221,26 +229,65 @@ export default function ReadPage() {
         </div>
       </header>
 
-      <div className="flex">
-        <aside className="w-64 p-5 border-r min-h-screen bg-white/80 text-slate-900">
-          <h2 className="font-bold mb-4">Pages</h2>
+      {pdfName && (
+        <div className="mx-8 mt-6 bg-green-50 border-2 border-green-500 rounded-2xl shadow p-5 flex items-center justify-between">
+          <div>
+            <p className="font-bold text-slate-900">
+              📄 {pdfName}
+            </p>
 
-          {numPages > 0 ? (
-            Array.from({ length: numPages }, (_, index) => index + 1)
-              .slice(0, 20)
-              .map((item) => (
-                <button
-                  key={item}
-                  onClick={() => setPage(item)}
-                  className={`w-full border rounded-xl h-20 mb-3 flex items-center justify-center shadow-sm ${
-                    page === item
-                      ? "bg-blue-100 border-blue-500"
-                      : "bg-slate-100 hover:bg-slate-200"
-                  }`}
-                >
-                  Page {item}
-                </button>
-              ))
+            <p className="text-sm text-slate-500 mt-1">
+              {isExtracting
+                ? "Extracting PDF text for AI analysis..."
+                : isAiReady
+                ? "PDF uploaded • Text extracted • Ready for AI page analysis"
+                : "PDF uploaded • Waiting for text extraction"}
+            </p>
+          </div>
+
+          <div
+            className={
+              isAiReady
+                ? "bg-green-100 text-green-700 px-4 py-2 rounded-full text-sm font-semibold"
+                : "bg-yellow-100 text-yellow-700 px-4 py-2 rounded-full text-sm font-semibold"
+            }
+          >
+            {isAiReady ? "AI Ready" : "Processing"}
+          </div>
+        </div>
+      )}
+
+      <div className="flex">
+        <aside className="w-72 p-5 border-r min-h-screen bg-white/80 text-slate-900 overflow-auto">
+          <h2 className="font-bold mb-4">Page Thumbnails</h2>
+
+          {pdfFile && numPages > 0 ? (
+            <Document file={pdfFile}>
+              {Array.from({ length: numPages }, (_, index) => index + 1)
+                .slice(0, 20)
+                .map((item) => (
+                  <button
+                    key={item}
+                    onClick={() => setPage(item)}
+                    className={`w-full border rounded-2xl mb-4 p-2 shadow-sm ${
+                      page === item
+                        ? "bg-blue-100 border-blue-500"
+                        : "bg-slate-100 hover:bg-slate-200"
+                    }`}
+                  >
+                    <div className="flex justify-center overflow-hidden rounded-xl bg-white">
+                      <Page
+                        pageNumber={item}
+                        width={140}
+                        renderTextLayer={false}
+                        renderAnnotationLayer={false}
+                      />
+                    </div>
+
+                    <p className="text-xs mt-2">Page {item}</p>
+                  </button>
+                ))}
+            </Document>
           ) : (
             <p className="text-sm text-slate-500">
               Upload a PDF to see page thumbnails.
