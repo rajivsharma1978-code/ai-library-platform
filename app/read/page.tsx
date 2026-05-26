@@ -4,6 +4,7 @@ import Link from "next/link";
 import dynamic from "next/dynamic";
 import { useEffect, useState } from "react";
 import type { ChangeEvent } from "react";
+import Tesseract from "tesseract.js";
 
 import "react-pdf/dist/Page/AnnotationLayer.css";
 import "react-pdf/dist/Page/TextLayer.css";
@@ -29,6 +30,9 @@ export default function ReadPage() {
   const [lastCommand, setLastCommand] = useState("No command yet");
   const [isExtracting, setIsExtracting] = useState(false);
   const [isAiReady, setIsAiReady] = useState(false);
+  const [ocrText, setOcrText] = useState("");
+  const [isRunningOcr, setIsRunningOcr] = useState(false);
+  const [needsAutoScan, setNeedsAutoScan] = useState(false);
 
   useEffect(() => {
     async function setupPdfWorker() {
@@ -39,7 +43,23 @@ export default function ReadPage() {
     setupPdfWorker();
   }, []);
 
+  useEffect(() => {
+    if (!pdfFile) return;
+    if (numPages === 0) return;
+    if (!needsAutoScan) return;
+    if (isRunningOcr) return;
+
+    setNeedsAutoScan(false);
+
+    const timer = setTimeout(() => {
+      runOCR(true);
+    }, 4000);
+
+    return () => clearTimeout(timer);
+  }, [pdfFile, numPages, needsAutoScan]);
+
   const readingText =
+    ocrText ||
     "This is the classic reading mode. Users can read PDF books, zoom pages, use fullscreen, listen to content, and navigate pages.";
 
   function onDocumentLoadSuccess({ numPages }: { numPages: number }) {
@@ -54,6 +74,12 @@ export default function ReadPage() {
 
     setPdfName(file.name);
     setIsAiReady(false);
+    setOcrText("");
+    setNeedsAutoScan(false);
+
+    localStorage.removeItem("uploadedPdfText");
+    localStorage.removeItem("uploadedPdfName");
+    localStorage.removeItem("uploadedPdfPages");
 
     localStorage.setItem("uploadedPdfName", file.name);
     setPdfFile(URL.createObjectURL(file));
@@ -70,18 +96,122 @@ export default function ReadPage() {
       });
 
       const data = await response.json();
+      const extractedText = data.text || "";
 
-      localStorage.setItem("uploadedPdfText", data.text || "");
-      localStorage.setItem("uploadedPdfPages", String(data.pages || ""));
+      localStorage.setItem(
+        "uploadedPdfPages",
+        String(data.pages || numPages || "")
+      );
 
-      if (data.text) {
+      if (extractedText.trim().length >= 20) {
+        localStorage.setItem("uploadedPdfText", extractedText);
         setIsAiReady(true);
+        setNeedsAutoScan(false);
+      } else {
+        localStorage.setItem(
+          "uploadedPdfText",
+          `Uploaded PDF: ${file.name}. This appears to be scanned or image-based. The system is scanning the visible page automatically.`
+        );
+        setIsAiReady(false);
+        setNeedsAutoScan(true);
       }
     } catch (error) {
       console.error("PDF extraction failed", error);
+
+      localStorage.setItem(
+        "uploadedPdfText",
+        `Uploaded PDF: ${file.name}. Text extraction failed. The system is scanning the visible page automatically.`
+      );
+
       setIsAiReady(false);
+      setNeedsAutoScan(true);
     } finally {
       setIsExtracting(false);
+    }
+  }
+
+  async function runOCR(auto = false) {
+    if (!pdfFile) return;
+
+    try {
+      setIsRunningOcr(true);
+
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+
+      const canvases = Array.from(document.querySelectorAll("canvas"));
+
+      const canvas = canvases.reduce((largest, current) => {
+        if (!largest) return current;
+
+        const largestArea = largest.width * largest.height;
+        const currentArea = current.width * current.height;
+
+        return currentArea > largestArea ? current : largest;
+      }, null as HTMLCanvasElement | null);
+
+      if (!canvas) {
+        localStorage.setItem(
+          "uploadedPdfText",
+          `Uploaded PDF: ${pdfName}. Scan could not find the visible page image.`
+        );
+        setIsAiReady(true);
+        return;
+      }
+
+      const blob = await new Promise<Blob | null>((resolve) => {
+        canvas.toBlob((result) => resolve(result), "image/png");
+      });
+
+      if (!blob) {
+        localStorage.setItem(
+          "uploadedPdfText",
+          `Uploaded PDF: ${pdfName}. Scan could not prepare the page image.`
+        );
+        setIsAiReady(true);
+        return;
+      }
+
+      const result = await Tesseract.recognize(blob, "eng", {
+        logger: (m) => console.log(m),
+      });
+
+      const extracted = result.data.text.trim();
+
+      if (!extracted) {
+        localStorage.setItem(
+          "uploadedPdfText",
+          `Uploaded PDF: ${pdfName}. Automatic scan completed, but no readable text was found on this page.`
+        );
+        setIsAiReady(true);
+        return;
+      }
+
+      setOcrText(extracted);
+      localStorage.setItem("uploadedPdfText", extracted);
+      localStorage.setItem("uploadedPdfName", pdfName || "Scanned PDF Page");
+
+      setIsAiReady(true);
+      setNeedsAutoScan(false);
+
+      if (!auto) {
+        alert("Page scan completed successfully.");
+      }
+    } catch (error) {
+      console.error("OCR failed", error);
+
+      localStorage.setItem(
+        "uploadedPdfText",
+        `Uploaded PDF: ${pdfName}. Automatic page scan failed. Please try Retry Page Scan.`
+      );
+
+      setIsAiReady(true);
+      setNeedsAutoScan(false);
+
+      if (!auto) {
+        alert("Page scan failed.");
+      }
+    } finally {
+      setIsRunningOcr(false);
     }
   }
 
@@ -175,7 +305,8 @@ export default function ReadPage() {
           <h1 className="text-xl font-bold">Classic PDF Reader</h1>
           <p className="text-xs text-slate-500">
             Page {page} {numPages ? `of ${numPages}` : ""}
-            {isExtracting ? " • Extracting text..." : ""}
+            {isExtracting ? " • Reading text..." : ""}
+            {isRunningOcr ? " • Scanning page..." : ""}
           </p>
         </div>
 
@@ -232,16 +363,18 @@ export default function ReadPage() {
       {pdfName && (
         <div className="mx-8 mt-6 bg-green-50 border-2 border-green-500 rounded-2xl shadow p-5 flex items-center justify-between">
           <div>
-            <p className="font-bold text-slate-900">
-              📄 {pdfName}
-            </p>
+            <p className="font-bold text-slate-900">📄 {pdfName}</p>
 
             <p className="text-sm text-slate-500 mt-1">
-              {isExtracting
-                ? "Extracting PDF text for AI analysis..."
+              {isRunningOcr
+                ? "Scanning book page automatically..."
+                : isExtracting
+                ? "Reading book text..."
                 : isAiReady
-                ? "PDF uploaded • Text extracted • Ready for AI page analysis"
-                : "PDF uploaded • Waiting for text extraction"}
+                ? ocrText
+                  ? "Scanned page text extracted • Ready for AI analysis"
+                  : "PDF uploaded • Ready for AI page analysis"
+                : "Preparing book for AI analysis..."}
             </p>
           </div>
 
@@ -312,8 +445,8 @@ export default function ReadPage() {
 
                   <p className="mt-4 text-slate-500 max-w-xl">
                     This reader supports real PDF books with page navigation,
-                    zoom, fullscreen, voice reading, accessibility controls, and
-                    AI page analysis.
+                    zoom, fullscreen, voice reading, accessibility controls,
+                    automatic scanning, and AI page analysis.
                   </p>
 
                   <label className="mt-8 bg-blue-600 text-white px-8 py-4 rounded-2xl cursor-pointer">
@@ -399,6 +532,16 @@ export default function ReadPage() {
             >
               🎙 Voice Commands
             </button>
+
+            {pdfFile && (
+              <button
+                onClick={() => runOCR(false)}
+                disabled={isRunningOcr}
+                className="bg-orange-600 px-4 py-3 rounded-xl disabled:opacity-60"
+              >
+                {isRunningOcr ? "Scanning..." : "↻ Retry Page Scan"}
+              </button>
+            )}
 
             <div className="flex items-center gap-2">
               <label className="text-sm text-slate-300">Speed</label>

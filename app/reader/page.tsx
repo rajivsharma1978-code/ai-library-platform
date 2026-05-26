@@ -111,7 +111,9 @@ Ask me to summarize, explain, quiz, translate, or simplify this content.`,
           question: questionText,
           book,
           chapter: isPdfMode ? `PDF Page ${currentPage}` : activeChapter,
-          content: activeContent,
+content:
+  localStorage.getItem("uploadedPdfText") ||
+  activeContent,
         }),
       });
 
