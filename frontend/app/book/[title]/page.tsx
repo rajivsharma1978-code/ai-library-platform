@@ -32,90 +32,197 @@ export default async function BookPage({ params }: BookPageProps) {
   const coverImage = getCover(bookTitle);
 
   return (
-    <main className="min-h-screen bg-slate-100 p-10">
-      <div className="max-w-6xl mx-auto">
+    <main className="min-h-screen bg-gradient-to-br from-slate-100 via-blue-50 to-purple-100 p-10">
+      <div className="max-w-7xl mx-auto">
         <Link href="/" className="inline-block mb-8 text-blue-700 font-semibold">
           ← Back to Library
         </Link>
 
-        <div className="bg-white rounded-3xl shadow-2xl overflow-hidden">
-          <div className="grid grid-cols-2 gap-0">
-            <div className="bg-gradient-to-br from-slate-900 to-blue-900 p-10 flex items-center justify-center">
-              <img
-                src={coverImage}
-                className="w-[75%] max-h-[560px] rounded-2xl object-cover shadow-2xl"
-                alt={bookTitle}
-              />
+        <section className="bg-white rounded-3xl shadow-2xl overflow-hidden">
+          <div className="grid grid-cols-5">
+            <div className="col-span-2 bg-gradient-to-br from-slate-950 via-blue-950 to-indigo-900 p-12 flex items-center justify-center">
+              <div>
+                <img
+                  src={coverImage}
+                  className="w-[360px] max-h-[560px] rounded-3xl object-cover shadow-2xl"
+                  alt={bookTitle}
+                />
+
+                <div className="grid grid-cols-3 gap-3 mt-6 text-white text-center">
+                  <div className="bg-white/10 rounded-2xl p-3">
+                    <p className="text-xl font-bold">4.8</p>
+                    <p className="text-xs text-blue-100">Rating</p>
+                  </div>
+
+                  <div className="bg-white/10 rounded-2xl p-3">
+                    <p className="text-xl font-bold">12k</p>
+                    <p className="text-xs text-blue-100">Learners</p>
+                  </div>
+
+                  <div className="bg-white/10 rounded-2xl p-3">
+                    <p className="text-xl font-bold">6 hrs</p>
+                    <p className="text-xs text-blue-100">Read Time</p>
+                  </div>
+                </div>
+              </div>
             </div>
 
-            <div className="p-10">
-              <span className="bg-blue-100 text-blue-700 px-4 py-2 rounded-full text-sm font-semibold">
-                AI Ready Book
-              </span>
+            <div className="col-span-3 p-12">
+              <div className="flex gap-3 flex-wrap">
+                <span className="bg-blue-100 text-blue-700 px-4 py-2 rounded-full text-sm font-semibold">
+                  AI Ready
+                </span>
 
-              <h1 className="text-5xl font-bold mt-6 text-slate-900">
+                <span className="bg-green-100 text-green-700 px-4 py-2 rounded-full text-sm font-semibold">
+                  Accessible Reader
+                </span>
+
+                <span className="bg-purple-100 text-purple-700 px-4 py-2 rounded-full text-sm font-semibold">
+                  Multilingual Support
+                </span>
+              </div>
+
+              <h1 className="text-6xl font-bold mt-8 text-slate-900 leading-tight">
                 {bookTitle}
               </h1>
 
-              <p className="mt-4 text-slate-500">
+              <p className="mt-4 text-slate-500 text-lg">
                 Smart digital learning resource
               </p>
 
-              <p className="mt-6 text-slate-600 leading-8 text-lg">
-                Learn {bookTitle} with AI summaries, smart notes, instant Q&A,
-                flashcards, quiz generation, PDF upload, multilingual support,
-                and personalized explanations.
+              <p className="mt-8 text-slate-600 leading-8 text-lg max-w-3xl">
+                Explore {bookTitle} through two powerful modes: a clean classic
+                reading experience for focused study, and an AI-powered learning
+                workspace for summaries, multilingual explanations, quizzes,
+                notes, flashcards, voice support, and personalized assistance.
               </p>
 
-              <div className="grid grid-cols-3 gap-4 mt-8">
-                {[
-                  ["4.8", "Rating"],
-                  ["12k", "Learners"],
-                  ["6 hrs", "Study Time"],
-                ].map(([value, label]) => (
-                  <div key={label} className="bg-slate-100 p-4 rounded-2xl">
-                    <p className="text-2xl font-bold text-slate-900">{value}</p>
-                    <p className="text-sm text-slate-500">{label}</p>
-                  </div>
-                ))}
-              </div>
-
-              <div className="flex gap-4 mt-10">
+              <div className="flex gap-4 mt-10 flex-wrap">
                 <Link
-                  href={`/reader?book=${encodeURIComponent(bookTitle)}`}
-                  className="bg-black text-white px-8 py-4 rounded-2xl hover:bg-slate-800"
+                  href={`/read?book=${encodeURIComponent(bookTitle)}`}
+                  className="bg-black text-white px-8 py-4 rounded-2xl hover:bg-slate-800 shadow-lg"
                 >
                   Read Now
                 </Link>
 
                 <Link
                   href={`/reader?book=${encodeURIComponent(bookTitle)}`}
-                  className="bg-blue-600 text-white px-8 py-4 rounded-2xl hover:bg-blue-700"
+                  className="bg-blue-600 text-white px-8 py-4 rounded-2xl hover:bg-blue-700 shadow-lg"
                 >
                   Ask AI
                 </Link>
+
+                <button className="bg-slate-100 text-slate-900 px-8 py-4 rounded-2xl hover:bg-slate-200">
+                  Save to My Library
+                </button>
               </div>
 
-              <div className="grid grid-cols-2 gap-4 mt-10">
+              <div className="grid grid-cols-3 gap-4 mt-10">
                 {[
-                  "AI Summary",
-                  "Import Study Material",
-                  "Quiz Generator",
-                  "Flashcards",
-                  "Smart Notes",
-                  "Multilingual Learning",
-                ].map((feature) => (
-                  <div key={feature} className="bg-slate-50 p-5 rounded-2xl border">
-                    <p className="font-bold text-slate-900">{feature}</p>
-                    <p className="text-sm text-slate-500 mt-2">
-                      Powered learning support
+                  ["Classic Reader", "PDF-style reading with zoom, fullscreen, page controls"],
+                  ["AI Tutor", "Ask questions, summarize, simplify and quiz yourself"],
+                  ["Voice Access", "Read aloud and hands-free accessibility support"],
+                  ["Indian Languages", "Explain concepts in Hindi, Tamil, Bengali and more"],
+                  ["Smart Notes", "Save, export and organize important learning points"],
+                  ["Related Concepts", "Discover connected topics and recommended books"],
+                ].map(([title, description]) => (
+                  <div key={title} className="bg-slate-50 p-5 rounded-2xl border">
+                    <p className="font-bold text-slate-900">{title}</p>
+                    <p className="text-sm text-slate-500 mt-2 leading-6">
+                      {description}
                     </p>
                   </div>
                 ))}
               </div>
             </div>
           </div>
-        </div>
+        </section>
+
+        <section className="grid grid-cols-3 gap-6 mt-8">
+          <div className="bg-white rounded-3xl p-8 shadow-lg">
+            <h2 className="text-2xl font-bold text-slate-900">
+              About this Book
+            </h2>
+
+            <p className="text-slate-600 mt-4 leading-7">
+              This learning resource introduces core ideas, practical
+              applications, and foundational concepts. It is optimized for both
+              regular reading and AI-assisted learning.
+            </p>
+          </div>
+
+          <div className="bg-white rounded-3xl p-8 shadow-lg">
+            <h2 className="text-2xl font-bold text-slate-900">
+              Accessibility
+            </h2>
+
+            <div className="mt-4 space-y-3 text-slate-600">
+              <p>✓ Read aloud support</p>
+              <p>✓ Voice command foundation</p>
+              <p>✓ Zoom and font controls</p>
+              <p>✓ Dark mode reading</p>
+            </div>
+          </div>
+
+          <div className="bg-gradient-to-br from-indigo-700 to-purple-700 rounded-3xl p-8 text-white shadow-lg">
+            <p className="uppercase tracking-widest text-sm opacity-80">
+              AI Learning Insight
+            </p>
+
+            <h2 className="text-3xl font-bold mt-4">
+              Recommended for guided learning
+            </h2>
+
+            <p className="text-blue-100 mt-4 leading-7">
+              AI can personalize explanations based on user level, language,
+              reading speed, and learning goals.
+            </p>
+          </div>
+        </section>
+
+        <section className="bg-white rounded-3xl p-8 shadow-lg mt-8">
+          <div className="flex justify-between items-center">
+            <div>
+              <h2 className="text-3xl font-bold text-slate-900">
+                Similar Books
+              </h2>
+
+              <p className="text-slate-500 mt-2">
+                Continue exploring related learning resources.
+              </p>
+            </div>
+
+            <Link href="/" className="bg-black text-white px-5 py-3 rounded-xl">
+              Browse Library
+            </Link>
+          </div>
+
+          <div className="grid grid-cols-4 gap-6 mt-6">
+            {["Machine Learning", "Data Science", "Robotics", "Deep Learning"].map(
+              (book) => (
+                <Link
+                  key={book}
+                  href={`/book/${encodeURIComponent(book)}`}
+                  className="bg-slate-50 rounded-2xl p-5 hover:-translate-y-1 hover:shadow-xl transition"
+                >
+                  <img
+                    src={getCover(book)}
+                    className="w-full h-56 object-cover rounded-xl"
+                    alt={book}
+                  />
+
+                  <h3 className="font-bold mt-4 text-slate-900">
+                    {book}
+                  </h3>
+
+                  <p className="text-sm text-slate-500 mt-1">
+                    AI Ready • Multilingual
+                  </p>
+                </Link>
+              )
+            )}
+          </div>
+        </section>
       </div>
     </main>
   );
