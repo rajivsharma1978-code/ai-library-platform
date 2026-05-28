@@ -5,7 +5,34 @@ interface BookPageProps {
     title: string;
   }>;
 }
+const demoBookContent: Record<string, string> = {
+  "Artificial Intelligence":
+    "Artificial Intelligence explores machine intelligence, neural networks, reasoning systems, robotics, and intelligent learning models used across industries.",
+    
+  "Machine Learning":
+    "Machine Learning focuses on training algorithms using datasets, prediction models, supervised learning, and deep neural architectures.",
 
+  "Data Science":
+    "Data Science combines statistics, machine learning, data visualization, and analytics for extracting insights from structured and unstructured data.",
+
+  Robotics:
+    "Robotics introduces intelligent machines, automation systems, sensors, motion control, and AI-powered physical systems.",
+
+  "Deep Learning":
+    "Deep Learning explores neural networks, transformers, computer vision, and advanced AI architectures.",
+
+  "Python Basics":
+    "Python Basics introduces variables, loops, functions, syntax, and beginner-friendly programming concepts.",
+
+  "Quantum Computing":
+    "Quantum Computing introduces qubits, superposition, entanglement, and next-generation computational systems.",
+
+  "Cloud Architecture":
+    "Cloud Architecture explains distributed infrastructure, cloud services, scaling systems, and deployment models.",
+
+  "Cyber Security":
+    "Cyber Security covers network protection, ethical hacking, encryption, digital threats, and secure systems.",
+};
 function getCover(bookTitle: string) {
   if (bookTitle === "Artificial Intelligence") {
     return "https://covers.openlibrary.org/b/id/10523338-L.jpg";
@@ -30,6 +57,11 @@ export default async function BookPage({ params }: BookPageProps) {
   const { title } = await params;
   const bookTitle = decodeURIComponent(title);
   const coverImage = getCover(bookTitle);
+  const demoContent =
+  demoBookContent[bookTitle] ||
+  "AI-powered digital learning content.";
+
+
 
   return (
     <main className="min-h-screen bg-gradient-to-br from-slate-100 via-blue-50 to-purple-100 p-10">
@@ -98,23 +130,19 @@ export default async function BookPage({ params }: BookPageProps) {
               </p>
 
               <div className="flex gap-4 mt-10 flex-wrap">
-                <Link
-                  href={`/read?book=${encodeURIComponent(bookTitle)}`}
-                  className="bg-black text-white px-8 py-4 rounded-2xl hover:bg-slate-800 shadow-lg"
-                >
-                  Read Now
-                </Link>
+              <Link
+  href={`/read?book=${encodeURIComponent(bookTitle)}&demo=true`}
+  className="bg-black text-white px-8 py-4 rounded-2xl hover:bg-slate-800 shadow-lg"
+>
+  Read Now
+</Link>
 
-                <Link
-                  href={`/reader?book=${encodeURIComponent(bookTitle)}`}
-                  className="bg-blue-600 text-white px-8 py-4 rounded-2xl hover:bg-blue-700 shadow-lg"
-                >
-                  Ask AI
-                </Link>
-
-                <button className="bg-slate-100 text-slate-900 px-8 py-4 rounded-2xl hover:bg-slate-200">
-                  Save to My Library
-                </button>
+<Link
+  href={`/reader?book=${encodeURIComponent(bookTitle)}&demo=true`}
+  className="bg-blue-600 text-white px-8 py-4 rounded-2xl hover:bg-blue-700 shadow-lg"
+>
+  Ask AI
+</Link>
               </div>
 
               <div className="grid grid-cols-3 gap-4 mt-10">

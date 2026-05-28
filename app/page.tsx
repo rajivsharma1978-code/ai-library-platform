@@ -2,7 +2,17 @@
 
 import Link from "next/link";
 import { useState } from "react";
-
+const categories = [
+  "All",
+  "Science",
+  "Technology",
+  "Medical",
+  "Research",
+  "History",
+  "Business",
+  "AI",
+  "Education",
+];
 const books = [
   "Artificial Intelligence",
   "Machine Learning",
@@ -14,6 +24,18 @@ const books = [
   "Cloud Architecture",
   "Cyber Security",
 ];
+
+const bookCategories: Record<string, string> = {
+  "Artificial Intelligence": "AI",
+  "Machine Learning": "AI",
+  "Data Science": "Technology",
+  Robotics: "Technology",
+  "Deep Learning": "AI",
+  "Python Basics": "Education",
+  "Quantum Computing": "Science",
+  "Cloud Architecture": "Technology",
+  "Cyber Security": "Technology",
+};
 
 const sections = [
   {
@@ -53,11 +75,18 @@ function getCover(book: string) {
 
 export default function Home() {
   const [search, setSearch] = useState("");
-
-  const filteredBooks = books.filter((book) =>
-    book.toLowerCase().includes(search.toLowerCase())
-  );
-
+  const [activeCategory, setActiveCategory] = useState("All");
+  const filteredBooks = books.filter((book) => {
+    const matchesSearch = book
+      .toLowerCase()
+      .includes(search.toLowerCase());
+  
+    const matchesCategory =
+      activeCategory === "All" ||
+      bookCategories[book] === activeCategory;
+  
+    return matchesSearch && matchesCategory;
+  });
   return (
     <main className="min-h-screen bg-slate-100">
       <header className="fixed top-0 left-0 right-0 bg-white/90 backdrop-blur-xl border-b z-50 px-10 py-4 flex justify-between items-center">
@@ -97,7 +126,21 @@ export default function Home() {
               (item) => (
                 <Link
                   key={item}
-                  href={item.includes("Admin") ? "/admin" : "/"}
+                  href={
+                    item.includes("Explore")
+                      ? "/explore"
+                      : item.includes("AI Tutor")
+                      ? "/reader"
+                      : item.includes("Notes")
+                      ? "/notes"
+                      : item.includes("Analytics")
+                      ? "/analytics"
+                      : item.includes("Admin")
+                      ? "/admin-login"
+                      : item.includes("Settings")
+                      ? "/settings"
+                      : "/"
+                  }
                   className="block px-4 py-3 rounded-xl hover:bg-white/10 transition"
                 >
                   {item}
@@ -121,7 +164,21 @@ export default function Home() {
               A modern national library experience with smart search, classic reading,
               AI tutoring, multilingual learning, summaries, notes and quizzes.
             </p>
+            <div className="flex gap-4 mt-8 flex-wrap">
+  <Link
+    href="/read"
+    className="bg-white text-black px-6 py-3 rounded-2xl font-semibold shadow"
+  >
+    Upload / Read PDF
+  </Link>
 
+  <Link
+    href="/reader"
+    className="bg-black/30 border border-white/20 text-white px-6 py-3 rounded-2xl font-semibold"
+  >
+    Open AI Tutor
+  </Link>
+</div>
             <div className="relative mt-8 max-w-5xl">
               <div className="flex gap-2">
                 <input
@@ -171,22 +228,20 @@ export default function Home() {
           </div>
 
           <div className="flex gap-3 mt-8 flex-wrap">
-            {[
-              "School Education",
-              "Higher Education",
-              "Research",
-              "Career",
-              "Archives",
-              "Languages",
-              "Competitive Exams",
-            ].map((category) => (
+              {categories.map((category) => (
               <button
                 key={category}
-                className="bg-white px-5 py-3 rounded-full shadow hover:bg-blue-600 hover:text-white transition"
+                onClick={() => setActiveCategory(category)}
+                className={
+                  activeCategory === category
+                    ? "bg-blue-600 text-white px-5 py-3 rounded-full shadow transition"
+                    : "bg-white px-5 py-3 rounded-full shadow hover:bg-blue-600 hover:text-white transition"
+                }
               >
                 {category}
               </button>
             ))}
+            
           </div>
 
           {sections.map((section) => (

@@ -48,20 +48,27 @@ export default function ReaderPage() {
   const [pdfText, setPdfText] = useState("");
   const [pdfName, setPdfName] = useState("");
   const [pdfPages, setPdfPages] = useState("");
+  const [pageImage, setPageImage] = useState("");
   const [question, setQuestion] = useState("");
   const [savedNotes, setSavedNotes] = useState<string[]>([]);
   const [darkMode, setDarkMode] = useState(false);
   const [selectedText, setSelectedText] = useState("");
   const [activeChapter, setActiveChapter] = useState("Introduction");
   const [isThinking, setIsThinking] = useState(false);
+  const [studyMode, setStudyMode] = useState("Student");
 
-  const currentPage = searchParams.get("page") || "1";
+  const initialPage = Number(searchParams.get("page") || "1");
+
+
+
+const [readerPage, setReaderPage] = useState(initialPage);
 
   const book =
     searchParams.get("book") ||
     searchParams.get("pdf") ||
     pdfName ||
     "Artificial Intelligence";
+    const isDemoBook = searchParams.get("demo") === "true"; 
 
   const isPdfMode = Boolean(pdfText);
 
@@ -70,30 +77,145 @@ export default function ReaderPage() {
     : chapters[activeChapter].join(" ");
 
   const [messages, setMessages] = useState<Message[]>([]);
+  const modeDescriptions: Record<string, string> = {
+    Student:
+      "This page is prepared for student-friendly learning with simple explanations, quizzes, flashcards, and revision support.",
+    Teacher:
+      "This page is prepared for classroom teaching with lesson plans, teaching notes, homework ideas, and discussion questions.",
+    Researcher:
+      "This page is prepared for deeper academic analysis, research questions, concept extraction, and critical interpretation.",
+    "Exam Prep":
+      "This page is prepared for exam-focused revision, likely questions, MCQs, important points, and scoring notes.",
+    "Elder Friendly":
+      "This page is prepared in a simpler, clearer learning style with easy language, voice-friendly explanations, and daily-life examples.",
+  };
+  const modeActions: Record<string, [string, string][]> = {
+    Student: [
+      ["Summarize", "Summarize this page in simple student-friendly points."],
+      ["Explain Simply", "Explain this page like I am a beginner."],
+      ["Quiz", "Create a short quiz from this page."],
+      ["Flashcards", "Create flashcards from this page."],
+      ["Hindi", "Explain this page in Hindi."],
+    ],
+    Teacher: [
+      ["Lesson Plan", "Create a lesson plan from this page."],
+      ["Teaching Notes", "Create teacher notes from this page."],
+      ["Class Questions", "Create classroom discussion questions."],
+      ["Homework", "Create homework from this page."],
+      ["Blackboard Summary", "Create a blackboard-style summary."],
+    ],
+    Researcher: [
+      ["Key Concepts", "Extract research-level key concepts from this page."],
+      ["Critical Analysis", "Critically analyze this page."],
+      ["Research Questions", "Generate research questions from this page."],
+      ["Further Reading", "Suggest deeper topics to explore."],
+      ["Academic Summary", "Create an academic-style summary."],
+    ],
+    "Exam Prep": [
+      ["Likely Questions", "Generate likely exam questions from this page."],
+      ["MCQs", "Create multiple-choice questions from this page."],
+      ["Short Notes", "Create exam revision notes."],
+      ["Important Points", "List high-scoring important points."],
+      ["Revision Plan", "Create a quick revision plan."],
+    ],
+    "Elder Friendly": [
+      ["Simple Meaning", "Explain this page in very simple language."],
+      ["Slow Explanation", "Explain this slowly and clearly."],
+      ["Voice Summary", "Prepare a voice-friendly summary."],
+      ["Regional Language", "Explain this in simple Hindi."],
+      ["Daily Life Example", "Explain using daily-life examples."],
+    ],
+  };
+  useEffect(() => {
+    if (messages.length > 0) {
+      localStorage.setItem("aiReaderMessages", JSON.stringify(messages));
+    }
+  }, [messages]);
+  
+  useEffect(() => {
+    localStorage.setItem("aiStudyMode", studyMode);
+  }, [studyMode]);
+  
+  useEffect(() => {
+    localStorage.setItem("aiReaderPage", String(readerPage));
+  }, [readerPage]);
+  
+  useEffect(() => {
+    localStorage.setItem("aiSavedNotes", JSON.stringify(savedNotes));
+  }, [savedNotes]);
 
   useEffect(() => {
-    const storedPdfText = localStorage.getItem("uploadedPdfText") || "";
-    const storedPdfName = localStorage.getItem("uploadedPdfName") || "";
-    const storedPdfPages = localStorage.getItem("uploadedPdfPages") || "";
-
-    setPdfText(storedPdfText);
-    setPdfName(storedPdfName);
-    setPdfPages(storedPdfPages);
-
+    const demoBookContent: Record<string, string> = {
+      "Artificial Intelligence":
+        "Artificial Intelligence explores machine intelligence, neural networks, reasoning systems, robotics, and intelligent learning models used across industries.",
+      "Machine Learning":
+        "Machine Learning focuses on training algorithms using datasets, prediction models, supervised learning, and deep neural architectures.",
+      "Data Science":
+        "Data Science combines statistics, machine learning, data visualization, and analytics for extracting insights from structured and unstructured data.",
+      Robotics:
+        "Robotics introduces intelligent machines, automation systems, sensors, motion control, and AI-powered physical systems.",
+      "Deep Learning":
+        "Deep Learning explores neural networks, transformers, computer vision, and advanced AI architectures.",
+      "Python Basics":
+        "Python Basics introduces variables, loops, functions, syntax, and beginner-friendly programming concepts.",
+      "Quantum Computing":
+        "Quantum Computing introduces qubits, superposition, entanglement, and next-generation computational systems.",
+      "Cloud Architecture":
+        "Cloud Architecture explains distributed infrastructure, cloud services, scaling systems, and deployment models.",
+      "Cyber Security":
+        "Cyber Security covers network protection, ethical hacking, encryption, digital threats, and secure systems.",
+    };
+    
+    const rawPdfText = isDemoBook
+      ? demoBookContent[book] || ""
+      : localStorage.getItem("uploadedPdfText") || ""; 
+  
+    const storedPdfText =
+      rawPdfText.includes("const canvases") ||
+      rawPdfText.includes("document.querySelectorAll") ||
+      rawPdfText.includes("HTMLCanvasElement")
+        ? ""
+        : rawPdfText;
+  
+        const storedPdfName = isDemoBook
+        ? book
+        : localStorage.getItem("uploadedPdfName") || "";
+      
+      const storedPdfPages = isDemoBook
+        ? "Demo"
+        : localStorage.getItem("uploadedPdfPages") ||
+          searchParams.get("pages") ||
+          "";
+      
+      const storedPageImage =
+        localStorage.getItem("uploadedPdfPageImage") || "";
+      
+      setPdfText(storedPdfText);
+      setPdfName(storedPdfName);
+      setPdfPages(storedPdfPages); 
+  
+    const welcomeMessage = storedPdfText
+      ? `Welcome! I am your AI Tutor for ${storedPdfName || "your uploaded PDF"}.
+  
+  Currently analyzing page ${readerPage}.
+  
+  Active mode: ${studyMode}.
+  
+  I have access to extracted PDF text and visual page context.
+  
+  Choose a smart action or ask anything about this page.`
+      : `Welcome! I am your AI Tutor for ${book}.
+  
+  Currently analyzing page ${readerPage}.
+  
+  Active mode: ${studyMode}.
+  
+  Choose a smart action or ask anything about this content.`;
+  
     setMessages([
       {
         type: "ai",
-        text: storedPdfText
-          ? `Welcome! I am your AI Tutor for ${storedPdfName || "your uploaded PDF"}.
-
-Currently analyzing page ${currentPage}.
-
-I have access to extracted PDF text. Ask me to summarize, explain, quiz, translate, or simplify this PDF.`
-          : `Welcome! I am your AI Tutor for ${book}.
-
-Currently analyzing page ${currentPage}.
-
-Ask me to summarize, explain, quiz, translate, or simplify this content.`,
+        text: welcomeMessage,
       },
     ]);
   }, []);
@@ -108,9 +230,9 @@ Ask me to summarize, explain, quiz, translate, or simplify this content.`,
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          question: questionText,
+          question: `[Study Mode: ${studyMode}] ${questionText}`,
           book,
-          chapter: isPdfMode ? `PDF Page ${currentPage}` : activeChapter,
+          chapter: isPdfMode ? `PDF Page ${readerPage}` : activeChapter,
 content:
   localStorage.getItem("uploadedPdfText") ||
   activeContent,
@@ -187,7 +309,7 @@ content:
     setSavedNotes((prev) => [
       ...prev,
       isPdfMode
-        ? `PDF Page ${currentPage}: ${activeContent.slice(0, 250)}...`
+        ? `PDF Page ${readerPage}: ${activeContent.slice(0, 250)}...`
         : `${activeChapter}: ${chapters[activeChapter][0]}`,
     ]);
   }
@@ -236,14 +358,18 @@ content:
             <div className="mt-4 bg-slate-900 rounded-2xl p-4">
               <p className="font-bold break-words">{pdfName || book}</p>
               <p className="text-xs text-slate-400 mt-2">
-                Page: {currentPage}
+              Page: {readerPage}
               </p>
               <p className="text-xs text-slate-400 mt-1">
                 Pages: {pdfPages || "Detected after upload"}
               </p>
               <p className="text-xs text-green-400 mt-3">
-                PDF text loaded for AI analysis
-              </p>
+  PDF text loaded for AI analysis
+</p>
+
+<p className={pageImage ? "text-xs text-green-400 mt-2" : "text-xs text-yellow-400 mt-2"}>
+  {pageImage ? "Visual page captured for AI" : "Visual page not captured yet"}
+</p>
             </div>
           ) : (
             <div className="mt-4 space-y-3">
@@ -294,16 +420,61 @@ content:
 
             <p className="mt-4 text-blue-100 max-w-3xl">
               {isPdfMode
-                ? `AI is using extracted PDF text and currently focusing on page ${currentPage}.`
+                ? `AI is using extracted PDF text and currently focusing on page ${readerPage}.`
                 : "Ask questions, summarize chapters, translate into Indian languages, generate quizzes, save notes, and learn in a personalized way."}
             </p>
+            <div className="mt-6 flex items-center gap-3 flex-wrap">
+  <p className="text-sm font-semibold text-white">
+    Study Mode:
+  </p>
 
+  {[
+    "Student",
+    "Teacher",
+    "Researcher",
+    "Exam Prep",
+    "Elder Friendly",
+  ].map((mode) => (
+    <button
+      key={mode}
+      onClick={() => {
+        setStudyMode(mode);
+      
+        setMessages((prev) => [
+          ...prev,
+          {
+            type: "ai",
+            text: `Study mode changed to ${mode}.`,
+          },
+        ]);
+      }}
+      className={
+        studyMode === mode
+          ? "bg-green-500 text-white border-2 border-white px-4 py-2 rounded-full text-sm font-bold shadow-lg"
+          : "bg-slate-800 text-white border border-slate-600 px-4 py-2 rounded-full text-sm hover:bg-blue-600"
+      }
+    >
+      {mode}
+    </button>
+  ))}
+</div>
+            <div className="flex gap-2 mt-5 flex-wrap">
+  <span className="bg-green-500/20 border border-green-300/30 px-3 py-1 rounded-full text-xs">
+    Text AI Ready
+  </span>
+  <span className="bg-blue-500/20 border border-blue-300/30 px-3 py-1 rounded-full text-xs">
+    Page Image Captured
+  </span>
+  <span className="bg-yellow-500/20 border border-yellow-300/30 px-3 py-1 rounded-full text-xs">
+    Vision AI Demo Mode
+  </span>
+</div>
             <div className="flex gap-3 mt-6 flex-wrap">
               <button
                 onClick={() =>
                   addAIMessage(
                     isPdfMode
-                      ? `Summarize the uploaded PDF content around page ${currentPage}.`
+                      ? `Summarize the uploaded PDF content around page ${readerPage}.`
                       : `Summarize ${activeChapter} in simple points.`
                   )
                 }
@@ -316,7 +487,7 @@ content:
                 onClick={() =>
                   addAIMessage(
                     isPdfMode
-                      ? `Explain the uploaded PDF content around page ${currentPage} for a beginner.`
+                      ? `Explain the uploaded PDF content around page ${readerPage} for a beginner.`
                       : `Explain ${activeChapter} for a beginner.`
                   )
                 }
@@ -324,16 +495,84 @@ content:
               >
                 Explain Simply
               </button>
+              <button
+  onClick={() =>
+    setMessages((prev) => [
+      ...prev,
+      {
+        type: "user",
+        text: "Analyze this page image",
+      },
+      {
+        type: "ai",
+        text:
+          "AI Vision Analysis: This page appears to contain educational content, structured headings, textbook formatting, and possibly diagrams or scientific terminology. Future multimodal AI upgrades will support diagram understanding, graph interpretation, equations, handwritten notes, and visual learning assistance.",
+      },
+    ])
+  }
+  className="bg-black/30 border border-white/20 px-5 py-3 rounded-xl font-semibold"
+>
+  Analyze Page Image
+</button>
 
               <Link
-                href={`/read?book=${encodeURIComponent(book)}`}
+                href={`/read?book=${encodeURIComponent(book)}&page=${readerPage}`}
                 className="bg-black/30 border border-white/20 px-5 py-3 rounded-xl font-semibold"
               >
                 Classic Read Mode
               </Link>
             </div>
           </div>
+          <div className="mt-8 bg-white rounded-3xl p-6 shadow-lg border">
+  <div className="flex items-center justify-between gap-4 flex-wrap">
+    <div>
+      <p className="text-sm text-slate-500">Continue Learning</p>
+      <h3 className="text-2xl font-bold mt-1">
+        {isPdfMode ? `Continue ${pdfName || "your PDF"}` : activeChapter}
+      </h3>
+      <p className="text-sm text-slate-600 mt-2">
+        Mode: {studyMode} • Page {readerPage} {pdfPages ? `of ${pdfPages}` : ""}
+      </p>
+    </div>
 
+    <button
+      onClick={() =>
+        addAIMessage(
+          `Create a short learning session summary for page ${readerPage}. Include what I should revise next.`
+        )
+      }
+      className="bg-blue-600 text-white px-5 py-3 rounded-xl font-semibold"
+    >
+      Generate Session Summary
+    </button>
+  </div>
+</div>
+<div className="mt-8 bg-white rounded-3xl p-6 shadow-lg border">
+  <div className="flex items-center justify-between gap-4 flex-wrap mb-5">
+    <div>
+      <p className="text-sm text-slate-500">Smart Actions</p>
+      <h3 className="text-2xl font-bold">
+        {studyMode} Mode Tools
+      </h3>
+    </div>
+
+    <p className="text-sm text-slate-500">
+      Actions change based on selected learning mode
+    </p>
+  </div>
+
+  <div className="flex gap-3 flex-wrap">
+    {(modeActions[studyMode] || modeActions.Student).map(([label, prompt]) => (
+      <button
+        key={label}
+        onClick={() => addAIMessage(prompt)}
+        className="bg-slate-100 hover:bg-blue-600 hover:text-white transition px-5 py-3 rounded-2xl shadow text-sm font-semibold"
+      >
+        {label}
+      </button>
+    ))}
+  </div>
+</div>
           <div className="grid grid-cols-3 gap-6 mt-8">
             <div className="bg-white rounded-3xl p-6 shadow-lg">
               <p className="text-sm text-slate-500">AI Summary</p>
@@ -375,7 +614,7 @@ content:
                 onClick={() =>
                   addAIMessage(
                     isPdfMode
-                      ? `Create a quiz from the uploaded PDF content around page ${currentPage}.`
+                      ? `Create a quiz from the uploaded PDF content around page ${readerPage}.`
                       : `Create a quiz from ${activeChapter}.`
                   )
                 }
@@ -394,8 +633,70 @@ content:
             }
           >
             <h2 className="text-4xl font-bold">
-              {isPdfMode ? `PDF Page ${currentPage} AI Context` : activeChapter}
+              {isPdfMode ? `PDF Page ${readerPage} AI Context` : activeChapter}
             </h2>
+            {isPdfMode && (
+  <div className="flex items-center gap-4 mt-6 flex-wrap">
+    <button
+      onClick={() => {
+        const previous = Math.max(1, Number(readerPage) - 1);
+
+        setReaderPage(previous);
+
+        const image =
+  localStorage.getItem(`uploadedPdfPageImage_${previous}`) || "";
+
+setPageImage(image);
+
+if (!image) {
+  setMessages((prev) => [
+    ...prev,
+    {
+      type: "ai",
+      text: `Page ${previous} image is not captured yet. Go back to Classic Read Mode, open page ${previous}, then click Ask AI About This Page.`,
+    },
+  ]);
+}
+      }}
+      className="bg-slate-900 text-white px-5 py-3 rounded-xl"
+    >
+      ← Previous
+    </button>
+
+    <div className="bg-slate-100 px-5 py-3 rounded-xl text-sm font-semibold">
+      Page {readerPage} of {pdfPages || "?"}
+    </div>
+
+    <button
+      onClick={() => {
+        const next = Math.min(
+          Number(pdfPages || readerPage),
+          Number(readerPage) + 1
+        );
+
+        setReaderPage(next);
+
+        const image =
+        localStorage.getItem(`uploadedPdfPageImage_${next}`) || "";
+      
+      setPageImage(image);
+      
+      if (!image) {
+        setMessages((prev) => [
+          ...prev,
+          {
+            type: "ai",
+            text: `Page ${next} image is not captured yet. Go back to Classic Read Mode, open page ${next}, then click Ask AI About This Page.`,
+          },
+        ]);
+      }
+      }}
+      className="bg-blue-600 text-white px-5 py-3 rounded-xl"
+    >
+      Next →
+    </button>
+  </div>
+)}
 
             {selectedText && (
               <button
@@ -405,17 +706,54 @@ content:
                 Ask AI about selected text
               </button>
             )}
+{pageImage && (
+  <div className="mt-8 bg-white rounded-3xl p-5 shadow-xl border">
+    <h3 className="text-2xl font-bold text-slate-900">
+      Original PDF Page
+    </h3>
 
-            <div className="mt-8 space-y-8 text-lg leading-9">
-              {isPdfMode ? (
-                <p>{activeContent.slice(0, 1800)}...</p>
-              ) : (
-                chapters[activeChapter].map((paragraph, index) => (
-                  <p key={index}>{paragraph}</p>
-                ))
-              )}
-            </div>
+    <p className="text-sm text-slate-500 mt-2">
+      AI can use this visual page for future diagram and image understanding.
+    </p>
 
+    <img
+      src={pageImage}
+      alt="PDF Page"
+      className="mt-5 rounded-2xl border shadow max-h-[900px] object-contain w-full"
+    />
+  </div>
+)}
+
+<div className="space-y-6">
+  <div className="bg-blue-50 border border-blue-200 rounded-2xl p-6">
+    <h3 className="font-bold text-xl text-blue-900">
+      AI Summary
+    </h3>
+
+    <p className="mt-3 text-slate-700 leading-8">
+      This PDF page has been processed and prepared for AI-assisted learning.
+      You can ask for summaries, explanations, quizzes, translations,
+      flashcards, research help, and concept clarification.
+    </p>
+  </div>
+
+  <div className="bg-slate-50 border rounded-2xl p-6">
+  <h3 className="font-bold text-lg">
+  Page Intelligence
+</h3>
+
+<p className="mt-4 leading-8 text-slate-700">
+{modeDescriptions[studyMode]}
+</p>
+
+<Link
+  href={`/read?book=${encodeURIComponent(book)}`}
+  className="inline-block mt-5 bg-blue-600 text-white px-5 py-3 rounded-xl"
+>
+Open This Page in Classic Reader
+</Link>
+  </div>
+</div>
             <div className="mt-10 bg-yellow-100 text-black border-l-4 border-yellow-500 p-6 rounded-2xl">
               <p className="font-bold">Highlighted by AI</p>
 
@@ -436,13 +774,31 @@ content:
         </div>
       </section>
 
-      <aside className="w-[32%] bg-black text-white p-5 flex flex-col h-screen">
+      <aside className="w-[32%] bg-black text-white p-5 flex flex-col h-screen overflow-hidden">
         <div className="flex items-center justify-between">
           <div>
             <h2 className="text-2xl font-bold">AI Tutor</h2>
+            <p className="text-xs text-green-400 mt-1">
+  Active Mode: {studyMode}
+</p>
             <p className="text-xs text-gray-400">
-              Context: {isPdfMode ? `PDF Page ${currentPage}` : activeChapter}
+              Context: {isPdfMode ? `PDF Page ${readerPage}` : activeChapter}
             </p>
+            <button
+  onClick={() => {
+    localStorage.removeItem("aiReaderMessages");
+    localStorage.removeItem("aiSavedNotes");
+    localStorage.removeItem("aiStudyMode");
+    localStorage.removeItem("aiReaderPage");
+    setMessages([]);
+    setSavedNotes([]);
+    setStudyMode("Student");
+    setReaderPage(initialPage);
+  }}
+  className="mt-3 bg-red-600 text-white px-3 py-2 rounded-lg text-xs"
+>
+  Reset AI Session
+</button>
           </div>
 
           <button
@@ -453,26 +809,9 @@ content:
           </button>
         </div>
 
-        <div className="grid grid-cols-2 gap-2 mt-5">
-          {[
-            ["Summarize", `Summarize this ${isPdfMode ? "PDF content" : activeChapter}.`],
-            ["Explain", `Explain this ${isPdfMode ? "PDF content" : activeChapter} simply.`],
-            ["Quiz", `Create quiz for this ${isPdfMode ? "PDF content" : activeChapter}.`],
-            ["Flashcards", `Create flashcards for this ${isPdfMode ? "PDF content" : activeChapter}.`],
-            ["Hindi", `Explain this content in Hindi.`],
-            ["Voice", `Prepare a voice-friendly explanation for this content.`],
-          ].map(([label, prompt]) => (
-            <button
-              key={label}
-              onClick={() => addAIMessage(prompt)}
-              className="bg-slate-900 hover:bg-blue-600 p-3 rounded-2xl text-sm"
-            >
-              {label}
-            </button>
-          ))}
-        </div>
+        
 
-        <div className="mt-5 space-y-3 flex-1 overflow-auto pr-2">
+        <div className="mt-5 space-y-3 flex-1 overflow-auto pr-2 min-h-0">
           {messages.map((message, index) => (
             <div
               key={index}
@@ -492,6 +831,7 @@ content:
             </div>
           )}
         </div>
+       
 
         <div className="mt-4 bg-slate-900 rounded-3xl p-4">
           <div className="flex justify-between items-center">

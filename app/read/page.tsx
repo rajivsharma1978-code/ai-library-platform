@@ -33,7 +33,27 @@ export default function ReadPage() {
   const [ocrText, setOcrText] = useState("");
   const [isRunningOcr, setIsRunningOcr] = useState(false);
   const [needsAutoScan, setNeedsAutoScan] = useState(false);
-
+  const [hasScannedPage, setHasScannedPage] = useState(false);
+  const [demoBook, setDemoBook] = useState("");
+  const demoPages: Record<string, string[]> = {
+    "Artificial Intelligence": [
+      "Artificial Intelligence introduces systems capable of simulating human intelligence. Modern AI combines machine learning, reasoning, natural language processing, and adaptive learning.",
+      
+      "Machine learning allows systems to improve automatically from data. Neural networks and transformers are widely used in modern AI systems.",
+      
+      "AI is transforming healthcare, education, finance, transportation, agriculture, and scientific research across the world.",
+  
+      "Ethical AI focuses on fairness, transparency, privacy, bias reduction, and responsible deployment of intelligent systems.",
+    ],
+  
+    "Machine Learning": [
+      "Machine Learning enables computers to learn patterns from datasets without explicit programming.",
+      
+      "Supervised learning uses labeled data for prediction tasks, while unsupervised learning finds hidden structures.",
+      
+      "Deep learning uses neural networks with multiple layers to solve advanced AI problems.",
+    ],
+  };
   useEffect(() => {
     async function setupPdfWorker() {
       const { pdfjs } = await import("react-pdf");
@@ -42,30 +62,44 @@ export default function ReadPage() {
 
     setupPdfWorker();
   }, []);
-
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const book = params.get("book");
+  
+    if (book) {
+      setDemoBook(book);
+      setPdfName(book);
+      localStorage.setItem("demoBookTitle", book);
+    }
+  }, []);
   useEffect(() => {
     if (!pdfFile) return;
     if (numPages === 0) return;
     if (!needsAutoScan) return;
     if (isRunningOcr) return;
-
-    setNeedsAutoScan(false);
+    if (hasScannedPage) return;
 
     const timer = setTimeout(() => {
       runOCR(true);
-    }, 4000);
+    }, 6000);
 
     return () => clearTimeout(timer);
-  }, [pdfFile, numPages, needsAutoScan]);
+  }, [pdfFile, numPages, needsAutoScan, isRunningOcr, hasScannedPage]);
+  const currentDemoPages = demoPages[demoBook] || [];
 
+  const totalDemoPages =
+    currentDemoPages.length > 0
+      ? currentDemoPages.length
+      : 1;
   const readingText =
     ocrText ||
     "This is the classic reading mode. Users can read PDF books, zoom pages, use fullscreen, listen to content, and navigate pages.";
 
-  function onDocumentLoadSuccess({ numPages }: { numPages: number }) {
-    setNumPages(numPages);
-    setPage(1);
-  }
+    function onDocumentLoadSuccess({ numPages }: { numPages: number }) {
+      setNumPages(numPages);
+      setPage(1);
+      localStorage.setItem("uploadedPdfPages", String(numPages));
+    }
 
   async function handlePdfUpload(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
@@ -76,6 +110,7 @@ export default function ReadPage() {
     setIsAiReady(false);
     setOcrText("");
     setNeedsAutoScan(false);
+    setHasScannedPage(false);
 
     localStorage.removeItem("uploadedPdfText");
     localStorage.removeItem("uploadedPdfName");
@@ -135,6 +170,7 @@ export default function ReadPage() {
 
     try {
       setIsRunningOcr(true);
+      setHasScannedPage(true);
 
       await new Promise((resolve) => setTimeout(resolve, 1500));
 
@@ -155,6 +191,7 @@ export default function ReadPage() {
           `Uploaded PDF: ${pdfName}. Scan could not find the visible page image.`
         );
         setIsAiReady(true);
+        setNeedsAutoScan(false);
         return;
       }
 
@@ -168,10 +205,11 @@ export default function ReadPage() {
           `Uploaded PDF: ${pdfName}. Scan could not prepare the page image.`
         );
         setIsAiReady(true);
+        setNeedsAutoScan(false);
         return;
       }
 
-      const result = await Tesseract.recognize(blob, "eng", {
+      const result = await Tesseract.recognize(blob, "eng+hin", {
         logger: (m) => console.log(m),
       });
 
@@ -183,6 +221,7 @@ export default function ReadPage() {
           `Uploaded PDF: ${pdfName}. Automatic scan completed, but no readable text was found on this page.`
         );
         setIsAiReady(true);
+        setNeedsAutoScan(false);
         return;
       }
 
@@ -192,6 +231,7 @@ export default function ReadPage() {
 
       setIsAiReady(true);
       setNeedsAutoScan(false);
+      setHasScannedPage(true);
 
       if (!auto) {
         alert("Page scan completed successfully.");
@@ -206,6 +246,7 @@ export default function ReadPage() {
 
       setIsAiReady(true);
       setNeedsAutoScan(false);
+      setHasScannedPage(true);
 
       if (!auto) {
         alert("Page scan failed.");
@@ -214,7 +255,37 @@ export default function ReadPage() {
       setIsRunningOcr(false);
     }
   }
-
+  async function openAIReader() {
+    try {
+      const canvases = Array.from(document.querySelectorAll("canvas"));
+  
+      const canvas = canvases.reduce((largest, current) => {
+        if (!largest) return current;
+  
+        const largestArea = largest.width * largest.height;
+        const currentArea = current.width * current.height;
+  
+        return currentArea > largestArea ? current : largest;
+      }, null as HTMLCanvasElement | null);
+  
+      if (canvas) {
+        const image = canvas.toDataURL("image/png");
+        localStorage.setItem("uploadedPdfPageImage", image);
+localStorage.setItem(`uploadedPdfPageImage_${page}`, image);
+localStorage.setItem("uploadedPdfCurrentPage", String(page));
+      }
+  
+      window.location.href = `/reader?pdf=${encodeURIComponent(
+        pdfName || "Uploaded PDF"
+      )}&page=${page}&pages=${numPages || 1}`;
+    } catch (error) {
+      console.error("Failed to open AI reader", error);
+  
+      window.location.href = `/reader?pdf=${encodeURIComponent(
+        pdfName || "Uploaded PDF"
+      )}&page=${page}&pages=${numPages || 1}`; 
+    }
+  }
   function toggleFullscreen() {
     if (!document.fullscreenElement) {
       document.documentElement.requestFullscreen();
@@ -349,14 +420,12 @@ export default function ReadPage() {
             ⛶ Fullscreen
           </button>
 
-          <Link
-            href={`/reader?pdf=${encodeURIComponent(
-              pdfName || "Uploaded PDF"
-            )}&page=${page}`}
-            className="px-4 py-2 bg-purple-600 text-white rounded-xl"
-          >
-            Ask AI About This Page
-          </Link>
+          <button
+  onClick={openAIReader}
+  className="px-4 py-2 bg-purple-600 text-white rounded-xl"
+>
+  Ask AI About This Page
+</button>
         </div>
       </header>
 
@@ -365,15 +434,14 @@ export default function ReadPage() {
           <div>
             <p className="font-bold text-slate-900">📄 {pdfName}</p>
 
+            
             <p className="text-sm text-slate-500 mt-1">
               {isRunningOcr
                 ? "Scanning book page automatically..."
                 : isExtracting
                 ? "Reading book text..."
                 : isAiReady
-                ? ocrText
-                  ? "Scanned page text extracted • Ready for AI analysis"
-                  : "PDF uploaded • Ready for AI page analysis"
+                ? "Book processed • Ready for AI analysis"
                 : "Preparing book for AI analysis..."}
             </p>
           </div>
@@ -441,27 +509,88 @@ export default function ReadPage() {
                 </Document>
               ) : (
                 <div className="w-[720px] min-h-[780px] flex flex-col items-center justify-center text-center p-10">
-                  <h2 className="text-4xl font-bold">Upload a PDF Book</h2>
-
-                  <p className="mt-4 text-slate-500 max-w-xl">
-                    This reader supports real PDF books with page navigation,
-                    zoom, fullscreen, voice reading, accessibility controls,
-                    automatic scanning, and AI page analysis.
+                  <h2 className="text-4xl font-bold">
+                    {demoBook ? demoBook : "Upload a PDF Book"}
+                  </h2>
+              
+                  <p className="mt-4 text-slate-500 max-w-xl leading-8">
+                    {demoBook
+                      ? "Classic reading mode with realistic page reading, AI tutoring, summaries, multilingual explanations, notes, and quizzes."
+                      : "This reader supports real PDF books with page navigation, zoom, fullscreen, voice reading, accessibility controls, automatic scanning, and AI page analysis."}
                   </p>
+              
+                  {demoBook ? (
+                    <>
+                     <div className="mt-10 bg-gradient-to-br from-amber-50 to-orange-100 border rounded-3xl shadow-2xl max-w-3xl text-left overflow-hidden">
+  <div className="bg-gradient-to-r from-orange-700 to-amber-600 text-white px-8 py-5">
+    <p className="uppercase tracking-[0.3em] text-xs opacity-80">
+      Classic Reading Mode
+    </p>
 
-                  <label className="mt-8 bg-blue-600 text-white px-8 py-4 rounded-2xl cursor-pointer">
-                    Choose PDF
-                    <input
-                      type="file"
-                      accept="application/pdf"
-                      onChange={handlePdfUpload}
-                      className="hidden"
-                    />
-                  </label>
+    <h3 className="text-3xl font-bold mt-2">
+      {demoBook}
+    </h3>
+
+    <p className="text-sm opacity-80 mt-1">
+      Page {page} of {totalDemoPages}
+    </p>
+  </div>
+
+  <div className="p-10 min-h-[420px] bg-[#fffdf8]">
+    <p className="text-slate-800 text-xl leading-[2.3] tracking-wide font-serif">
+      {currentDemoPages[page - 1] ||
+        "This demo page is currently unavailable."}
+    </p>
+  </div>
+
+  <div className="border-t bg-white px-8 py-5 flex justify-between items-center">
+    <button
+      onClick={() => setPage(Math.max(1, page - 1))}
+      className="bg-slate-100 px-6 py-3 rounded-xl hover:bg-slate-200"
+    >
+      ← Previous Page
+    </button>
+
+    <div className="text-sm text-slate-500">
+      Reading Progress:{" "}
+      {Math.round((page / totalDemoPages) * 100)}%
+    </div>
+
+    <button
+      onClick={() =>
+        setPage(Math.min(totalDemoPages, page + 1))
+      }
+      className="bg-slate-900 text-white px-6 py-3 rounded-xl hover:bg-black"
+    >
+      Next Page →
+    </button>
+  </div>
+</div> 
+              
+                      <Link
+                        href={`/reader?book=${encodeURIComponent(demoBook)}&demo=true`}
+                        className="mt-8 bg-purple-600 text-white px-8 py-4 rounded-2xl"
+                      >
+                        Ask AI About This Book
+                      </Link>
+                    </>
+                  ) : (
+                    <label className="mt-8 bg-blue-600 text-white px-8 py-4 rounded-2xl cursor-pointer">
+                      Choose PDF
+                      <input
+                        type="file"
+                        accept="application/pdf"
+                        onChange={handlePdfUpload}
+                        className="hidden"
+                      />
+                    </label>
+                  )}
                 </div>
-              )}
-            </div>
-          </div>
+                            )}
+                            </div>
+                          </div>
+
+      
 
           <div className="mt-8 bg-white text-slate-900 rounded-2xl p-5 shadow flex items-center gap-6">
             <button
