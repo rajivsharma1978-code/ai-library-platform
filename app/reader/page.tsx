@@ -51,6 +51,10 @@ export default function ReaderPage() {
   const [pageImage, setPageImage] = useState("");
   const [question, setQuestion] = useState("");
   const [savedNotes, setSavedNotes] = useState<string[]>([]);
+  const [bookmarks, setBookmarks] = useState<string[]>([]);
+  const [quizScore, setQuizScore] = useState(0);
+const [completedQuizzes, setCompletedQuizzes] = useState(0);
+const [weakTopics, setWeakTopics] = useState<string[]>([]);
   const [darkMode, setDarkMode] = useState(false);
   const [selectedText, setSelectedText] = useState("");
   const [activeChapter, setActiveChapter] = useState("Introduction");
@@ -75,7 +79,21 @@ const [readerPage, setReaderPage] = useState(initialPage);
   const activeContent = isPdfMode
     ? pdfText.slice(0, 5000)
     : chapters[activeChapter].join(" ");
-
+    useEffect(() => {
+      const history = JSON.parse(
+        localStorage.getItem("readingHistory") || "[]"
+      );
+    
+      const updated = [
+        book,
+        ...history.filter((item: string) => item !== book),
+      ].slice(0, 10);
+    
+      localStorage.setItem(
+        "readingHistory",
+        JSON.stringify(updated)
+      );
+    }, [book]);
   const [messages, setMessages] = useState<Message[]>([]);
   const modeDescriptions: Record<string, string> = {
     Student:
@@ -143,7 +161,23 @@ const [readerPage, setReaderPage] = useState(initialPage);
   useEffect(() => {
     localStorage.setItem("aiSavedNotes", JSON.stringify(savedNotes));
   }, [savedNotes]);
-
+  useEffect(() => {
+    localStorage.setItem(
+      "aiBookmarks",
+      JSON.stringify(bookmarks)
+    );
+  }, [bookmarks]);
+  useEffect(() => {
+    localStorage.setItem("aiQuizScore", String(quizScore));
+    localStorage.setItem(
+      "aiCompletedQuizzes",
+      String(completedQuizzes)
+    );
+    localStorage.setItem(
+      "aiWeakTopics",
+      JSON.stringify(weakTopics)
+    );
+  }, [quizScore, completedQuizzes, weakTopics]);
   useEffect(() => {
     const demoBookContent: Record<string, string> = {
       "Artificial Intelligence":
@@ -304,7 +338,26 @@ content:
       },
     ]);
   }
-
+  function saveBookmark() {
+    const bookmark =
+      isPdfMode
+        ? `${book} - PDF Page ${readerPage}`
+        : `${book} - ${activeChapter}`;
+  
+    setBookmarks((prev) =>
+      prev.includes(bookmark)
+        ? prev
+        : [...prev, bookmark]
+    );
+  
+    setMessages((prev) => [
+      ...prev,
+      {
+        type: "ai",
+        text: `Bookmark saved: ${bookmark}`,
+      },
+    ]);
+  }
   function saveCurrentNote() {
     setSavedNotes((prev) => [
       ...prev,
@@ -313,7 +366,33 @@ content:
         : `${activeChapter}: ${chapters[activeChapter][0]}`,
     ]);
   }
-
+  function recordQuizResult(
+    score: number,
+    topic: string
+  ) {
+    setQuizScore((prev) => prev + score);
+    setCompletedQuizzes((prev) => prev + 1);
+  
+    if (score < 60) {
+      setWeakTopics((prev) =>
+        prev.includes(topic)
+          ? prev
+          : [...prev, topic]
+      );
+    }
+  
+    setMessages((prev) => [
+      ...prev,
+      {
+        type: "ai",
+        text: `Quiz recorded. Score: ${score}%. ${
+          score < 60
+            ? `Added "${topic}" to revision list.`
+            : "Good performance."
+        }`,
+      },
+    ]);
+  }
   function exportNotes() {
     const notesText = savedNotes.length
       ? savedNotes.join("\n\n")
@@ -573,6 +652,42 @@ content:
     ))}
   </div>
 </div>
+<div className="mt-8 bg-white rounded-3xl p-6 shadow-lg border">
+  <h3 className="text-2xl font-bold">
+    Learning Memory
+  </h3>
+
+  <div className="grid md:grid-cols-3 gap-4 mt-5">
+    <div className="bg-slate-50 p-5 rounded-2xl">
+      <p className="text-sm text-slate-500">
+        Quiz Score
+      </p>
+      <p className="text-3xl font-bold">
+        {quizScore}
+      </p>
+    </div>
+
+    <div className="bg-slate-50 p-5 rounded-2xl">
+      <p className="text-sm text-slate-500">
+        Quizzes Completed
+      </p>
+      <p className="text-3xl font-bold">
+        {completedQuizzes}
+      </p>
+    </div>
+
+    <div className="bg-slate-50 p-5 rounded-2xl">
+      <p className="text-sm text-slate-500">
+        Weak Topics
+      </p>
+      <p className="text-lg font-semibold">
+        {weakTopics.length
+          ? weakTopics.join(", ")
+          : "None"}
+      </p>
+    </div>
+  </div>
+</div>
           <div className="grid grid-cols-3 gap-6 mt-8">
             <div className="bg-white rounded-3xl p-6 shadow-lg">
               <p className="text-sm text-slate-500">AI Summary</p>
@@ -622,6 +737,17 @@ content:
               >
                 Generate Quiz
               </button>
+              <button
+  onClick={() =>
+    recordQuizResult(
+      Math.floor(Math.random() * 100),
+      activeChapter
+    )
+  }
+  className="bg-green-600 text-white px-4 py-2 rounded-xl mt-3 ml-2"
+>
+  Simulate Quiz Score
+</button>
             </div>
           </div>
 
@@ -768,6 +894,12 @@ Open This Page in Classic Reader
                 className="mt-4 bg-black text-white px-4 py-2 rounded-xl"
               >
                 Save as Note
+                <button
+  onClick={saveBookmark}
+  className="mt-3 ml-3 bg-blue-600 text-white px-4 py-2 rounded-xl"
+>
+  Bookmark Page
+</button>
               </button>
             </div>
           </article>
