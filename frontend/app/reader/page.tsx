@@ -51,7 +51,12 @@ export default function ReaderPage() {
   const [pageImage, setPageImage] = useState("");
   const [question, setQuestion] = useState("");
   const [savedNotes, setSavedNotes] = useState<string[]>([]);
-  const [darkMode, setDarkMode] = useState(false);
+  const [bookmarks, setBookmarks] = useState<string[]>([]);
+  const [quizScore, setQuizScore] = useState(0);
+const [completedQuizzes, setCompletedQuizzes] = useState(0);
+const [weakTopics, setWeakTopics] = useState<string[]>([]);
+const [flashcards, setFlashcards] = useState<string[]>([]); 
+const [darkMode, setDarkMode] = useState(false);
   const [selectedText, setSelectedText] = useState("");
   const [activeChapter, setActiveChapter] = useState("Introduction");
   const [isThinking, setIsThinking] = useState(false);
@@ -68,13 +73,28 @@ const [readerPage, setReaderPage] = useState(initialPage);
     searchParams.get("pdf") ||
     pdfName ||
     "Artificial Intelligence";
+    const isDemoBook = searchParams.get("demo") === "true"; 
 
   const isPdfMode = Boolean(pdfText);
 
   const activeContent = isPdfMode
     ? pdfText.slice(0, 5000)
     : chapters[activeChapter].join(" ");
-
+    useEffect(() => {
+      const history = JSON.parse(
+        localStorage.getItem("readingHistory") || "[]"
+      );
+    
+      const updated = [
+        book,
+        ...history.filter((item: string) => item !== book),
+      ].slice(0, 10);
+    
+      localStorage.setItem(
+        "readingHistory",
+        JSON.stringify(updated)
+      );
+    }, [book]);
   const [messages, setMessages] = useState<Message[]>([]);
   const modeDescriptions: Record<string, string> = {
     Student:
@@ -142,9 +162,48 @@ const [readerPage, setReaderPage] = useState(initialPage);
   useEffect(() => {
     localStorage.setItem("aiSavedNotes", JSON.stringify(savedNotes));
   }, [savedNotes]);
-
   useEffect(() => {
-    const rawPdfText = localStorage.getItem("uploadedPdfText") || "";
+    localStorage.setItem(
+      "aiBookmarks",
+      JSON.stringify(bookmarks)
+    );
+  }, [bookmarks]);
+  useEffect(() => {
+    localStorage.setItem("aiQuizScore", String(quizScore));
+    localStorage.setItem(
+      "aiCompletedQuizzes",
+      String(completedQuizzes)
+    );
+    localStorage.setItem(
+      "aiWeakTopics",
+      JSON.stringify(weakTopics)
+    );
+  }, [quizScore, completedQuizzes, weakTopics]);
+  useEffect(() => {
+    const demoBookContent: Record<string, string> = {
+      "Artificial Intelligence":
+        "Artificial Intelligence explores machine intelligence, neural networks, reasoning systems, robotics, and intelligent learning models used across industries.",
+      "Machine Learning":
+        "Machine Learning focuses on training algorithms using datasets, prediction models, supervised learning, and deep neural architectures.",
+      "Data Science":
+        "Data Science combines statistics, machine learning, data visualization, and analytics for extracting insights from structured and unstructured data.",
+      Robotics:
+        "Robotics introduces intelligent machines, automation systems, sensors, motion control, and AI-powered physical systems.",
+      "Deep Learning":
+        "Deep Learning explores neural networks, transformers, computer vision, and advanced AI architectures.",
+      "Python Basics":
+        "Python Basics introduces variables, loops, functions, syntax, and beginner-friendly programming concepts.",
+      "Quantum Computing":
+        "Quantum Computing introduces qubits, superposition, entanglement, and next-generation computational systems.",
+      "Cloud Architecture":
+        "Cloud Architecture explains distributed infrastructure, cloud services, scaling systems, and deployment models.",
+      "Cyber Security":
+        "Cyber Security covers network protection, ethical hacking, encryption, digital threats, and secure systems.",
+    };
+    
+    const rawPdfText = isDemoBook
+      ? demoBookContent[book] || ""
+      : localStorage.getItem("uploadedPdfText") || ""; 
   
     const storedPdfText =
       rawPdfText.includes("const canvases") ||
@@ -153,18 +212,22 @@ const [readerPage, setReaderPage] = useState(initialPage);
         ? ""
         : rawPdfText;
   
-    const storedPdfName = localStorage.getItem("uploadedPdfName") || "";
-    const storedPdfPages =
-      localStorage.getItem("uploadedPdfPages") ||
-      searchParams.get("pages") ||
-      "";
-  
-    const storedPageImage = localStorage.getItem("uploadedPdfPageImage") || "";
-  
-    setPdfText(storedPdfText);
-    setPdfName(storedPdfName);
-    setPdfPages(storedPdfPages);
-    setPageImage(storedPageImage);
+        const storedPdfName = isDemoBook
+        ? book
+        : localStorage.getItem("uploadedPdfName") || "";
+      
+      const storedPdfPages = isDemoBook
+        ? "Demo"
+        : localStorage.getItem("uploadedPdfPages") ||
+          searchParams.get("pages") ||
+          "";
+      
+      const storedPageImage =
+        localStorage.getItem("uploadedPdfPageImage") || "";
+      
+      setPdfText(storedPdfText);
+      setPdfName(storedPdfName);
+      setPdfPages(storedPdfPages); 
   
     const welcomeMessage = storedPdfText
       ? `Welcome! I am your AI Tutor for ${storedPdfName || "your uploaded PDF"}.
@@ -276,7 +339,26 @@ content:
       },
     ]);
   }
-
+  function saveBookmark() {
+    const bookmark =
+      isPdfMode
+        ? `${book} - PDF Page ${readerPage}`
+        : `${book} - ${activeChapter}`;
+  
+    setBookmarks((prev) =>
+      prev.includes(bookmark)
+        ? prev
+        : [...prev, bookmark]
+    );
+  
+    setMessages((prev) => [
+      ...prev,
+      {
+        type: "ai",
+        text: `Bookmark saved: ${bookmark}`,
+      },
+    ]);
+  }
   function saveCurrentNote() {
     setSavedNotes((prev) => [
       ...prev,
@@ -285,7 +367,52 @@ content:
         : `${activeChapter}: ${chapters[activeChapter][0]}`,
     ]);
   }
-
+  function generateFlashcards() {
+    const sourceText = activeContent.slice(0, 600);
+  
+    const cards = [
+      `What is the main idea? → ${sourceText.slice(0, 120)}...`,
+      `Key concept → ${isPdfMode ? "PDF page content" : activeChapter}`,
+      `Revision prompt → Explain this topic in your own words.`,
+    ];
+  
+    setFlashcards(cards);
+  
+    setMessages((prev) => [
+      ...prev,
+      {
+        type: "ai",
+        text: "Flashcards generated and added to your learning memory.",
+      },
+    ]);
+  }
+  function recordQuizResult(
+    score: number,
+    topic: string
+  ) {
+    setQuizScore((prev) => prev + score);
+    setCompletedQuizzes((prev) => prev + 1);
+  
+    if (score < 60) {
+      setWeakTopics((prev) =>
+        prev.includes(topic)
+          ? prev
+          : [...prev, topic]
+      );
+    }
+  
+    setMessages((prev) => [
+      ...prev,
+      {
+        type: "ai",
+        text: `Quiz recorded. Score: ${score}%. ${
+          score < 60
+            ? `Added "${topic}" to revision list.`
+            : "Good performance."
+        }`,
+      },
+    ]);
+  }
   function exportNotes() {
     const notesText = savedNotes.length
       ? savedNotes.join("\n\n")
@@ -545,6 +672,76 @@ content:
     ))}
   </div>
 </div>
+<div className="mt-8 bg-white rounded-3xl p-6 shadow-lg border">
+  <h3 className="text-2xl font-bold">
+    Learning Memory
+  </h3>
+
+  <div className="grid md:grid-cols-3 gap-4 mt-5">
+    <div className="bg-slate-50 p-5 rounded-2xl">
+      <p className="text-sm text-slate-500">
+        Quiz Score
+      </p>
+      <p className="text-3xl font-bold">
+        {quizScore}
+      </p>
+    </div>
+
+    <div className="bg-slate-50 p-5 rounded-2xl">
+      <p className="text-sm text-slate-500">
+        Quizzes Completed
+      </p>
+      <p className="text-3xl font-bold">
+        {completedQuizzes}
+      </p>
+    </div>
+
+    <div className="bg-slate-50 p-5 rounded-2xl">
+      <p className="text-sm text-slate-500">
+        Weak Topics
+      </p>
+      <p className="text-lg font-semibold">
+        {weakTopics.length
+          ? weakTopics.join(", ")
+          : "None"}
+      </p>
+    </div>
+  </div>
+</div>
+<div className="mt-8 bg-white rounded-3xl p-6 shadow-lg border">
+  <div className="flex justify-between items-center">
+    <div>
+      <p className="text-sm text-slate-500">AI Flashcards</p>
+      <h3 className="text-2xl font-bold">Revision Cards</h3>
+    </div>
+
+    <button
+      onClick={generateFlashcards}
+      className="bg-purple-600 text-white px-5 py-3 rounded-xl"
+    >
+      Generate Flashcards
+    </button>
+  </div>
+
+  <div className="grid md:grid-cols-3 gap-4 mt-5">
+    {flashcards.length === 0 ? (
+      <p className="text-slate-500">
+        No flashcards generated yet.
+      </p>
+    ) : (
+      flashcards.map((card, index) => (
+        <div
+          key={index}
+          className="bg-purple-50 border border-purple-200 rounded-2xl p-5"
+        >
+          <p className="text-slate-800 leading-7">
+            {card}
+          </p>
+        </div>
+      ))
+    )}
+  </div>
+</div>
           <div className="grid grid-cols-3 gap-6 mt-8">
             <div className="bg-white rounded-3xl p-6 shadow-lg">
               <p className="text-sm text-slate-500">AI Summary</p>
@@ -594,6 +791,17 @@ content:
               >
                 Generate Quiz
               </button>
+              <button
+  onClick={() =>
+    recordQuizResult(
+      Math.floor(Math.random() * 100),
+      activeChapter
+    )
+  }
+  className="bg-green-600 text-white px-4 py-2 rounded-xl mt-3 ml-2"
+>
+  Simulate Quiz Score
+</button>
             </div>
           </div>
 
@@ -740,6 +948,12 @@ Open This Page in Classic Reader
                 className="mt-4 bg-black text-white px-4 py-2 rounded-xl"
               >
                 Save as Note
+                <button
+  onClick={saveBookmark}
+  className="mt-3 ml-3 bg-blue-600 text-white px-4 py-2 rounded-xl"
+>
+  Bookmark Page
+</button>
               </button>
             </div>
           </article>

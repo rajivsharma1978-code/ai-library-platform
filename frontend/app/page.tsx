@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 const categories = [
   "All",
   "Science",
@@ -74,6 +74,20 @@ function getCover(book: string) {
 }
 
 export default function Home() {
+  const [user, setUser] = useState<any>(null);
+  const [readingHistory, setReadingHistory] = useState<string[]>([]);
+useEffect(() => {
+  const stored = localStorage.getItem("ndlUser");
+
+  if (stored) {
+    setUser(JSON.parse(stored));
+  }
+  const history = localStorage.getItem("readingHistory");
+
+if (history) {
+  setReadingHistory(JSON.parse(history));
+}
+}, []);
   const [search, setSearch] = useState("");
   const [activeCategory, setActiveCategory] = useState("All");
   const filteredBooks = books.filter((book) => {
@@ -107,9 +121,36 @@ export default function Home() {
             <option>Marathi</option>
           </select>
 
-          <button className="bg-black text-white px-5 py-2 rounded-xl">
-            Sign In
-          </button>
+          {user ? (
+  <div className="flex items-center gap-3 bg-white px-4 py-2 rounded-2xl shadow">
+   <div>
+  <p className="font-semibold text-sm">
+    {user.name}
+  </p>
+
+  <p className="text-xs text-slate-500">
+    {user.role}
+  </p>
+
+  <button
+    onClick={() => {
+      localStorage.removeItem("ndlUser");
+      window.location.reload();
+    }}
+    className="text-xs text-red-600 mt-1"
+  >
+    Logout
+  </button>
+</div> 
+  </div>
+) : (
+  <Link
+    href="/sign-in"
+    className="bg-black text-white px-5 py-3 rounded-xl"
+  >
+    👤 Sign In
+  </Link>
+)}
         </div>
       </header>
 
@@ -126,7 +167,21 @@ export default function Home() {
               (item) => (
                 <Link
                   key={item}
-                  href={item.includes("Admin") ? "/admin" : "/"}
+                  href={
+                    item.includes("Library")
+                      ? "/library"
+                      : item.includes("Explore")
+                      ? "/explore"
+                      : item.includes("AI Tutor")
+                      ? "/reader"
+                      : item.includes("Notes")
+                      ? "/notes"
+                      : item.includes("Analytics")
+                      ? "/analytics"
+                      : item.includes("Admin")
+                      ? "/admin-login"
+                      : "/"
+                  }
                   className="block px-4 py-3 rounded-xl hover:bg-white/10 transition"
                 >
                   {item}
@@ -139,18 +194,35 @@ export default function Home() {
         <section className="ml-64 flex-1 p-8 pt-28">
           <div className="bg-gradient-to-r from-indigo-700 via-blue-700 to-purple-700 rounded-3xl p-10 text-white shadow-2xl">
             <div className="inline-block bg-white/15 border border-white/20 px-4 py-2 rounded-full text-sm mb-6">
-              AI-powered public digital library
+            {user ? `${user.role} Learning Dashboard` : "AI-powered public digital library"}
             </div>
 
             <h1 className="text-5xl font-bold max-w-5xl leading-tight">
-              Discover, Read, Learn and Interact with Books
+            {user
+  ? `Welcome back, ${user.name}`
+  : "Discover, Read, Learn and Interact with Books"}
             </h1>
 
             <p className="mt-5 text-lg max-w-3xl text-blue-100">
-              A modern national library experience with smart search, classic reading,
-              AI tutoring, multilingual learning, summaries, notes and quizzes.
+            {user
+  ? `Your personalized ${user.role} workspace is ready with AI tutor, notes, analytics, reading progress and recommendations.`
+  : "A modern national library experience with smart search, classic reading, AI tutoring, multilingual learning, summaries, notes and quizzes."}
             </p>
+            <div className="flex gap-4 mt-8 flex-wrap">
+  <Link
+    href="/read"
+    className="bg-white text-black px-6 py-3 rounded-2xl font-semibold shadow"
+  >
+    Upload / Read PDF
+  </Link>
 
+  <Link
+    href="/reader"
+    className="bg-black/30 border border-white/20 text-white px-6 py-3 rounded-2xl font-semibold"
+  >
+    Open AI Tutor
+  </Link>
+</div>
             <div className="relative mt-8 max-w-5xl">
               <div className="flex gap-2">
                 <input
@@ -198,7 +270,34 @@ export default function Home() {
               ))}
             </div>
           </div>
+          {user && (
+  <div className="mt-8 bg-white/15 border border-white/20 rounded-3xl p-6 max-w-5xl">
+    <h2 className="text-2xl font-bold">
+      Recommended for {user.role}
+    </h2>
 
+    <div className="grid md:grid-cols-3 gap-4 mt-5">
+      {(user.role === "Teacher"
+        ? ["Lesson Plans", "Classroom Questions", "Student Progress"]
+        : user.role === "Researcher"
+        ? ["Research Topics", "Academic Summaries", "Citation Support"]
+        : user.role === "Senior Learner"
+        ? ["Simple Explanations", "Voice Learning", "Daily Life Examples"]
+        : ["Continue Reading", "Practice Quizzes", "Revision Notes"]
+      ).map((item) => (
+        <div
+          key={item}
+          className="bg-white text-slate-900 rounded-2xl p-5 shadow"
+        >
+          <p className="font-bold">{item}</p>
+          <p className="text-sm text-slate-500 mt-2">
+            Personalized AI learning support.
+          </p>
+        </div>
+      ))}
+    </div>
+  </div>
+)}
           <div className="flex gap-3 mt-8 flex-wrap">
               {categories.map((category) => (
               <button
@@ -215,7 +314,41 @@ export default function Home() {
             ))}
             
           </div>
+          {readingHistory.length > 0 && (
+  <div className="mt-12">
+    <h2 className="text-3xl font-bold text-slate-900">
+      Continue Reading
+    </h2>
 
+    <p className="text-slate-500 mt-2">
+      Pick up from your recent learning activity.
+    </p>
+
+    <div className="flex gap-6 mt-6 overflow-x-auto pb-4">
+      {readingHistory.map((book) => (
+        <Link
+          key={book}
+          href={`/book/${encodeURIComponent(book)}`}
+          className="min-w-[240px] bg-white rounded-3xl p-5 shadow-md hover:-translate-y-2 hover:shadow-2xl transition"
+        >
+          <img
+            src={getCover(book)}
+            className="w-full h-72 rounded-2xl object-cover"
+            alt={book}
+          />
+
+          <h3 className="font-bold text-slate-900 mt-4">
+            {book}
+          </h3>
+
+          <p className="text-sm text-slate-500 mt-2">
+            Resume learning
+          </p>
+        </Link>
+      ))}
+    </div>
+  </div>
+)}
           {sections.map((section) => (
             <div key={section.title} className="mt-12">
               <div className="flex items-end justify-between">

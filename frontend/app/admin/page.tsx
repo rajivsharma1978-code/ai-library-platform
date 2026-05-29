@@ -1,6 +1,21 @@
+"use client";
 import Link from "next/link";
 
+
+
+import { useEffect } from "react";
+import { useRouter } from "next/navigation";
+
 export default function AdminPage() {
+  const router = useRouter();
+
+  useEffect(() => {
+    const access = localStorage.getItem("ndlAdminAccess");
+
+    if (access !== "granted") {
+      router.push("/admin-login");
+    }
+  }, [router]);
   return (
     <main className="min-h-screen bg-slate-100 flex">
       <aside className="w-72 bg-slate-950 text-white p-6 min-h-screen">
@@ -29,9 +44,24 @@ export default function AdminPage() {
           ))}
         </div>
 
-        <Link href="/" className="block mt-10 text-blue-400 font-semibold">
-          ← Back to Library
-        </Link>
+        <div className="mt-10 space-y-3">
+  <Link
+    href="/"
+    className="block text-blue-400 font-semibold"
+  >
+    ← Back to Library
+  </Link>
+
+  <button
+    onClick={() => {
+      localStorage.removeItem("ndlAdminAccess");
+      router.push("/admin-login");
+    }}
+    className="bg-red-600 text-white px-4 py-2 rounded-xl text-sm"
+  >
+    Logout
+  </button>
+</div>
       </aside>
 
       <section className="flex-1 p-8">
