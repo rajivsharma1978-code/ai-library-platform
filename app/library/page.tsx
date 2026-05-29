@@ -3,12 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
-const savedBooks = [
-  "Artificial Intelligence",
-  "Machine Learning",
-  "Data Science",
-  "Cyber Security",
-];
+
 
 const uploadedItems = [
   "Uploaded Biology PDF",
@@ -25,6 +20,7 @@ function getCover(book: string) {
 
 export default function LibraryPage() {
     const [readingHistory, setReadingHistory] = useState<string[]>([]);
+    const [savedBooks, setSavedBooks] = useState<string[]>([]);
     const [bookmarks, setBookmarks] = useState<string[]>([]);
     useEffect(() => {
       const history = localStorage.getItem("readingHistory");
@@ -36,6 +32,11 @@ export default function LibraryPage() {
 
 if (storedBookmarks) {
   setBookmarks(JSON.parse(storedBookmarks));
+}
+const storedSavedBooks = localStorage.getItem("savedBooks");
+
+if (storedSavedBooks) {
+  setSavedBooks(JSON.parse(storedSavedBooks));
 }
     }, []);  
   return (
@@ -143,7 +144,14 @@ if (storedBookmarks) {
           </h2>
 
           <div className="grid md:grid-cols-4 gap-6 mt-6">
-            {savedBooks.map((book) => (
+          {savedBooks.length === 0 ? (
+  <div className="bg-white rounded-3xl p-6 shadow">
+    <p className="text-slate-500">
+      No books saved yet.
+    </p>
+  </div>
+) : (
+  savedBooks.map((book) => (
               <Link
                 key={book}
                 href={`/book/${encodeURIComponent(book)}`}
@@ -163,7 +171,8 @@ if (storedBookmarks) {
                   AI Ready • Notes • Quiz
                 </p>
               </Link>
-            ))}
+            ))
+        )}
           </div>
         </section>
 

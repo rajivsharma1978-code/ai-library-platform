@@ -1,6 +1,23 @@
+"use client";
+
 import Link from "next/link";
+import { useEffect, useState } from "react";
 
 export default function AnalyticsPage() {
+  const [quizScore, setQuizScore] = useState("0");
+  const [completedQuizzes, setCompletedQuizzes] = useState("0");
+  const [weakTopics, setWeakTopics] = useState<string[]>([]);
+  
+  useEffect(() => {
+    setQuizScore(localStorage.getItem("aiQuizScore") || "0");
+    setCompletedQuizzes(localStorage.getItem("aiCompletedQuizzes") || "0");
+  
+    const storedWeakTopics = localStorage.getItem("aiWeakTopics");
+  
+    if (storedWeakTopics) {
+      setWeakTopics(JSON.parse(storedWeakTopics));
+    }
+  }, []); 
   return (
     <main className="min-h-screen bg-slate-100">
       <div className="max-w-7xl mx-auto p-10">
@@ -31,10 +48,10 @@ export default function AnalyticsPage() {
           </div>
 
           <div className="bg-white rounded-3xl p-8 shadow-lg">
-            <h2 className="text-4xl font-bold">89</h2>
-            <p className="text-slate-500 mt-2">
-              AI Sessions
-            </p>
+          <h2 className="text-4xl font-bold">{completedQuizzes}</h2>
+<p className="text-slate-500 mt-2">
+  Quizzes Completed
+</p>
           </div>
 
           <div className="bg-white rounded-3xl p-8 shadow-lg">
@@ -45,10 +62,10 @@ export default function AnalyticsPage() {
           </div>
 
           <div className="bg-white rounded-3xl p-8 shadow-lg">
-            <h2 className="text-4xl font-bold">92%</h2>
-            <p className="text-slate-500 mt-2">
-              Retention Score
-            </p>
+          <h2 className="text-4xl font-bold">{quizScore}</h2>
+<p className="text-slate-500 mt-2">
+  Quiz Score
+</p> 
           </div>
         </div>
 
@@ -93,8 +110,9 @@ export default function AnalyticsPage() {
               </div>
 
               <div className="bg-slate-100 p-4 rounded-2xl">
-                Recommended Focus: Cyber Security
-              </div>
+  Recommended Focus:{" "}
+  {weakTopics.length ? weakTopics.join(", ") : "No weak topics yet"}
+</div>
 
               <div className="bg-slate-100 p-4 rounded-2xl">
                 AI Tutor Usage: High
@@ -127,7 +145,7 @@ export default function AnalyticsPage() {
               </li>
 
               <li>
-                • Review weak topics identified by AI Tutor
+              • Review {weakTopics.length ? weakTopics.join(", ") : "topics suggested by AI Tutor"}
               </li>
             </ul>
           </div>

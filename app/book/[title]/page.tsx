@@ -1,4 +1,5 @@
 import Link from "next/link";
+import SaveBookButton from "@/components/SaveBookButton";
 
 interface BookPageProps {
   params: Promise<{
@@ -143,6 +144,7 @@ export default async function BookPage({ params }: BookPageProps) {
 >
   Ask AI
 </Link>
+<SaveBookButton bookTitle={bookTitle} />
               </div>
 
               <div className="grid grid-cols-3 gap-4 mt-10">

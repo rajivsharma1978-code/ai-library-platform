@@ -55,7 +55,8 @@ export default function ReaderPage() {
   const [quizScore, setQuizScore] = useState(0);
 const [completedQuizzes, setCompletedQuizzes] = useState(0);
 const [weakTopics, setWeakTopics] = useState<string[]>([]);
-  const [darkMode, setDarkMode] = useState(false);
+const [flashcards, setFlashcards] = useState<string[]>([]); 
+const [darkMode, setDarkMode] = useState(false);
   const [selectedText, setSelectedText] = useState("");
   const [activeChapter, setActiveChapter] = useState("Introduction");
   const [isThinking, setIsThinking] = useState(false);
@@ -364,6 +365,25 @@ content:
       isPdfMode
         ? `PDF Page ${readerPage}: ${activeContent.slice(0, 250)}...`
         : `${activeChapter}: ${chapters[activeChapter][0]}`,
+    ]);
+  }
+  function generateFlashcards() {
+    const sourceText = activeContent.slice(0, 600);
+  
+    const cards = [
+      `What is the main idea? → ${sourceText.slice(0, 120)}...`,
+      `Key concept → ${isPdfMode ? "PDF page content" : activeChapter}`,
+      `Revision prompt → Explain this topic in your own words.`,
+    ];
+  
+    setFlashcards(cards);
+  
+    setMessages((prev) => [
+      ...prev,
+      {
+        type: "ai",
+        text: "Flashcards generated and added to your learning memory.",
+      },
     ]);
   }
   function recordQuizResult(
@@ -686,6 +706,40 @@ content:
           : "None"}
       </p>
     </div>
+  </div>
+</div>
+<div className="mt-8 bg-white rounded-3xl p-6 shadow-lg border">
+  <div className="flex justify-between items-center">
+    <div>
+      <p className="text-sm text-slate-500">AI Flashcards</p>
+      <h3 className="text-2xl font-bold">Revision Cards</h3>
+    </div>
+
+    <button
+      onClick={generateFlashcards}
+      className="bg-purple-600 text-white px-5 py-3 rounded-xl"
+    >
+      Generate Flashcards
+    </button>
+  </div>
+
+  <div className="grid md:grid-cols-3 gap-4 mt-5">
+    {flashcards.length === 0 ? (
+      <p className="text-slate-500">
+        No flashcards generated yet.
+      </p>
+    ) : (
+      flashcards.map((card, index) => (
+        <div
+          key={index}
+          className="bg-purple-50 border border-purple-200 rounded-2xl p-5"
+        >
+          <p className="text-slate-800 leading-7">
+            {card}
+          </p>
+        </div>
+      ))
+    )}
   </div>
 </div>
           <div className="grid grid-cols-3 gap-6 mt-8">

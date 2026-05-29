@@ -75,13 +75,18 @@ function getCover(book: string) {
 
 export default function Home() {
   const [user, setUser] = useState<any>(null);
-
+  const [readingHistory, setReadingHistory] = useState<string[]>([]);
 useEffect(() => {
   const stored = localStorage.getItem("ndlUser");
 
   if (stored) {
     setUser(JSON.parse(stored));
   }
+  const history = localStorage.getItem("readingHistory");
+
+if (history) {
+  setReadingHistory(JSON.parse(history));
+}
 }, []);
   const [search, setSearch] = useState("");
   const [activeCategory, setActiveCategory] = useState("All");
@@ -309,7 +314,41 @@ useEffect(() => {
             ))}
             
           </div>
+          {readingHistory.length > 0 && (
+  <div className="mt-12">
+    <h2 className="text-3xl font-bold text-slate-900">
+      Continue Reading
+    </h2>
 
+    <p className="text-slate-500 mt-2">
+      Pick up from your recent learning activity.
+    </p>
+
+    <div className="flex gap-6 mt-6 overflow-x-auto pb-4">
+      {readingHistory.map((book) => (
+        <Link
+          key={book}
+          href={`/book/${encodeURIComponent(book)}`}
+          className="min-w-[240px] bg-white rounded-3xl p-5 shadow-md hover:-translate-y-2 hover:shadow-2xl transition"
+        >
+          <img
+            src={getCover(book)}
+            className="w-full h-72 rounded-2xl object-cover"
+            alt={book}
+          />
+
+          <h3 className="font-bold text-slate-900 mt-4">
+            {book}
+          </h3>
+
+          <p className="text-sm text-slate-500 mt-2">
+            Resume learning
+          </p>
+        </Link>
+      ))}
+    </div>
+  </div>
+)}
           {sections.map((section) => (
             <div key={section.title} className="mt-12">
               <div className="flex items-end justify-between">
