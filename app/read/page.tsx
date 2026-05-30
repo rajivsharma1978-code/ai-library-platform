@@ -55,6 +55,12 @@ export default function ReadPage() {
     ],
   };
   useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+const book = params.get("book");
+
+if (book) {
+  localStorage.setItem("ndl_continue_reading", book);
+}
     async function setupPdfWorker() {
       const { pdfjs } = await import("react-pdf");
       pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;

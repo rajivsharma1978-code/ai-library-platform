@@ -7,12 +7,12 @@ type SaveBookButtonProps = {
 export default function SaveBookButton({ bookTitle }: SaveBookButtonProps) {
   function saveBook() {
     const savedBooks = JSON.parse(
-      localStorage.getItem("savedBooks") || "[]"
+      localStorage.getItem("ndl_my_library") || "[]"
     );
 
     if (!savedBooks.includes(bookTitle)) {
       localStorage.setItem(
-        "savedBooks",
+        "ndl_my_library",
         JSON.stringify([...savedBooks, bookTitle])
       );
     }

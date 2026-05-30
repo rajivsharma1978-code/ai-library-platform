@@ -155,27 +155,47 @@ if (history) {
       </header>
 
       <div className="flex">
-        <aside className="w-64 bg-slate-950 text-white p-6 min-h-screen pt-28 fixed left-0 top-0">
+      <aside className="w-64 bg-slate-950 text-white p-4 h-screen pt-20 fixed left-0 top-0 overflow-y-auto">
           <h2 className="text-3xl font-bold">NDL AI</h2>
 
           <p className="text-slate-400 mt-2">
             One Library. Infinite Learning.
           </p>
 
-          <div className="mt-10 space-y-4">
-            {["📚 Library", "🔍 Explore", "🤖 AI Tutor", "📝 Notes", "📊 Analytics", "🛡️ Admin", "⚙️ Settings"].map(
+          <div className="mt-6 space-y-2">
+            {[
+  "📚 Library",
+  "👤 My Library",
+  "🔍 Explore",
+  "🤖 AI Tutor",
+  "📝 Notes",
+  "🧠 AI Revision Center",
+  "🎴 Flashcards",
+  "🧪 AI Quiz",
+  "📊 Analytics",
+  "🛡️ Admin",
+  "⚙️ Settings",
+].map(
               (item) => (
                 <Link
                   key={item}
                   href={
-                    item.includes("Library")
-                      ? "/library"
+                    item.includes("My Library")
+  ? "/my-library"
+  : item.includes("Library")
+  ? "/library"
                       : item.includes("Explore")
                       ? "/explore"
                       : item.includes("AI Tutor")
                       ? "/reader"
                       : item.includes("Notes")
                       ? "/notes"
+                      : item.includes("Revision")
+? "/revision"
+: item.includes("Flashcards")
+? "/flashcards"
+: item.includes("Quiz")
+? "/quiz"
                       : item.includes("Analytics")
                       ? "/analytics"
                       : item.includes("Admin")

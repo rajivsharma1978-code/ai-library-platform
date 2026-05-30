@@ -3,146 +3,106 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
-const notes = [
-  {
-    title: "Artificial Intelligence",
-    type: "AI Summary",
-    date: "Today",
-  },
-  {
-    title: "Machine Learning",
-    type: "Revision Notes",
-    date: "Yesterday",
-  },
-  {
-    title: "Cyber Security",
-    type: "Flashcards",
-    date: "2 Days Ago",
-  },
-];
+type Note = {
+  id: string;
+  bookTitle: string;
+  chapter?: string;
+  text: string;
+  createdAt: string;
+};
 
 export default function NotesPage() {
-  const [savedNotes, setSavedNotes] = useState<string[]>([]);
+  const [notes, setNotes] = useState<Note[]>([]);
+  const [search, setSearch] = useState("");
 
   useEffect(() => {
-    const notes = localStorage.getItem("aiSavedNotes");
-  
-    if (notes) {
-      setSavedNotes(JSON.parse(notes));
-    }
-  }, []); 
+    const saved = localStorage.getItem("ndl_ai_notes");
+    if (saved) setNotes(JSON.parse(saved));
+  }, []);
+
+  const filteredNotes = notes.filter((note) =>
+    `${note.bookTitle} ${note.chapter || ""} ${note.text}`
+      .toLowerCase()
+      .includes(search.toLowerCase())
+  );
+
+  const deleteNote = (id: string) => {
+    const updated = notes.filter((note) => note.id !== id);
+    setNotes(updated);
+    localStorage.setItem("ndl_ai_notes", JSON.stringify(updated));
+  };
+
   return (
-    <main className="min-h-screen bg-slate-100">
-      <div className="max-w-7xl mx-auto p-10">
-        <Link
-          href="/"
-          className="text-blue-600 font-semibold"
-        >
-          ← Back to Library
-        </Link>
+    <main className="min-h-screen bg-slate-50 p-6">
+      <div className="mx-auto max-w-6xl">
+        <div className="mb-6 flex items-center justify-between">
+          <div>
+            <h1 className="text-3xl font-bold text-slate-900">My Notes</h1>
+            <p className="text-slate-600">
+              Notes saved from your books and AI reading sessions.
+            </p>
+          </div>
 
-        <div className="mt-8 bg-gradient-to-r from-emerald-600 to-teal-700 text-white rounded-3xl p-10 shadow-xl">
-          <h1 className="text-5xl font-bold">
-            Smart Notes
-          </h1>
-
-          <p className="mt-4 text-lg text-emerald-100 max-w-3xl">
-            AI-generated summaries, revision notes, flashcards,
-            highlights, and personal learning notes.
-          </p>
+          <Link
+            href="/"
+            className="rounded-xl bg-slate-900 px-4 py-2 text-white hover:bg-slate-700"
+          >
+            Home
+          </Link>
         </div>
 
-        <div className="grid md:grid-cols-3 gap-6 mt-10">
-          <div className="bg-white rounded-3xl p-8 shadow-lg">
-            <h2 className="text-3xl font-bold">
-              24
-            </h2>
+        <input
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search notes by book, chapter, or text..."
+          className="mb-6 w-full rounded-2xl border border-slate-200 bg-white p-4 shadow-sm outline-none focus:border-slate-400"
+        />
 
-            <p className="text-slate-500 mt-2">
-              Saved Notes
+        {filteredNotes.length === 0 ? (
+          <div className="rounded-3xl bg-white p-10 text-center shadow-sm">
+            <h2 className="text-xl font-semibold text-slate-800">
+              No notes found
+            </h2>
+            <p className="mt-2 text-slate-500">
+              Save notes while reading books. They will appear here book-wise.
             </p>
           </div>
-
-          <div className="bg-white rounded-3xl p-8 shadow-lg">
-            <h2 className="text-3xl font-bold">
-              12
-            </h2>
-
-            <p className="text-slate-500 mt-2">
-              AI Summaries
-            </p>
-          </div>
-
-          <div className="bg-white rounded-3xl p-8 shadow-lg">
-            <h2 className="text-3xl font-bold">
-              86%
-            </h2>
-
-            <p className="text-slate-500 mt-2">
-              Revision Completion
-            </p>
-          </div>
-        </div>
-
-        <section className="mt-12">
-          <h2 className="text-2xl font-bold mb-6">
-            Recent Notes
-          </h2>
-
-          <div className="space-y-5">
-  {savedNotes.length === 0 ? (
-    <div className="bg-white rounded-3xl p-6 shadow-lg">
-      <p className="text-slate-500">
-        No saved notes yet. Open AI Reader and save important points.
-      </p>
-    </div>
-  ) : (
-    savedNotes.map((note, index) => (
-      <div
-        key={index}
-        className="bg-white rounded-3xl p-6 shadow-lg"
-      >
-        <h3 className="font-bold text-xl">
-          Saved Note {index + 1}
-        </h3>
-
-        <p className="text-slate-600 mt-3 leading-7">
-          {note}
-        </p>
-      </div>
-    ))
-  )}
-</div>
-        </section>
-
-        <section className="mt-12">
-          <div className="bg-white rounded-3xl p-10 shadow-lg">
-            <h2 className="text-2xl font-bold">
-              Quick Actions
-            </h2>
-
-            <div className="flex flex-wrap gap-4 mt-6">
-              <Link
-                href="/reader"
-                className="bg-blue-600 text-white px-6 py-3 rounded-xl"
+        ) : (
+          <div className="grid gap-4">
+            {filteredNotes.map((note) => (
+              <div
+                key={note.id}
+                className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm"
               >
-                Open AI Tutor
-              </Link>
+                <div className="mb-3 flex items-start justify-between gap-4">
+                  <div>
+                    <h2 className="text-lg font-bold text-slate-900">
+                      {note.bookTitle}
+                    </h2>
+                    {note.chapter && (
+                      <p className="text-sm text-slate-500">{note.chapter}</p>
+                    )}
+                  </div>
 
-              <button className="bg-slate-100 px-6 py-3 rounded-xl">
-                Export Notes
-              </button>
+                  <button
+                    onClick={() => deleteNote(note.id)}
+                    className="rounded-xl bg-red-50 px-3 py-1 text-sm text-red-600 hover:bg-red-100"
+                  >
+                    Delete
+                  </button>
+                </div>
 
-              <button className="bg-slate-100 px-6 py-3 rounded-xl">
-                Generate Flashcards
-              </button>
+                <p className="whitespace-pre-line text-slate-700">
+                  {note.text}
+                </p>
 
-              <button className="bg-slate-100 px-6 py-3 rounded-xl">
-                Create Revision Sheet
-              </button>
-            </div>
+                <p className="mt-4 text-xs text-slate-400">
+                  Saved on {new Date(note.createdAt).toLocaleString()}
+                </p>
+              </div>
+            ))}
           </div>
-        </section>
+        )}
       </div>
     </main>
   );
