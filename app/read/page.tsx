@@ -442,12 +442,35 @@ localStorage.setItem("uploadedPdfCurrentPage", String(page));
 
             
             <p className="text-sm text-slate-500 mt-1">
+            {isAiReady && (
+  <div className="mt-3 flex flex-wrap gap-2">
+    <span className="bg-blue-100 text-blue-700 px-3 py-1 rounded-full text-xs">
+      📖 Summary
+    </span>
+
+    <span className="bg-purple-100 text-purple-700 px-3 py-1 rounded-full text-xs">
+      🤖 Ask AI
+    </span>
+
+    <span className="bg-green-100 text-green-700 px-3 py-1 rounded-full text-xs">
+      📝 Notes
+    </span>
+
+    <span className="bg-orange-100 text-orange-700 px-3 py-1 rounded-full text-xs">
+      🎴 Flashcards
+    </span>
+
+    <span className="bg-pink-100 text-pink-700 px-3 py-1 rounded-full text-xs">
+      🧠 Quiz
+    </span>
+  </div>
+)}
               {isRunningOcr
                 ? "Scanning book page automatically..."
                 : isExtracting
                 ? "Reading book text..."
                 : isAiReady
-                ? "Book processed • Ready for AI analysis"
+                ? "AI Ready • Generate Summary, Ask Questions, Create Notes, Flashcards and Quizzes"
                 : "Preparing book for AI analysis..."}
             </p>
           </div>
@@ -459,7 +482,11 @@ localStorage.setItem("uploadedPdfCurrentPage", String(page));
                 : "bg-yellow-100 text-yellow-700 px-4 py-2 rounded-full text-sm font-semibold"
             }
           >
-            {isAiReady ? "AI Ready" : "Processing"}
+            {
+  isAiReady
+    ? "✓ AI Ready"
+    : "Processing..."
+}
           </div>
         </div>
       )}
