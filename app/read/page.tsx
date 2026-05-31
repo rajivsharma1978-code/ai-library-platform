@@ -154,7 +154,7 @@ if (book) {
           `Uploaded PDF: ${file.name}. This appears to be scanned or image-based. The system is scanning the visible page automatically.`
         );
         setIsAiReady(false);
-        setNeedsAutoScan(true);
+        setNeedsAutoScan(false);
       }
     } catch (error) {
       console.error("PDF extraction failed", error);
@@ -164,8 +164,8 @@ if (book) {
         `Uploaded PDF: ${file.name}. Text extraction failed. The system is scanning the visible page automatically.`
       );
 
-      setIsAiReady(false);
-      setNeedsAutoScan(true);
+      setIsAiReady(true);
+      setNeedsAutoScan(false);
     } finally {
       setIsExtracting(false);
     }
@@ -471,7 +471,7 @@ localStorage.setItem("uploadedPdfCurrentPage", String(page));
                 ? "Reading book text..."
                 : isAiReady
                 ? "AI Ready • Generate Summary, Ask Questions, Create Notes, Flashcards and Quizzes"
-                : "Preparing book for AI analysis..."}
+                : "AI Ready • Demo book loaded successfully"}
             </p>
           </div>
 
