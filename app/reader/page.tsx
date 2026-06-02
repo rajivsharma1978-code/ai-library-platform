@@ -70,6 +70,7 @@ const [darkMode, setDarkMode] = useState(false);
   const [activeChapter, setActiveChapter] = useState("Introduction");
   const [isThinking, setIsThinking] = useState(false);
   const [studyMode, setStudyMode] = useState("Student");
+  const [selectedLanguage, setSelectedLanguage] = useState("English");
 
   const initialPage = Number(searchParams.get("page") || "1");
 
@@ -284,7 +285,7 @@ if (book) {
         : `Summarize the current chapter in simple language. Chapter: ${activeChapter}`
     );
   }
-  async function addAIMessage(questionText: string) {
+  async function addAIMessage(questionText: string, forceLanguage?: string) {
     setIsThinking(true);
 
     try {
@@ -294,7 +295,11 @@ if (book) {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          question: `[Study Mode: ${studyMode}] ${questionText}`,
+          question: `[Study Mode: ${studyMode}] [Answer Language: ${
+            forceLanguage || selectedLanguage
+          }] ${questionText}. IMPORTANT: Answer only in ${
+            forceLanguage || selectedLanguage
+          }. Do not answer in English unless the selected language is English.`,
           book,
           chapter: isPdfMode ? `PDF Page ${readerPage}` : activeChapter,
           content: isPdfMode
@@ -356,17 +361,28 @@ if (book) {
   }
 
   function multilingualResponse(language: string) {
-    setMessages((prev) => [
-      ...prev,
-      {
-        type: "user",
-        text: `Explain this content in ${language}`,
-      },
-      {
-        type: "ai",
-        text: `Demo ${language} explanation: This content can be explained in simple regional-language format for students, elderly learners, rural users, and multilingual readers. In production, this will connect to multilingual AI translation and tutoring.`,
-      },
-    ]);
+    setSelectedLanguage(language);
+  
+    const rawPdfText = localStorage.getItem("uploadedPdfText") || "";
+    const hasRealPdfText =
+      rawPdfText.length > 200 &&
+      !rawPdfText.includes("not accessible") &&
+      !rawPdfText.includes("Text extraction failed") &&
+      !rawPdfText.includes("Automatic scan completed") &&
+      !rawPdfText.includes("no readable text");
+  
+    const contentToExplain =
+      isPdfMode && hasRealPdfText
+        ? rawPdfText
+        : activeContent;
+  
+    addAIMessage(
+      `Explain the following learning content in ${language}. Do not say the content is unavailable. Use simple language.
+  
+  CONTENT:
+${contentToExplain.slice(0, 6000)}`,
+  language
+);
   }
   function saveBookmark() {
     const bookmark =
@@ -806,7 +822,7 @@ if (book) {
                       onClick={() => multilingualResponse(language)}
                       className="bg-blue-100 text-blue-700 px-3 py-2 rounded-full text-xs hover:bg-blue-600 hover:text-white"
                     >
-                      {language}
+                      {`Explain in ${language}`}
                     </button>
                   )
                 )}
@@ -1014,6 +1030,18 @@ Open This Page in Classic Reader
             <p className="text-xs text-gray-400">
               Context: {isPdfMode ? `PDF Page ${readerPage}` : activeChapter}
             </p>
+            <select
+  value={selectedLanguage}
+  onChange={(e) => setSelectedLanguage(e.target.value)}
+  className="mt-3 w-full rounded-xl bg-white px-3 py-2 text-sm text-black"
+>
+  <option>English</option>
+  <option>Hindi</option>
+  <option>Tamil</option>
+  <option>Bengali</option>
+  <option>Marathi</option>
+  <option>Telugu</option>
+</select>
             <button
   onClick={() => {
     localStorage.removeItem("aiReaderMessages");

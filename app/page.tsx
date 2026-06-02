@@ -212,22 +212,47 @@ if (history) {
         </aside>
 
         <section className="ml-64 flex-1 p-8 pt-28">
-          <div className="bg-gradient-to-r from-indigo-700 via-blue-700 to-purple-700 rounded-3xl p-10 text-white shadow-2xl">
+        <div className="bg-gradient-to-r from-indigo-700 via-blue-700 to-purple-700 rounded-3xl p-10 text-white shadow-2xl">
+
             <div className="inline-block bg-white/15 border border-white/20 px-4 py-2 rounded-full text-sm mb-6">
-            {user ? `${user.role} Learning Dashboard` : "AI-powered public digital library"}
+            {user ? `${user.role} Learning Dashboard` : "Government-ready AI Learning Infrastructure"}
             </div>
 
             <h1 className="text-5xl font-bold max-w-5xl leading-tight">
             {user
   ? `Welcome back, ${user.name}`
-  : "Discover, Read, Learn and Interact with Books"}
+  : "National Digital Learning Intelligence Platform"}
             </h1>
 
             <p className="mt-5 text-lg max-w-3xl text-blue-100">
             {user
   ? `Your personalized ${user.role} workspace is ready with AI tutor, notes, analytics, reading progress and recommendations.`
-  : "A modern national library experience with smart search, classic reading, AI tutoring, multilingual learning, summaries, notes and quizzes."}
+  : "Read. Understand. Revise. Master. India's AI-powered knowledge platform that transforms books, PDFs and learning resources into personalized tutors, multilingual explanations, summaries, quizzes, revision notes and lifelong learning experiences."}
             </p>
+       
+            <div className="bg-white/10 border border-white/20 rounded-3xl p-6 shadow-2xl backdrop-blur-xl">
+            <div className="grid grid-cols-3 gap-3"> 
+            
+    {[
+      ["📚", "10M+"],
+      ["🤖", "24×7"],
+      ["🌐", "22+"],
+      ["📄", "PDF AI"],
+      ["📝", "Notes"],
+      ["🎯", "Quiz"],
+    ].map(([icon, label]) => (
+      <div
+  key={label}
+  className="rounded-2xl bg-white/10 px-4 py-3 border border-white/10 hover:bg-white/15 transition"
+>
+<div className="text-xl">{icon}</div>
+<p className="mt-1 text-xs font-medium text-blue-100">
+  {label}
+</p>
+      </div>
+    ))}
+  </div>
+</div>
             <div className="flex gap-4 mt-8 flex-wrap">
   <Link
     href="/read"
@@ -311,7 +336,20 @@ if (history) {
         >
           <p className="font-bold">{item}</p>
           <p className="text-sm text-slate-500 mt-2">
-            Personalized AI learning support.
+          {item === "Continue Reading"
+  ? "Resume books, PDFs and AI learning sessions from where you left off."
+  : item === "Practice Quizzes"
+  ? "Generate AI quizzes from saved notes and reading material."
+  : item === "Revision Notes"
+  ? "Turn notes into summaries, flashcards and exam-ready revision."
+  : item === "Simple Explanations"
+  ? "Convert difficult concepts into simple, everyday language."
+  : item === "Voice Learning"
+  ? "Listen to learning material through voice-enabled AI support."
+  : item === "Daily Life Examples"
+  ? "Understand concepts through familiar real-world examples."
+  : "Personalized AI learning support based on your role."
+}
           </p>
         </div>
       ))}
@@ -453,6 +491,7 @@ if (history) {
                   </p>
                 </div>
               ))}
+              
             </div>
           </div>
         </section>

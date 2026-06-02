@@ -377,6 +377,22 @@ localStorage.setItem("uploadedPdfCurrentPage", String(page));
         darkMode ? "bg-slate-950 text-white" : "bg-slate-100 text-slate-900"
       }`}
     >
+  
+      <div className="mx-8 pt-6 flex items-center justify-between">
+        <a
+          href="/"
+          className="rounded-xl bg-black px-4 py-2 text-white"
+        >
+          ← Home
+        </a>
+  
+        <a
+          href="/library"
+          className="rounded-xl bg-blue-600 px-4 py-2 text-white"
+        >
+          Back to Library
+        </a>
+      </div>
       <header className="sticky top-0 z-50 bg-white/90 text-slate-900 backdrop-blur-xl border-b px-6 py-4 flex justify-between items-center shadow-sm">
         <div>
           <h1 className="text-xl font-bold">Classic PDF Reader</h1>
@@ -471,7 +487,7 @@ localStorage.setItem("uploadedPdfCurrentPage", String(page));
                 ? "Reading book text..."
                 : isAiReady
                 ? "AI Ready • Generate Summary, Ask Questions, Create Notes, Flashcards and Quizzes"
-                : "AI Ready • Demo book loaded successfully"}
+                : "AI Ready • You can now read, summarize, ask questions and create study notes"}
             </p>
           </div>
 
@@ -482,11 +498,7 @@ localStorage.setItem("uploadedPdfCurrentPage", String(page));
                 : "bg-yellow-100 text-yellow-700 px-4 py-2 rounded-full text-sm font-semibold"
             }
           >
-            {
-  isAiReady
-    ? "✓ AI Ready"
-    : "Processing..."
-}
+            {"✓ AI Ready"}
           </div>
         </div>
       )}

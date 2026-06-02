@@ -56,7 +56,10 @@ function getCover(bookTitle: string) {
 
 export default async function BookPage({ params }: BookPageProps) {
   const { title } = await params;
-  const bookTitle = decodeURIComponent(title);
+  const bookTitle =
+  title && title !== "null" && title !== "undefined"
+    ? decodeURIComponent(title)
+    : "Artificial Intelligence";
   const coverImage = getCover(bookTitle);
   const demoContent =
   demoBookContent[bookTitle] ||
