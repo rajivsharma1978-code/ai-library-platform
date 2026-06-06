@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 
 const chapters: Record<string, string[]> = {
@@ -42,7 +42,7 @@ type Message = {
   text: string;
 };
 
-export default function ReaderPage() {
+function ReaderPageContent() {
   const searchParams = useSearchParams();
 
   const [pdfText, setPdfText] = useState("");
@@ -1089,5 +1089,12 @@ Open This Page in Classic Reader
         🤖
       </button>
     </main>
+  );
+}
+export default function ReaderPage() {
+  return (
+    <Suspense fallback={<div className="p-10">Loading Reader...</div>}>
+      <ReaderPageContent />
+    </Suspense>
   );
 }
