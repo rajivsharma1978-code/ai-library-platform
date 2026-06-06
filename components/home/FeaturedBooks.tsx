@@ -1,161 +1,159 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
 import { motion } from "framer-motion";
-import { FEATURED_BOOKS } from "./data";
+import { ALL_BOOKS, AI_SUMMARIES, type Book } from "./data";
+import { UI_TEXT } from "@/lib/i18n";
+import { useLanguage } from "@/lib/useLanguage";
 
-const MOCK_SUMMARIES: Record<string, string> = {
-  "Introduction to Public Policy":
-    "This book introduces how public policy is designed, approved, and evaluated. It explains agenda setting, institutional roles, budget trade-offs, and impact assessment through practical case studies from education, health, and urban governance.",
-  "Climate Science for Citizens":
-    "The text simplifies climate systems, carbon cycles, and adaptation strategies for non-specialists. It combines scientific fundamentals with policy choices, helping readers understand risk, resilience planning, and responsible citizen action.",
-  "Digital India: A Handbook":
-    "A practical overview of digital public infrastructure, identity systems, data governance, and service delivery modernization. The book highlights interoperability, privacy safeguards, and implementation patterns for large-scale national platforms.",
-  "Constitutional Foundations":
-    "This volume explains constitutional principles, separation of powers, and rights jurisprudence with landmark judgments. It connects legal doctrine to contemporary administrative and policy decisions to support evidence-based civic understanding.",
+const COVER_URLS: Record<string, string> = {
+  "Artificial Intelligence": "https://covers.openlibrary.org/b/id/10523338-M.jpg",
+  "Machine Learning":        "https://covers.openlibrary.org/b/id/8231856-M.jpg",
+  "Data Science":            "https://covers.openlibrary.org/b/id/240726-M.jpg",
+  "Deep Learning":           "https://covers.openlibrary.org/b/id/10720543-M.jpg",
+  "Quantum Computing":       "https://covers.openlibrary.org/b/id/8235116-M.jpg",
+  "Cyber Security":          "https://covers.openlibrary.org/b/id/8775165-M.jpg",
+  "Python Basics":           "https://covers.openlibrary.org/b/id/9108915-M.jpg",
+  "Robotics":                "https://covers.openlibrary.org/b/id/5546156-M.jpg",
+  "Cloud Architecture":      "https://covers.openlibrary.org/b/id/8091016-M.jpg",
 };
 
 export function FeaturedBooks() {
-  const [selectedBook, setSelectedBook] = useState<(typeof FEATURED_BOOKS)[number] | null>(
-    null
-  );
-  const [summary, setSummary] = useState("");
-  const [isLoadingSummary, setIsLoadingSummary] = useState(false);
+  const { language } = useLanguage();
+  const t = UI_TEXT[language];
+  const [summaryBook, setSummaryBook] = useState<Book | null>(null);
+  const [summaryText, setSummaryText] = useState("");
+  const [loading, setLoading] = useState(false);
 
-  const openSummary = (book: (typeof FEATURED_BOOKS)[number]) => {
-    setSelectedBook(book);
-    setSummary("");
-    setIsLoadingSummary(true);
-
-    window.setTimeout(() => {
-      setSummary(MOCK_SUMMARIES[book.title] ?? "Summary unavailable for this title.");
-      setIsLoadingSummary(false);
-    }, 1100);
-  };
-
-  const closeSummary = () => {
-    setSelectedBook(null);
-    setSummary("");
-    setIsLoadingSummary(false);
+  const openSummary = (book: Book) => {
+    setSummaryBook(book);
+    setSummaryText("");
+    setLoading(true);
+    setTimeout(() => {
+      setSummaryText(AI_SUMMARIES[book.title] ?? "Summary not available.");
+      setLoading(false);
+    }, 900);
   };
 
   return (
     <>
-      <section
-        id="catalog"
-        className="mx-auto max-w-7xl px-4 py-20 sm:px-6 lg:px-8"
-        aria-labelledby="featured-heading"
-      >
-        <motion.div
-          initial={{ opacity: 0, y: 16 }}
-          whileInView={{ opacity: 1, y: 0 }}
-          viewport={{ once: true }}
-          transition={{ duration: 0.5 }}
-          className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between"
-        >
-          <div>
-            <p className="text-sm font-semibold uppercase tracking-wider text-ndl-gold">
-              Curated collection
-            </p>
-            <h2
-              id="featured-heading"
-              className="mt-1 text-2xl font-bold text-ndl-navy sm:text-3xl"
-            >
-              Featured books
-            </h2>
+      <section id="catalog" className="border-b border-orange-100 bg-[#FFFAF5] py-16">
+        <div className="mx-auto max-w-7xl px-6 lg:px-8">
+          <div className="mb-10 flex items-end justify-between">
+            <div>
+              <p className="mb-2 text-[10px] uppercase tracking-[2.5px] text-[#C85A00]">{t.catalogKicker}</p>
+              <h2 className="text-3xl font-light text-stone-900"
+                style={{ fontFamily: "var(--font-cormorant), serif" }}>{t.catalogTitle}</h2>
+            </div>
+            <Link href="/library"
+              className="text-[10px] uppercase tracking-widest text-[#C85A00] transition hover:text-[#a84800]">
+              {t.catalogViewAll}
+            </Link>
           </div>
-          <a
-            href="#"
-            className="text-sm font-semibold text-ndl-navy underline-offset-4 hover:underline"
-          >
-            View full catalog →
-          </a>
-        </motion.div>
 
-        <motion.div
-          className="mt-10 grid gap-6 sm:grid-cols-2 lg:grid-cols-4"
-          initial="hidden"
-          whileInView="visible"
-          viewport={{ once: true, margin: "-40px" }}
-          variants={{
-            hidden: {},
-            visible: { transition: { staggerChildren: 0.08 } },
-          }}
-        >
-          {FEATURED_BOOKS.map((book) => (
-            <motion.article
-              key={book.title}
-              variants={{
-                hidden: { opacity: 0, y: 20 },
-                visible: { opacity: 1, y: 0 },
-              }}
-              whileHover={{ y: -4 }}
-              className="group flex flex-col rounded-xl border border-slate-200 bg-white p-5 shadow-sm transition hover:border-ndl-gold/30 hover:shadow-md"
-            >
-              <div
-                className={`aspect-[3/4] rounded-lg bg-gradient-to-br ${book.gradient} flex items-end p-4`}
-              >
-                <span className="rounded-md bg-white/90 px-2 py-1 text-xs font-medium text-ndl-navy">
-                  {book.category}
-                </span>
-              </div>
-              <h3 className="mt-4 font-semibold text-slate-900 transition group-hover:text-ndl-navy">
-                {book.title}
-              </h3>
-              <p className="mt-1 text-sm text-slate-500">{book.author}</p>
-              <div className="mt-4 grid grid-cols-2 gap-2">
-                <button
-                  type="button"
-                  className="w-full rounded-lg border border-slate-200 py-2 text-sm font-medium text-ndl-navy transition hover:bg-ndl-navy hover:text-white"
-                >
-                  Read now
-                </button>
-                <button
-                  type="button"
-                  onClick={() => openSummary(book)}
-                  className="w-full rounded-lg bg-ndl-gold py-2 text-sm font-semibold text-ndl-navy transition hover:bg-ndl-gold-light"
-                >
-                  AI Summary
-                </button>
-              </div>
-            </motion.article>
-          ))}
-        </motion.div>
+          <motion.div
+            className="grid gap-px border border-orange-100 bg-orange-100 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5"
+            initial="hidden" whileInView="visible" viewport={{ once: true, margin: "-40px" }}
+            variants={{ hidden: {}, visible: { transition: { staggerChildren: 0.06 } } }}>
+            {ALL_BOOKS.map((book) => (
+              <motion.article key={book.title}
+                variants={{ hidden: { opacity: 0 }, visible: { opacity: 1 } }}
+                className="group flex flex-col bg-white">
+                {/* Cover with real image */}
+                <Link href={`/book/${encodeURIComponent(book.title)}`}
+                  className="relative block overflow-hidden bg-orange-50" style={{ height: "180px" }}>
+                  <img
+                    src={COVER_URLS[book.title] ?? "https://covers.openlibrary.org/b/id/8235116-M.jpg"}
+                    alt={book.title}
+                    className="h-full w-full object-cover transition group-hover:scale-105 duration-300"
+                    onError={(e) => {
+                      const el = e.target as HTMLImageElement;
+                      el.style.display = "none";
+                      el.parentElement!.style.background = book.coverBg;
+                    }}
+                  />
+                  {/* Spine accent overlay */}
+                  <div className="absolute left-0 top-0 h-full w-1.5" style={{ background: book.spineColor }} />
+                  {/* Badge */}
+                  {book.badge && (
+                    <span className={`absolute right-2 top-2 rounded-sm px-2 py-0.5 text-[8px] uppercase tracking-widest font-medium ${
+                      book.badge === "New" ? "bg-green-100 text-green-700" :
+                      book.badge === "Trending" ? "bg-orange-100 text-orange-700" :
+                      "bg-stone-900 text-white"}`}>
+                      {book.badge === "New" ? t.badgeNew : book.badge === "Trending" ? t.badgeTrending : t.badgeEditorPick}
+                    </span>
+                  )}
+                  {/* Category */}
+                  <span className="absolute bottom-2 left-4 rounded-sm bg-white/90 px-2 py-0.5 text-[9px] uppercase tracking-wider text-stone-700">
+                    {book.category}
+                  </span>
+                </Link>
+
+                <div className="flex flex-1 flex-col p-4">
+                  <Link href={`/book/${encodeURIComponent(book.title)}`}>
+                    <h3 className="text-sm font-light leading-snug text-stone-900 transition group-hover:text-[#C85A00]"
+                      style={{ fontFamily: "var(--font-cormorant), serif", fontSize: "15px" }}>
+                      {book.title}
+                    </h3>
+                  </Link>
+                  <p className="mt-1 text-[10px] text-stone-400">{book.author}</p>
+                  <div className="mt-auto pt-4 flex gap-2">
+                    <Link href={`/book/${encodeURIComponent(book.title)}`}
+                      className="flex-1 rounded-sm border border-stone-200 py-2 text-center text-[10px] uppercase tracking-wider text-stone-600 transition hover:bg-stone-900 hover:text-white hover:border-stone-900">
+                      {t.readBtn}
+                    </Link>
+                    <button onClick={() => openSummary(book)}
+                      className="flex-1 rounded-sm border border-orange-200 bg-orange-50 py-2 text-[10px] uppercase tracking-wider text-[#C85A00] transition hover:bg-orange-100">
+                      {t.aiSummaryBtn}
+                    </button>
+                  </div>
+                </div>
+              </motion.article>
+            ))}
+          </motion.div>
+        </div>
       </section>
 
-      {selectedBook && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/50 p-4">
-          <div className="w-full max-w-2xl rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl">
-            <div className="flex items-start justify-between gap-4">
+      {/* AI Summary modal */}
+      {summaryBook && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-stone-900/50 p-4">
+          <motion.div initial={{ opacity: 0, scale: 0.97 }} animate={{ opacity: 1, scale: 1 }}
+            className="w-full max-w-lg rounded-sm border border-orange-100 bg-white p-8 shadow-2xl">
+            <p className="text-[9px] uppercase tracking-[2.5px] text-[#C85A00]">{t.aiSummaryBtn}</p>
+            <div className="mt-3 flex items-center gap-4">
+              <img
+                src={COVER_URLS[summaryBook.title] ?? "https://covers.openlibrary.org/b/id/8235116-M.jpg"}
+                alt={summaryBook.title}
+                className="w-12 h-16 object-cover rounded-sm border border-orange-100 shadow-sm"
+              />
               <div>
-                <p className="text-xs font-semibold uppercase tracking-wider text-ndl-gold">
-                  AI Summary
-                </p>
-                <h3 className="mt-1 text-xl font-bold text-ndl-navy">{selectedBook.title}</h3>
-                <p className="text-sm text-slate-500">{selectedBook.author}</p>
+                <h3 className="text-2xl font-light text-stone-900"
+                  style={{ fontFamily: "var(--font-cormorant), serif" }}>{summaryBook.title}</h3>
+                <p className="mt-0.5 text-xs text-stone-400">{summaryBook.author}</p>
               </div>
-              <button
-                type="button"
-                onClick={closeSummary}
-                className="rounded-lg border border-slate-200 px-3 py-1.5 text-sm font-medium text-slate-600 transition hover:bg-slate-100"
-              >
-                Close
+            </div>
+            <div className="mt-6 rounded-sm border border-orange-100 bg-orange-50 p-5 text-sm leading-relaxed text-stone-700">
+              {loading ? (
+                <div className="space-y-3">
+                  {[2/3, 1, 5/6, 3/4].map((w, i) => (
+                    <div key={i} className="h-3 animate-pulse rounded bg-orange-100" style={{ width: `${w*100}%` }} />
+                  ))}
+                </div>
+              ) : <p>{summaryText}</p>}
+            </div>
+            <div className="mt-6 flex gap-3">
+              <Link href={`/book/${encodeURIComponent(summaryBook.title)}`}
+                onClick={() => setSummaryBook(null)}
+                className="flex-1 rounded-sm bg-[#C85A00] py-2.5 text-center text-[10px] uppercase tracking-widest text-white transition hover:bg-[#a84800]">
+                {t.readNow}
+              </Link>
+              <button onClick={() => setSummaryBook(null)}
+                className="flex-1 rounded-sm border border-stone-200 py-2.5 text-[10px] uppercase tracking-widest text-stone-600 transition hover:bg-stone-100">
+                ✕
               </button>
             </div>
-
-            <div className="mt-6 rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm leading-6 text-slate-700">
-              {isLoadingSummary ? (
-                <div className="space-y-3">
-                  <div className="h-3 w-2/3 animate-pulse rounded bg-slate-200" />
-                  <div className="h-3 w-full animate-pulse rounded bg-slate-200" />
-                  <div className="h-3 w-5/6 animate-pulse rounded bg-slate-200" />
-                  <p className="pt-1 text-xs text-slate-500">Generating AI summary...</p>
-                </div>
-              ) : (
-                <p>{summary}</p>
-              )}
-            </div>
-          </div>
+          </motion.div>
         </div>
       )}
     </>

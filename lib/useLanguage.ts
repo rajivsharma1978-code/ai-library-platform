@@ -8,8 +8,8 @@ export function useLanguage(defaultLanguage: Language = "en") {
 
   useEffect(() => {
     const stored = window.localStorage.getItem(LANGUAGE_STORAGE_KEY);
-    if (stored === "en" || stored === "hi") {
-      setLanguageState(stored);
+    if (stored && ["en", "hi", "ta", "bn", "te", "mr"].includes(stored)) {
+      setLanguageState(stored as Language);
     }
   }, []);
 

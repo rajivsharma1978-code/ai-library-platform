@@ -1,8 +1,7 @@
 "use client";
-export const dynamic = "force-dynamic";
 
 import Link from "next/link";
-import { Suspense, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 
 const chapters: Record<string, string[]> = {
@@ -43,7 +42,7 @@ type Message = {
   text: string;
 };
 
-function ReaderPageContent() {
+export default function ReaderPage() {
   const searchParams = useSearchParams();
 
   const [pdfText, setPdfText] = useState("");
@@ -51,15 +50,7 @@ function ReaderPageContent() {
   const [pdfPages, setPdfPages] = useState("");
   const [pageImage, setPageImage] = useState("");
   const [question, setQuestion] = useState("");
-  type SavedNote = {
-    id: string;
-    bookTitle: string;
-    chapter?: string;
-    text: string;
-    createdAt: string;
-  };
-  
-  const [savedNotes, setSavedNotes] = useState<SavedNote[]>([]);
+  const [savedNotes, setSavedNotes] = useState<string[]>([]);
   const [bookmarks, setBookmarks] = useState<string[]>([]);
   const [quizScore, setQuizScore] = useState(0);
 const [completedQuizzes, setCompletedQuizzes] = useState(0);
@@ -70,7 +61,6 @@ const [darkMode, setDarkMode] = useState(false);
   const [activeChapter, setActiveChapter] = useState("Introduction");
   const [isThinking, setIsThinking] = useState(false);
   const [studyMode, setStudyMode] = useState("Student");
-  const [selectedLanguage, setSelectedLanguage] = useState("English");
 
   const initialPage = Number(searchParams.get("page") || "1");
 
@@ -91,12 +81,6 @@ const [readerPage, setReaderPage] = useState(initialPage);
     ? pdfText.slice(0, 5000)
     : chapters[activeChapter].join(" ");
     useEffect(() => {
-      const params = new URLSearchParams(window.location.search);
-const book = params.get("book");
-
-if (book) {
-  localStorage.setItem("ndl_continue_reading", book);
-}
       const history = JSON.parse(
         localStorage.getItem("readingHistory") || "[]"
       );
@@ -270,22 +254,8 @@ if (book) {
       },
     ]);
   }, []);
-  function summarizeBook() {
-    addAIMessage(
-      isPdfMode
-        ? "Create a fast 2-minute summary of this uploaded PDF using the available extracted text. Mention main topic, important sections, and what the reader should understand first."
-        : "Create a fast 2-minute book summary. Focus on the main idea, key concepts, who should read it, and what the learner will understand after reading."
-    );
-  }
-  
-  function summarizeCurrentSection() {
-    addAIMessage(
-      isPdfMode
-        ? `Summarize the current PDF page or visible PDF section in simple language. Page: ${readerPage}`
-        : `Summarize the current chapter in simple language. Chapter: ${activeChapter}`
-    );
-  }
-  async function addAIMessage(questionText: string, forceLanguage?: string) {
+
+  async function addAIMessage(questionText: string) {
     setIsThinking(true);
 
     try {
@@ -295,16 +265,12 @@ if (book) {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          question: `[Study Mode: ${studyMode}] [Answer Language: ${
-            forceLanguage || selectedLanguage
-          }] ${questionText}. IMPORTANT: Answer only in ${
-            forceLanguage || selectedLanguage
-          }. Do not answer in English unless the selected language is English.`,
+          question: `[Study Mode: ${studyMode}] ${questionText}`,
           book,
           chapter: isPdfMode ? `PDF Page ${readerPage}` : activeChapter,
-          content: isPdfMode
-          ? (localStorage.getItem("uploadedPdfText") || activeContent).slice(0, 12000)
-          : activeContent,
+content:
+  localStorage.getItem("uploadedPdfText") ||
+  activeContent,
         }),
       });
 
@@ -361,28 +327,17 @@ if (book) {
   }
 
   function multilingualResponse(language: string) {
-    setSelectedLanguage(language);
-  
-    const rawPdfText = localStorage.getItem("uploadedPdfText") || "";
-    const hasRealPdfText =
-      rawPdfText.length > 200 &&
-      !rawPdfText.includes("not accessible") &&
-      !rawPdfText.includes("Text extraction failed") &&
-      !rawPdfText.includes("Automatic scan completed") &&
-      !rawPdfText.includes("no readable text");
-  
-    const contentToExplain =
-      isPdfMode && hasRealPdfText
-        ? rawPdfText
-        : activeContent;
-  
-    addAIMessage(
-      `Explain the following learning content in ${language}. Do not say the content is unavailable. Use simple language.
-  
-  CONTENT:
-${contentToExplain.slice(0, 6000)}`,
-  language
-);
+    setMessages((prev) => [
+      ...prev,
+      {
+        type: "user",
+        text: `Explain this content in ${language}`,
+      },
+      {
+        type: "ai",
+        text: `Demo ${language} explanation: This content can be explained in simple regional-language format for students, elderly learners, rural users, and multilingual readers. In production, this will connect to multilingual AI translation and tutoring.`,
+      },
+    ]);
   }
   function saveBookmark() {
     const bookmark =
@@ -405,24 +360,12 @@ ${contentToExplain.slice(0, 6000)}`,
     ]);
   }
   function saveCurrentNote() {
-    const newNote = {
-      id: Date.now().toString(),
-      bookTitle: isPdfMode ? "Uploaded PDF" : "Artificial Intelligence",
-      chapter: isPdfMode ? `PDF Page ${readerPage}` : activeChapter,
-      text: isPdfMode
-        ? activeContent.slice(0, 250)
-        : chapters[activeChapter][0],
-      createdAt: new Date().toISOString(),
-    };
-  
-    const updatedNotes = [...savedNotes, newNote];
-  
-    setSavedNotes(updatedNotes);
-  
-    localStorage.setItem(
-      "ndl_ai_notes",
-      JSON.stringify(updatedNotes)
-    );
+    setSavedNotes((prev) => [
+      ...prev,
+      isPdfMode
+        ? `PDF Page ${readerPage}: ${activeContent.slice(0, 250)}...`
+        : `${activeChapter}: ${chapters[activeChapter][0]}`,
+    ]);
   }
   function generateFlashcards() {
     const sourceText = activeContent.slice(0, 600);
@@ -822,7 +765,7 @@ ${contentToExplain.slice(0, 6000)}`,
                       onClick={() => multilingualResponse(language)}
                       className="bg-blue-100 text-blue-700 px-3 py-2 rounded-full text-xs hover:bg-blue-600 hover:text-white"
                     >
-                      {`Explain in ${language}`}
+                      {language}
                     </button>
                   )
                 )}
@@ -1000,21 +943,18 @@ Open This Page in Classic Reader
                   : "AI-first libraries combine reading, tutoring, notes, quizzes, and revision into one experience."}
               </p>
 
-              <div className="mt-4 flex gap-3">
-  <button
-    onClick={saveCurrentNote}
-    className="bg-black text-white px-4 py-2 rounded-xl"
-  >
-    Save as Note
-  </button>
-
-  <button
-    onClick={saveBookmark}
-    className="bg-blue-600 text-white px-4 py-2 rounded-xl"
-  >
-    Save Bookmark
-  </button>
-</div>
+              <button
+                onClick={saveCurrentNote}
+                className="mt-4 bg-black text-white px-4 py-2 rounded-xl"
+              >
+                Save as Note
+                <button
+  onClick={saveBookmark}
+  className="mt-3 ml-3 bg-blue-600 text-white px-4 py-2 rounded-xl"
+>
+  Bookmark Page
+</button>
+              </button>
             </div>
           </article>
         </div>
@@ -1030,18 +970,6 @@ Open This Page in Classic Reader
             <p className="text-xs text-gray-400">
               Context: {isPdfMode ? `PDF Page ${readerPage}` : activeChapter}
             </p>
-            <select
-  value={selectedLanguage}
-  onChange={(e) => setSelectedLanguage(e.target.value)}
-  className="mt-3 w-full rounded-xl bg-white px-3 py-2 text-sm text-black"
->
-  <option>English</option>
-  <option>Hindi</option>
-  <option>Tamil</option>
-  <option>Bengali</option>
-  <option>Marathi</option>
-  <option>Telugu</option>
-</select>
             <button
   onClick={() => {
     localStorage.removeItem("aiReaderMessages");
@@ -1079,13 +1007,7 @@ Open This Page in Classic Reader
                   : "bg-slate-900 mr-8 p-4 rounded-2xl text-sm"
               }
             >
-              <div className="whitespace-pre-wrap leading-7">
-  {message.text
-    .replaceAll("## ", "\n\n")
-    .replaceAll("### ", "\n")
-    .replaceAll("**", "")
-  }
-</div>
+              {message.text}
             </div>
           ))}
 
@@ -1122,61 +1044,50 @@ Open This Page in Classic Reader
             {savedNotes.length === 0 ? (
               <p className="text-xs text-gray-500">No saved notes yet.</p>
             ) : (
-              savedNotes.map((note) => (
-                <div key={note.id} className="bg-black p-2 rounded-xl text-xs">
-                  <p className="font-semibold text-white">{note.chapter}</p>
-                  <p className="text-gray-300">{note.text}</p>
+              savedNotes.map((note, index) => (
+                <div key={index} className="bg-black p-2 rounded-xl text-xs">
+                  {note}
                 </div>
               ))
             )}
           </div>
         </div>
 
-        <div className="mt-4 grid grid-cols-2 gap-2">
-  <button
-    onClick={summarizeBook}
-    className="rounded-xl bg-purple-600 px-3 py-3 text-xs font-semibold text-white hover:bg-purple-700"
-  >
-    📖 Book Summary
-  </button>
+        <div className="mt-4 flex gap-2">
+          <input
+            type="text"
+            value={question}
+            onChange={(e) => setQuestion(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") sendMessage();
+            }}
+            placeholder="Ask AI anything..."
+            className="flex-1 rounded-xl px-4 py-3 bg-white text-black outline-none text-sm"
+          />
 
-  <button
-    onClick={summarizeCurrentSection}
-    className="rounded-xl bg-indigo-600 px-3 py-3 text-xs font-semibold text-white hover:bg-indigo-700"
-  >
-    📝 Chapter / PDF
-  </button>
-</div>
-
-<div className="mt-3 flex gap-2">
-  <input
-    type="text"
-    value={question}
-    onChange={(e) => setQuestion(e.target.value)}
-    onKeyDown={(e) => {
-      if (e.key === "Enter") sendMessage();
-    }}
-    placeholder="Ask AI anything..."
-    className="flex-1 rounded-xl px-4 py-3 bg-white text-black outline-none text-sm"
-  />
-
-  <button
-    onClick={sendMessage}
-    className="bg-blue-600 hover:bg-blue-700 px-5 rounded-xl text-sm"
-  >
-    Send
-  </button>
-</div>
+          <button
+            onClick={sendMessage}
+            className="bg-blue-600 hover:bg-blue-700 px-5 rounded-xl text-sm"
+          >
+            Send
+          </button>
+        </div>
       </aside>
 
-     
+      <button
+        onClick={() =>
+          setMessages((prev) => [
+            ...prev,
+            {
+              type: "ai",
+              text: "Floating AI Assistant opened. Ask me anything about this book, PDF, page, summary, quiz, translation, or learning path.",
+            },
+          ])
+        }
+        className="fixed bottom-8 right-8 bg-blue-600 text-white w-16 h-16 rounded-full shadow-2xl text-3xl hover:scale-110 transition"
+      >
+        🤖
+      </button>
     </main>
-  );
-}
-export default function ReaderPage() {
-  return (
-    <Suspense fallback={<div className="p-10">Loading Reader...</div>}>
-      <ReaderPageContent />
-    </Suspense>
   );
 }

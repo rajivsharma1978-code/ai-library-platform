@@ -2,6 +2,7 @@ import { SiteHeader } from "./SiteHeader";
 import { HeroSection } from "./HeroSection";
 import { StatsDashboard } from "./StatsDashboard";
 import { FeaturedBooks } from "./FeaturedBooks";
+import { NewArrivals } from "./NewArrivals";
 import { AiTutors } from "./AiTutors";
 import { Recommendations } from "./Recommendations";
 import { SiteFooter } from "./SiteFooter";
@@ -14,6 +15,7 @@ export function HomePage() {
         <HeroSection />
         <StatsDashboard />
         <FeaturedBooks />
+        <NewArrivals />
         <AiTutors />
         <Recommendations />
       </main>

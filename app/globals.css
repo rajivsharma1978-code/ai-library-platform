@@ -20,6 +20,11 @@
   --color-ndl-surface: var(--ndl-surface);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
+  --font-cormorant: var(--font-cormorant);
+  --font-outfit: var(--font-outfit);
+ /* ADD these two lines before the closing } of @theme inline */
+--font-cormorant: var(--font-cormorant);
+--font-outfit: var(--font-outfit); 
 }
 
 @keyframes fade-in-up {

@@ -7,11 +7,7 @@ export default function AnalyticsPage() {
   const [quizScore, setQuizScore] = useState("0");
   const [completedQuizzes, setCompletedQuizzes] = useState("0");
   const [weakTopics, setWeakTopics] = useState<string[]>([]);
-  const [notesSaved, setNotesSaved] = useState(0);
-const [quizzesGenerated, setQuizzesGenerated] = useState(0);
-const [lastQuizGeneratedAt, setLastQuizGeneratedAt] = useState("");
-const [revisionSummariesGenerated, setRevisionSummariesGenerated] = useState(0);
-const [lastRevisionGeneratedAt, setLastRevisionGeneratedAt] = useState("");
+  
   useEffect(() => {
     setQuizScore(localStorage.getItem("aiQuizScore") || "0");
     setCompletedQuizzes(localStorage.getItem("aiCompletedQuizzes") || "0");
@@ -21,20 +17,7 @@ const [lastRevisionGeneratedAt, setLastRevisionGeneratedAt] = useState("");
     if (storedWeakTopics) {
       setWeakTopics(JSON.parse(storedWeakTopics));
     }
-    const savedNotes = JSON.parse(localStorage.getItem("ndl_ai_notes") || "[]");
-setNotesSaved(savedNotes.length);
-
-const analytics = JSON.parse(localStorage.getItem("ndl_ai_analytics") || "{}");
-setQuizzesGenerated(analytics.quizzesGenerated || 0);
-setLastQuizGeneratedAt(analytics.lastQuizGeneratedAt || "");
-setRevisionSummariesGenerated(
-  analytics.revisionSummariesGenerated || 0
-);
-
-setLastRevisionGeneratedAt(
-  analytics.lastRevisionGeneratedAt || ""
-); 
-}, []); 
+  }, []); 
   return (
     <main className="min-h-screen bg-slate-100">
       <div className="max-w-7xl mx-auto p-10">
@@ -55,47 +38,6 @@ setLastRevisionGeneratedAt(
             revision performance, and knowledge growth.
           </p>
         </div>
-        <div className="mt-8 grid grid-cols-1 md:grid-cols-3 gap-6">
-  <div className="bg-white rounded-3xl p-6 shadow">
-    <p className="text-slate-500">Notes Saved</p>
-    <h2 className="text-4xl font-bold mt-2">{notesSaved}</h2>
-  </div>
-
-  <div className="bg-white rounded-3xl p-6 shadow">
-    <p className="text-slate-500">AI Quizzes Generated</p>
-    <h2 className="text-4xl font-bold mt-2">{quizzesGenerated}</h2>
-  </div>
-
-  <div className="bg-white rounded-3xl p-6 shadow">
-    <p className="text-slate-500">Last Quiz Activity</p>
-    <h2 className="text-lg font-semibold mt-2">
-      {lastQuizGeneratedAt
-        ? new Date(lastQuizGeneratedAt).toLocaleString()
-        : "No activity yet"}
-    </h2>
-  </div>
-  <div className="bg-white rounded-3xl p-6 shadow">
-  <p className="text-slate-500">
-    AI Revision Summaries
-  </p>
-
-  <h2 className="text-4xl font-bold mt-2">
-    {revisionSummariesGenerated}
-  </h2>
-</div>
-
-<div className="bg-white rounded-3xl p-6 shadow">
-  <p className="text-slate-500">
-    Last Revision Activity
-  </p>
-
-  <h2 className="text-lg font-semibold mt-2">
-    {lastRevisionGeneratedAt
-      ? new Date(lastRevisionGeneratedAt).toLocaleString()
-      : "No activity yet"}
-  </h2>
-</div> 
-</div>
 
         <div className="grid md:grid-cols-4 gap-6 mt-10">
           <div className="bg-white rounded-3xl p-8 shadow-lg">

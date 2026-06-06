@@ -57,7 +57,7 @@ export default function ReadPage() {
   useEffect(() => {
     async function setupPdfWorker() {
       const { pdfjs } = await import("react-pdf");
-      pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
+      pdfjs.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
     }
 
     setupPdfWorker();
@@ -81,7 +81,7 @@ export default function ReadPage() {
 
     const timer = setTimeout(() => {
       runOCR(true);
-    }, 6000);
+    }, 300);
 
     return () => clearTimeout(timer);
   }, [pdfFile, numPages, needsAutoScan, isRunningOcr, hasScannedPage]);
@@ -172,7 +172,7 @@ export default function ReadPage() {
       setIsRunningOcr(true);
       setHasScannedPage(true);
 
-      await new Promise((resolve) => setTimeout(resolve, 1500));
+      await new Promise((resolve) => setTimeout(resolve, 0));
 
       const canvases = Array.from(document.querySelectorAll("canvas"));
 

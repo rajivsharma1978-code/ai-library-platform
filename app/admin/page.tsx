@@ -1,82 +1,29 @@
 "use client";
-import Link from "next/link";
-
-
 
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
+import AdminSidebar from "@/components/admin/AdminSidebar";
 
 export default function AdminPage() {
   const router = useRouter();
 
   useEffect(() => {
     const access = localStorage.getItem("ndlAdminAccess");
-
     if (access !== "granted") {
       router.push("/admin-login");
     }
   }, [router]);
+
   return (
     <main className="min-h-screen bg-slate-100 flex">
-      <aside className="w-72 bg-slate-950 text-white p-6 min-h-screen">
-        <h1 className="text-3xl font-bold">NDL AI Admin</h1>
-        <p className="text-slate-400 mt-2 text-sm">
-          National library control center
-        </p>
+      <AdminSidebar />
 
-        <div className="mt-10 space-y-4">
-          {[
-            "📚 Book Management",
-            "⬆️ Upload Queue",
-            "🌐 Languages",
-            "👥 Users",
-            "📊 Analytics",
-            "🤖 AI Usage",
-            "♿ Accessibility",
-            "🛡️ Moderation",
-          ].map((item) => (
-            <div
-              key={item}
-              className="bg-slate-900 hover:bg-blue-600 transition rounded-2xl p-4 cursor-pointer"
-            >
-              {item}
-            </div>
-          ))}
-        </div>
-
-        <div className="mt-10 space-y-3">
-  <Link
-    href="/"
-    className="block text-blue-400 font-semibold"
-  >
-    ← Back to Library
-  </Link>
-
-  <button
-    onClick={() => {
-      localStorage.removeItem("ndlAdminAccess");
-      router.push("/admin-login");
-    }}
-    className="bg-red-600 text-white px-4 py-2 rounded-xl text-sm"
-  >
-    Logout
-  </button>
-</div>
-      </aside>
-
-      <section className="flex-1 p-8">
+      <section className="flex-1 p-8 overflow-auto">
         <div className="bg-gradient-to-r from-indigo-700 via-blue-700 to-purple-700 text-white rounded-3xl p-10 shadow-2xl">
-          <p className="uppercase tracking-widest text-sm opacity-80">
-            Admin Control Center
-          </p>
-
-          <h2 className="text-5xl font-bold mt-3">
-            Manage AI-Powered Digital Library
-          </h2>
-
+          <p className="uppercase tracking-widest text-sm opacity-80">Admin Control Center</p>
+          <h2 className="text-5xl font-bold mt-3">Manage AI-Powered Digital Library</h2>
           <p className="mt-4 text-blue-100">
-            Upload content, approve metadata, monitor AI usage, manage languages,
-            and track accessibility readiness.
+            Upload content, approve metadata, monitor AI usage, manage languages, and track accessibility readiness.
           </p>
         </div>
 
@@ -101,17 +48,10 @@ export default function AdminPage() {
         <div className="grid grid-cols-3 gap-8 mt-8">
           <div className="bg-white rounded-3xl p-8 shadow-lg">
             <h3 className="text-2xl font-bold">Upload & Processing Queue</h3>
-
             <div className="mt-6 border-2 border-dashed border-slate-300 rounded-3xl p-8 text-center">
-              <p className="text-slate-500">
-                Upload PDF / EPUB / scanned documents
-              </p>
-
-              <button className="mt-6 bg-blue-600 text-white px-6 py-3 rounded-xl">
-                Upload Content
-              </button>
+              <p className="text-slate-500">Upload PDF / EPUB / scanned documents</p>
+              <button className="mt-6 bg-blue-600 text-white px-6 py-3 rounded-xl">Upload Content</button>
             </div>
-
             <div className="mt-6 space-y-3 text-sm">
               <p>✅ AI text extraction enabled</p>
               <p>✅ Metadata detection enabled</p>
@@ -122,7 +62,6 @@ export default function AdminPage() {
 
           <div className="bg-white rounded-3xl p-8 shadow-lg">
             <h3 className="text-2xl font-bold">AI System Status</h3>
-
             <div className="mt-6 space-y-4">
               {[
                 ["AI Provider", "Demo / OpenAI Ready"],
@@ -140,29 +79,18 @@ export default function AdminPage() {
           </div>
 
           <div className="bg-gradient-to-br from-slate-950 to-blue-950 rounded-3xl p-8 text-white shadow-lg">
-            <p className="uppercase tracking-widest text-sm text-blue-200">
-              AI Recommendation
-            </p>
-
-            <h3 className="text-3xl font-bold mt-4">
-              Prioritize multilingual PDF intelligence
-            </h3>
-
+            <p className="uppercase tracking-widest text-sm text-blue-200">AI Recommendation</p>
+            <h3 className="text-3xl font-bold mt-4">Prioritize multilingual PDF intelligence</h3>
             <p className="mt-4 text-blue-100 leading-7">
-              Most impact will come from AI summaries, regional language
-              explanations, voice reading, and page-level Q&A.
+              Most impact will come from AI summaries, regional language explanations, voice reading, and page-level Q&A.
             </p>
-
-            <button className="mt-6 bg-white text-black px-5 py-3 rounded-xl">
-              Generate Report
-            </button>
+            <button className="mt-6 bg-white text-black px-5 py-3 rounded-xl">Generate Report</button>
           </div>
         </div>
 
         <div className="grid grid-cols-2 gap-8 mt-8">
           <div className="bg-white rounded-3xl p-8 shadow-lg">
             <h3 className="text-2xl font-bold">Content Approval Queue</h3>
-
             <div className="mt-6 space-y-4">
               {[
                 ["Cyber Security Basics", "Pending metadata review"],
@@ -175,10 +103,7 @@ export default function AdminPage() {
                     <p className="font-semibold">{title}</p>
                     <p className="text-sm text-slate-500">{status}</p>
                   </div>
-
-                  <button className="bg-slate-100 px-4 py-2 rounded-xl text-sm">
-                    Review
-                  </button>
+                  <button className="bg-slate-100 px-4 py-2 rounded-xl text-sm">Review</button>
                 </div>
               ))}
             </div>
@@ -186,7 +111,6 @@ export default function AdminPage() {
 
           <div className="bg-white rounded-3xl p-8 shadow-lg">
             <h3 className="text-2xl font-bold">Language Coverage</h3>
-
             <div className="mt-6 space-y-4">
               {[
                 ["Hindi", "92%"],
@@ -200,12 +124,8 @@ export default function AdminPage() {
                     <p>{language}</p>
                     <p>{value}</p>
                   </div>
-
                   <div className="w-full bg-slate-200 h-3 rounded-full mt-2">
-                    <div
-                      className="bg-blue-600 h-3 rounded-full"
-                      style={{ width: value }}
-                    />
+                    <div className="bg-blue-600 h-3 rounded-full" style={{ width: value }} />
                   </div>
                 </div>
               ))}
@@ -215,7 +135,6 @@ export default function AdminPage() {
 
         <div className="bg-white rounded-3xl p-8 shadow-lg mt-8">
           <h3 className="text-2xl font-bold">Recent Platform Activity</h3>
-
           <div className="mt-6 space-y-4">
             {[
               "Artificial Intelligence PDF uploaded and indexed",
