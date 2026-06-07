@@ -8,27 +8,28 @@ export function StatsDashboard() {
   const { language } = useLanguage();
   const t = UI_TEXT[language];
 
-  const stats = [
-    { val: t.stat1Val, label: t.stat1Label },
-    { val: t.stat2Val, label: t.stat2Label },
-    { val: t.stat3Val, label: t.stat3Label },
-    { val: t.stat4Val, label: t.stat4Label },
+  const STATS = [
+    { emoji:"📚", val: t.stat1Val, label: t.stat1Label, sub:"Books, PDFs, Articles",    color:"bg-orange-50" },
+    { emoji:"👥", val: t.stat2Val, label: t.stat2Label, sub:"Across India",              color:"bg-teal-50"   },
+    { emoji:"🤖", val: t.stat3Val, label: t.stat3Label, sub:"24x7 Learning Support",     color:"bg-purple-50" },
+    { emoji:"🌐", val: t.stat4Val, label: t.stat4Label, sub:"Learn in your language",    color:"bg-blue-50"   },
+    { emoji:"⭐", val:"96%",        label:"Learning Satisfaction", sub:"From our learners", color:"bg-yellow-50" },
+    { emoji:"🕐", val:"24×7",       label:"AI Tutor",              sub:"Always with you",   color:"bg-red-50"    },
   ];
 
   return (
-    <section className="border-b border-orange-100 bg-[#FFFAF5]">
-      <div className="mx-auto max-w-7xl">
-        <div className="grid grid-cols-2 divide-x divide-y divide-orange-100 lg:grid-cols-4 lg:divide-y-0">
-          {stats.map((stat, i) => (
-            <motion.div key={stat.label}
-              initial={{ opacity: 0, y: 12 }}
-              whileInView={{ opacity: 1, y: 0 }}
-              viewport={{ once: true }}
-              transition={{ duration: 0.5, delay: i * 0.08 }}
-              className="px-8 py-7">
-              <p className="text-4xl font-light text-[#C85A00]"
-                style={{ fontFamily: "var(--font-cormorant), serif" }}>{stat.val}</p>
-              <p className="mt-1.5 text-[10px] uppercase tracking-[2px] text-stone-400">{stat.label}</p>
+    <section className="bg-white border-y border-gray-100 py-8">
+      <div className="mx-auto max-w-[1200px] px-6">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4">
+          {STATS.map((s,i)=>(
+            <motion.div key={s.label}
+              initial={{opacity:0,y:14}} whileInView={{opacity:1,y:0}} viewport={{once:true}}
+              transition={{duration:0.35,delay:i*0.06}}
+              className="flex flex-col items-center text-center p-4 rounded-2xl hover:bg-gray-50 transition-colors cursor-default">
+              <div className={`w-12 h-12 rounded-2xl ${s.color} flex items-center justify-center text-2xl mb-3`}>{s.emoji}</div>
+              <div className="text-[22px] font-extrabold text-gray-900 leading-none">{s.val}</div>
+              <div className="mt-1 text-[13px] font-semibold text-gray-800">{s.label}</div>
+              <div className="mt-0.5 text-[11px] text-gray-400">{s.sub}</div>
             </motion.div>
           ))}
         </div>

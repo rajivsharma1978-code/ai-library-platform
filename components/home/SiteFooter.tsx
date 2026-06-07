@@ -4,71 +4,84 @@ import Link from "next/link";
 import { UI_TEXT } from "@/lib/i18n";
 import { useLanguage } from "@/lib/useLanguage";
 
+const LINKS = {
+  Platform: [["Library","/library"],["AI Tutor","/reader"],["Upload PDF","/read"],["Explore","/explore"],["My Space","/my-library"]],
+  Learning: [["Notes","/notes"],["Flashcards","/flashcards"],["Quiz Generator","/quiz"],["Revision Hub","/revision"],["AI Summaries","/reader"]],
+  Company:  [["About Us","/"],["Careers","/"],["Press","/"],["Blog","/"],["Contact Us","/"]],
+  Support:  [["Help Center","/"],["Privacy Policy","/"],["Terms of Service","/"],["Accessibility","/"]],
+};
+
 export function SiteFooter() {
   const { language } = useLanguage();
   const t = UI_TEXT[language];
-
   return (
-    <footer className="bg-[#1a0f05] text-stone-400">
-      {/* Saffron top accent */}
-      <div className="h-1 bg-[#C85A00]" />
-      <div className="mx-auto max-w-7xl px-6 py-14 lg:px-8">
-        <div className="grid gap-10 sm:grid-cols-2 lg:grid-cols-4">
-          <div>
-            <div className="flex items-center gap-3 mb-4">
-              <div className="flex h-9 w-9 items-center justify-center rounded-full border border-[#C85A00]">
-                <svg viewBox="0 0 28 28" fill="none" width="18" height="18">
-                  <circle cx="14" cy="14" r="11" stroke="#C85A00" strokeWidth="1.5"/>
-                  <circle cx="14" cy="14" r="4" fill="#C85A00"/>
-                  <line x1="14" y1="3" x2="14" y2="25" stroke="#C85A00" strokeWidth="1" opacity="0.5"/>
-                  <line x1="3" y1="14" x2="25" y2="14" stroke="#C85A00" strokeWidth="1" opacity="0.5"/>
+    <footer className="bg-white border-t border-gray-100">
+      <div className="mx-auto max-w-[1200px] px-6 py-14">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-10">
+
+          {/* Brand — 2 cols */}
+          <div className="col-span-2">
+            <div className="flex items-center gap-2.5 mb-4">
+              <div className="w-9 h-9 rounded-full border-2 border-orange-500 bg-orange-50 flex items-center justify-center">
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none">
+                  <circle cx="12" cy="12" r="8" stroke="#f97316" strokeWidth="1.5"/>
+                  <circle cx="12" cy="12" r="3" fill="#f97316"/>
+                  <line x1="12" y1="4" x2="12" y2="20" stroke="#f97316" strokeWidth="1.2" opacity="0.5"/>
+                  <line x1="4" y1="12" x2="20" y2="12" stroke="#f97316" strokeWidth="1.2" opacity="0.5"/>
                 </svg>
               </div>
-              <p className="text-base font-light text-stone-200"
-                style={{ fontFamily: "var(--font-cormorant), serif" }}>
-                {t.siteName}
-              </p>
+              <div>
+                <div className="text-[14px] font-extrabold text-gray-900">NDL AI</div>
+                <div className="text-[10px] text-gray-400 leading-tight">National Digital Learning<br/>Intelligence Platform</div>
+              </div>
             </div>
-            <p className="text-xs leading-relaxed text-stone-500">{t.footerDesc}</p>
-            <p className="mt-4 text-[9px] uppercase tracking-widest text-stone-600">{t.government}</p>
-            <p className="mt-2 text-[9px] uppercase tracking-widest text-[#C85A00]">{t.footerFree}</p>
-          </div>
-          <div>
-            <p className="mb-4 text-[9px] uppercase tracking-widest text-stone-500">{t.footerResources}</p>
-            <ul className="space-y-2.5 text-xs">
-              {[
-                [t.footerLibraryCatalog, "/library"],
-                [t.footerResearchTools, "/library"],
-                [t.footerAiTutor, "/reader"],
-                [t.footerAccessibility, "/"],
-              ].map(([label, href]) => (
-                <li key={label}>
-                  <Link href={href} className="text-stone-500 transition hover:text-[#C85A00]">{label}</Link>
-                </li>
+            <p className="text-[13px] text-gray-500 leading-relaxed mb-5">AI-powered knowledge for<br/>every learner in every language.</p>
+            <div className="flex items-center gap-2.5">
+              {[["𝕏","#"],["f","#"],["▶","#"],["in","#"]].map(([icon,href])=>(
+                <a key={icon} href={href}
+                  className="w-8 h-8 rounded-full border border-gray-200 flex items-center justify-center text-[12px] font-bold text-gray-500 hover:bg-orange-50 hover:text-orange-500 hover:border-orange-200 transition-all">
+                  {icon}
+                </a>
               ))}
-            </ul>
+            </div>
           </div>
+
+          {/* Link columns */}
+          {(Object.entries(LINKS) as [string,[string,string][]][]).map(([heading,links])=>(
+            <div key={heading}>
+              <p className="text-[13px] font-extrabold text-gray-900 mb-4">{heading}</p>
+              <ul className="space-y-2.5">
+                {links.map(([label,href])=>(
+                  <li key={label}>
+                    <Link href={href} className="text-[13px] text-gray-500 hover:text-orange-500 transition-colors">{label}</Link>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ))}
+
+          {/* Get the App */}
           <div>
-            <p className="mb-4 text-[9px] uppercase tracking-widest text-stone-500">{t.footerSupport}</p>
-            <ul className="space-y-2.5 text-xs">
-              {[t.footerHelpCentre, t.footerPrivacy, t.footerTerms, t.footerFeedback].map(link => (
-                <li key={link}><a href="#" className="text-stone-500 transition hover:text-[#C85A00]">{link}</a></li>
+            <p className="text-[13px] font-extrabold text-gray-900 mb-4">Get the App</p>
+            <div className="space-y-2.5">
+              {[["▶","Google Play"],["🍎","App Store"]].map(([icon,label])=>(
+                <a key={String(label)} href="#"
+                  className="flex items-center gap-2.5 rounded-xl border border-gray-200 px-3.5 py-2.5 hover:border-orange-300 hover:bg-orange-50 transition-all">
+                  <span className="text-xl flex-shrink-0">{icon}</span>
+                  <div>
+                    <p className="text-[9px] text-gray-400 leading-none">Download on the</p>
+                    <p className="text-[13px] font-bold text-gray-800 leading-tight mt-0.5">{label}</p>
+                  </div>
+                </a>
               ))}
-            </ul>
-          </div>
-          <div>
-            <p className="mb-4 text-[9px] uppercase tracking-widest text-stone-500">{t.footerContact}</p>
-            <p className="text-xs leading-relaxed text-stone-500">help@ndl.gov.in<br />1800-XXX-XXXX</p>
-            <Link href="/admin-login"
-              className="mt-5 inline-block rounded-sm border border-[#C85A00]/30 bg-[#C85A00]/10 px-4 py-2 text-[9px] uppercase tracking-widest text-[#C85A00] transition hover:bg-[#C85A00]/20">
-              Admin Portal
-            </Link>
+            </div>
           </div>
         </div>
 
-        <div className="mt-12 flex flex-col items-start justify-between gap-4 border-t border-stone-800 pt-8 text-[9px] uppercase tracking-widest text-stone-600 sm:flex-row sm:items-center">
-          <p>{t.footerCopy}</p>
-          <p className="border border-stone-700 px-3 py-1">{t.footerBadge}</p>
+        {/* Bottom bar */}
+        <div className="mt-12 pt-8 border-t border-gray-100 flex flex-col sm:flex-row items-center justify-between gap-3">
+          <p className="text-[12.5px] text-gray-400">© 2025 NDL AI. All rights reserved.</p>
+          <p className="text-[12.5px] text-gray-400 flex items-center gap-1">Made with <span className="text-red-500 text-base">❤</span> in India</p>
         </div>
       </div>
     </footer>

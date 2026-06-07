@@ -2,202 +2,143 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { UI_TEXT, LANGUAGE_NAMES, type Language } from "@/lib/i18n";
+import { LANGUAGE_NAMES, type Language } from "@/lib/i18n";
 import { useLanguage } from "@/lib/useLanguage";
 
-interface NDLUser {
-  name: string;
-  role: string;
-}
+interface NDLUser { name: string; role: string; }
 
 const ROLE_COLORS: Record<string, string> = {
-  Student:       "bg-blue-50 text-blue-700 border-blue-200",
-  Teacher:       "bg-green-50 text-green-700 border-green-200",
-  Researcher:    "bg-purple-50 text-purple-700 border-purple-200",
-  "Senior Learner": "bg-amber-50 text-amber-700 border-amber-200",
-  Admin:         "bg-red-50 text-red-700 border-red-200",
+  Student: "bg-blue-100 text-blue-700",
+  Teacher: "bg-green-100 text-green-700",
+  Researcher: "bg-purple-100 text-purple-700",
+  "Senior Learner": "bg-amber-100 text-amber-700",
+  Admin: "bg-red-100 text-red-700",
 };
 
-const USER_NAV: { label: string; href: string; roles: string[] }[] = [
-  { label: "My Library",  href: "/my-library",  roles: ["Student", "Teacher", "Researcher", "Senior Learner", "Admin"] },
-  { label: "Quiz",        href: "/quiz",         roles: ["Student", "Teacher", "Researcher", "Senior Learner"] },
-  { label: "Flashcards",  href: "/flashcards",   roles: ["Student", "Teacher", "Researcher", "Senior Learner"] },
-  { label: "Notes",       href: "/notes",        roles: ["Student", "Teacher", "Researcher", "Senior Learner", "Admin"] },
-  { label: "Analytics",   href: "/analytics",    roles: ["Student", "Teacher", "Researcher", "Senior Learner", "Admin"] },
-  { label: "Settings",    href: "/settings",     roles: ["Student", "Teacher", "Researcher", "Senior Learner", "Admin"] },
+const USER_NAV = [
+  { label: "My Library", href: "/my-library" },
+  { label: "Quiz",       href: "/quiz" },
+  { label: "Flashcards", href: "/flashcards" },
+  { label: "Notes",      href: "/notes" },
+  { label: "Analytics",  href: "/analytics" },
+  { label: "Settings",   href: "/settings" },
 ];
 
 export function SiteHeader() {
   const { language, setLanguage } = useLanguage();
-  const t = UI_TEXT[language];
   const [user, setUser] = useState<NDLUser | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [moreOpen, setMoreOpen] = useState(false);
 
   useEffect(() => {
-    const stored = localStorage.getItem("ndlUser");
-    if (stored) {
-      try { setUser(JSON.parse(stored)); } catch {}
-    }
+    const s = localStorage.getItem("ndlUser");
+    if (s) { try { setUser(JSON.parse(s)); } catch {} }
   }, []);
 
-  const logout = () => {
-    localStorage.removeItem("ndlUser");
-    setUser(null);
-    window.location.href = "/";
-  };
-
-  const userNav = user
-    ? USER_NAV.filter(n => n.roles.includes(user.role))
-    : [];
+  const logout = () => { localStorage.removeItem("ndlUser"); setUser(null); window.location.href = "/"; };
 
   return (
-    <header className="sticky top-0 z-50 border-b border-orange-100 bg-[#FFFAF5]/95 backdrop-blur-md shadow-sm">
-      {/* Saffron top band */}
-      <div className="bg-[#C85A00] py-1 px-6 text-center text-[10px] uppercase tracking-[2.5px] text-orange-100 overflow-hidden whitespace-nowrap text-ellipsis">
-        {t.heroBand}
-      </div>
+    <header className="sticky top-0 z-50 bg-white border-b border-gray-100 shadow-sm">
+      <div className="mx-auto flex max-w-[1200px] items-center justify-between px-6 h-[60px]">
 
-      {/* Main nav row */}
-      <div className="mx-auto flex max-w-7xl items-center justify-between gap-4 px-6 py-3 lg:px-8">
         {/* Logo */}
-        <Link href="/" className="flex items-center gap-3 flex-shrink-0">
-          <div className="flex h-10 w-10 items-center justify-center rounded-full border-2 border-[#C85A00]">
-            <svg viewBox="0 0 28 28" fill="none" width="22" height="22">
-              <circle cx="14" cy="14" r="11" stroke="#C85A00" strokeWidth="1.5"/>
-              <circle cx="14" cy="14" r="4" fill="#C85A00"/>
-              <line x1="14" y1="3" x2="14" y2="25" stroke="#C85A00" strokeWidth="1" opacity="0.5"/>
-              <line x1="3" y1="14" x2="25" y2="14" stroke="#C85A00" strokeWidth="1" opacity="0.5"/>
-              <line x1="6" y1="6" x2="22" y2="22" stroke="#C85A00" strokeWidth="1" opacity="0.4"/>
-              <line x1="22" y1="6" x2="6" y2="22" stroke="#C85A00" strokeWidth="1" opacity="0.4"/>
+        <Link href="/" className="flex items-center gap-2.5 flex-shrink-0">
+          <div className="w-9 h-9 rounded-full border-2 border-orange-500 flex items-center justify-center bg-orange-50">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none">
+              <circle cx="12" cy="12" r="8" stroke="#f97316" strokeWidth="1.5"/>
+              <circle cx="12" cy="12" r="3" fill="#f97316"/>
+              <line x1="12" y1="4" x2="12" y2="20" stroke="#f97316" strokeWidth="1.2" opacity="0.5"/>
+              <line x1="4" y1="12" x2="20" y2="12" stroke="#f97316" strokeWidth="1.2" opacity="0.5"/>
             </svg>
           </div>
-          <div className="hidden sm:block">
-            <p className="text-sm font-semibold text-stone-900 tracking-wide"
-              style={{ fontFamily: "var(--font-cormorant), serif" }}>
-              {t.siteName}
-            </p>
-            <p className="text-[9px] uppercase tracking-widest text-stone-400">{t.government}</p>
+          <div>
+            <div className="text-[15px] font-bold text-gray-900 leading-none">NDL AI</div>
+            <div className="text-[10px] text-gray-400 leading-tight mt-0.5">National Digital Learning<br/>Intelligence Platform</div>
           </div>
         </Link>
 
-        {/* Main nav links */}
-        <nav className="hidden items-center gap-6 md:flex">
-          {([
-            [t.navLibrary,  "/library"],
-            [t.navResearch, "/explore"],
-            [t.navAiTutor,  "/reader"],
-            ["Read PDF",    "/read"],
-          ] as [string, string][]).map(([label, href]) => (
-            <Link key={href} href={href}
-              className="text-[11px] uppercase tracking-widest text-stone-500 transition hover:text-[#C85A00]">
-              {label}
-            </Link>
+        {/* Nav */}
+        <nav className="hidden md:flex items-center gap-1">
+          <Link href="/" className="px-3 py-1 text-[13.5px] font-semibold text-orange-500 border-b-2 border-orange-500">Home</Link>
+          {[["Library","/library"],["AI Tutor","/reader"],["Explore","/explore"],["My Space","/my-library"],["Analytics","/analytics"]].map(([l,h])=>(
+            <Link key={h} href={h} className="px-3 py-1 text-[13.5px] font-medium text-gray-700 hover:text-orange-500 transition-colors">{l}</Link>
           ))}
+          <div className="relative">
+            <button onClick={()=>setMoreOpen(!moreOpen)} className="flex items-center gap-1 px-3 py-1 text-[13.5px] font-medium text-gray-700 hover:text-orange-500">
+              More <span className="text-[10px] mt-0.5">▾</span>
+            </button>
+            {moreOpen && (
+              <div className="absolute top-full left-0 mt-1 bg-white rounded-xl shadow-xl border border-gray-100 py-1.5 w-44 z-50">
+                {[["Read PDF","/read"],["Notes","/notes"],["Flashcards","/flashcards"],["Revision","/revision"],["Settings","/settings"],["Admin","/admin-login"]].map(([l,h])=>(
+                  <Link key={h} href={h} onClick={()=>setMoreOpen(false)} className="block px-4 py-2 text-[13px] text-gray-600 hover:bg-orange-50 hover:text-orange-500">{l}</Link>
+                ))}
+              </div>
+            )}
+          </div>
         </nav>
 
-        {/* Right side */}
-        <div className="flex items-center gap-2">
-          {/* Language selector */}
+        {/* Right */}
+        <div className="flex items-center gap-2.5">
+          <button className="p-1.5 text-gray-500 hover:text-orange-500 transition-colors">
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+          </button>
+
           <div className="relative hidden sm:block">
-            <select
-              value={language}
-              onChange={(e) => setLanguage(e.target.value as Language)}
-              className="appearance-none rounded border border-orange-200 bg-orange-50 pl-3 pr-7 py-2 text-[11px] text-[#C85A00] outline-none cursor-pointer hover:bg-orange-100 transition"
-              aria-label="Select language">
-              {(Object.entries(LANGUAGE_NAMES) as [Language, string][]).map(([code, name]) => (
-                <option key={code} value={code}>{name}</option>
+            <select value={language} onChange={e=>setLanguage(e.target.value as Language)}
+              className="appearance-none flex items-center gap-1.5 pl-7 pr-6 py-1.5 text-[12.5px] font-medium text-gray-700 bg-transparent border-0 outline-none cursor-pointer">
+              {(Object.entries(LANGUAGE_NAMES) as [Language,string][]).map(([c,n])=>(
+                <option key={c} value={c}>{n}</option>
               ))}
             </select>
-            <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-[#C85A00] text-xs">▾</span>
+            <span className="pointer-events-none absolute left-1.5 top-1/2 -translate-y-1/2 text-base">🇮🇳</span>
+            <span className="pointer-events-none absolute right-1 top-1/2 -translate-y-1/2 text-[10px] text-gray-500">▾</span>
           </div>
 
           {user ? (
-            /* Logged-in user chip */
             <div className="relative">
-              <button
-                onClick={() => setMenuOpen(!menuOpen)}
-                className="flex items-center gap-2 rounded border border-orange-200 bg-orange-50 px-3 py-2 transition hover:bg-orange-100">
-                <div className="flex h-7 w-7 items-center justify-center rounded-full bg-[#C85A00] text-[11px] font-semibold text-white flex-shrink-0">
-                  {user.name.charAt(0)}
-                </div>
-                <div className="hidden sm:block text-left">
-                  <p className="text-[11px] font-medium text-stone-800 leading-tight">{user.name}</p>
-                  <span className={`text-[9px] uppercase tracking-wider px-1.5 py-0.5 rounded border font-medium ${ROLE_COLORS[user.role] ?? "bg-stone-50 text-stone-600 border-stone-200"}`}>
-                    {user.role}
-                  </span>
-                </div>
-                <span className="text-stone-400 text-xs ml-1">▾</span>
+              <button onClick={()=>setMenuOpen(!menuOpen)}
+                className="flex items-center gap-2 bg-orange-50 border border-orange-200 rounded-xl px-3 py-1.5 hover:bg-orange-100 transition-colors">
+                <div className="w-6 h-6 rounded-full bg-orange-500 flex items-center justify-center text-white text-[11px] font-bold">{user.name[0]}</div>
+                <span className="text-[12.5px] font-semibold text-gray-800 hidden sm:block">{user.name}</span>
+                <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded-full hidden sm:block ${ROLE_COLORS[user.role]??""}`}>{user.role}</span>
+                <span className="text-[10px] text-gray-400">▾</span>
               </button>
-
-              {/* Dropdown */}
               {menuOpen && (
-                <div className="absolute right-0 top-full mt-2 w-52 rounded border border-orange-100 bg-white shadow-xl z-50">
-                  <div className="border-b border-orange-50 px-4 py-3">
-                    <p className="text-xs font-medium text-stone-700">{user.name}</p>
-                    <p className={`mt-1 inline-block text-[9px] uppercase tracking-wider px-2 py-0.5 rounded border font-medium ${ROLE_COLORS[user.role] ?? "bg-stone-50 text-stone-600 border-stone-200"}`}>
-                      {user.role}
-                    </p>
+                <div className="absolute right-0 top-full mt-2 w-52 bg-white rounded-2xl shadow-2xl border border-gray-100 overflow-hidden z-50">
+                  <div className="bg-orange-50 px-4 py-3 border-b border-orange-100">
+                    <div className="text-[13px] font-bold text-gray-900">{user.name}</div>
+                    <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${ROLE_COLORS[user.role]??""}`}>{user.role}</span>
                   </div>
                   <div className="py-1">
-                    {userNav.map(item => (
-                      <Link key={item.href} href={item.href}
-                        onClick={() => setMenuOpen(false)}
-                        className="block px-4 py-2.5 text-[11px] uppercase tracking-wider text-stone-600 transition hover:bg-orange-50 hover:text-[#C85A00]">
-                        {item.label}
-                      </Link>
+                    {USER_NAV.map(n=>(
+                      <Link key={n.href} href={n.href} onClick={()=>setMenuOpen(false)}
+                        className="block px-4 py-2.5 text-[13px] text-gray-600 hover:bg-orange-50 hover:text-orange-500">{n.label}</Link>
                     ))}
                   </div>
-                  <div className="border-t border-orange-50 px-4 py-2">
-                    <Link href="/settings" onClick={() => setMenuOpen(false)}
-                      className="block py-2 text-[11px] uppercase tracking-wider text-stone-400 transition hover:text-stone-600">
-                      Settings
-                    </Link>
-                    {user.role === "Admin" && (
-                      <Link href="/admin" onClick={() => setMenuOpen(false)}
-                        className="block py-2 text-[11px] uppercase tracking-wider text-[#C85A00] transition hover:text-[#a84800]">
-                        Admin Dashboard
-                      </Link>
-                    )}
-                    <button onClick={logout}
-                      className="w-full text-left py-2 text-[11px] uppercase tracking-wider text-red-500 transition hover:text-red-700">
-                      Sign Out
-                    </button>
+                  <div className="border-t border-gray-100 px-4 py-2">
+                    {user.role==="Admin" && <Link href="/admin" onClick={()=>setMenuOpen(false)} className="block py-1.5 text-[12px] font-semibold text-orange-500">Admin Dashboard →</Link>}
+                    <button onClick={logout} className="w-full text-left py-1.5 text-[12px] text-red-500 hover:text-red-700">Sign Out</button>
                   </div>
                 </div>
               )}
             </div>
           ) : (
-            <>
-              <Link href="/sign-in"
-                className="hidden rounded border border-stone-300 px-4 py-2 text-[11px] uppercase tracking-wider text-stone-600 transition hover:bg-stone-100 sm:block">
-                {t.signIn}
-              </Link>
-              <Link href="/sign-in"
-                className="rounded bg-[#C85A00] px-5 py-2 text-[11px] uppercase tracking-wider text-white transition hover:bg-[#a84800]">
-                {t.register}
-              </Link>
-            </>
+            <Link href="/sign-in"
+              className="flex items-center gap-1.5 bg-orange-500 hover:bg-orange-600 text-white text-[13px] font-semibold px-4 py-2 rounded-xl shadow-sm transition-all hover:shadow-md">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+              Sign In
+            </Link>
           )}
-
-          <Link href="/admin-login"
-            className="hidden rounded border border-orange-300 bg-orange-50 px-4 py-2 text-[11px] uppercase tracking-wider text-[#C85A00] transition hover:bg-orange-100 lg:block">
-            {t.admin}
-          </Link>
         </div>
       </div>
 
-      {/* Logged-in secondary nav bar */}
+      {/* Logged-in workspace bar */}
       {user && (
         <div className="border-t border-orange-100 bg-orange-50/60">
-          <div className="mx-auto flex max-w-7xl items-center gap-1 overflow-x-auto px-6 py-1.5 lg:px-8">
-            <span className="mr-3 text-[9px] uppercase tracking-widest text-stone-400 whitespace-nowrap flex-shrink-0">
-              Your workspace:
-            </span>
-            {userNav.map(item => (
-              <Link key={item.href} href={item.href}
-                className="whitespace-nowrap rounded-sm px-3 py-1.5 text-[10px] uppercase tracking-wider text-stone-500 transition hover:bg-orange-100 hover:text-[#C85A00] flex-shrink-0">
-                {item.label}
-              </Link>
+          <div className="mx-auto max-w-[1200px] px-6 flex items-center gap-1 py-1.5 overflow-x-auto">
+            <span className="text-[11px] font-semibold text-orange-400 uppercase tracking-wider mr-2 whitespace-nowrap">Workspace:</span>
+            {USER_NAV.map(n=>(
+              <Link key={n.href} href={n.href} className="whitespace-nowrap px-3 py-1 text-[12px] font-medium text-gray-600 rounded-lg hover:bg-white hover:text-orange-500 hover:shadow-sm transition-all">{n.label}</Link>
             ))}
           </div>
         </div>

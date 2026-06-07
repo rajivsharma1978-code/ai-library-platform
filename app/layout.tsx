@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono, Cormorant_Garamond, Outfit } from "next/font/google";
+import { LanguageProvider } from "@/lib/LanguageProvider";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -11,8 +12,6 @@ const geistMono = Geist_Mono({
   variable: "--font-geist-mono",
   subsets: ["latin"],
 });
-
-
 
 const cormorant = Cormorant_Garamond({
   variable: "--font-cormorant",
@@ -45,7 +44,9 @@ export default function RootLayout({
       className={`${geistSans.variable} ${geistMono.variable} ${cormorant.variable} ${outfit.variable} h-full scroll-smooth antialiased`}
     >
       <body className="min-h-full flex flex-col bg-background text-foreground">
-        {children}
+        <LanguageProvider>
+          {children}
+        </LanguageProvider>
       </body>
     </html>
   );

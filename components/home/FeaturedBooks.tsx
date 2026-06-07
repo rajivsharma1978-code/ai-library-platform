@@ -1,157 +1,143 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { motion } from "framer-motion";
 import { ALL_BOOKS, AI_SUMMARIES, type Book } from "./data";
 import { UI_TEXT } from "@/lib/i18n";
 import { useLanguage } from "@/lib/useLanguage";
 
-const COVER_URLS: Record<string, string> = {
-  "Artificial Intelligence": "https://covers.openlibrary.org/b/id/10523338-M.jpg",
-  "Machine Learning":        "https://covers.openlibrary.org/b/id/8231856-M.jpg",
-  "Data Science":            "https://covers.openlibrary.org/b/id/240726-M.jpg",
-  "Deep Learning":           "https://covers.openlibrary.org/b/id/10720543-M.jpg",
-  "Quantum Computing":       "https://covers.openlibrary.org/b/id/8235116-M.jpg",
-  "Cyber Security":          "https://covers.openlibrary.org/b/id/8775165-M.jpg",
-  "Python Basics":           "https://covers.openlibrary.org/b/id/9108915-M.jpg",
-  "Robotics":                "https://covers.openlibrary.org/b/id/5546156-M.jpg",
-  "Cloud Architecture":      "https://covers.openlibrary.org/b/id/8091016-M.jpg",
+const COVER_URLS: Record<string,string> = {
+  "Artificial Intelligence":"https://covers.openlibrary.org/b/id/10523338-M.jpg",
+  "Machine Learning":"https://covers.openlibrary.org/b/id/8231856-M.jpg",
+  "Data Science":"https://covers.openlibrary.org/b/id/240726-M.jpg",
+  "Deep Learning":"https://covers.openlibrary.org/b/id/10720543-M.jpg",
+  "Quantum Computing":"https://covers.openlibrary.org/b/id/8235116-M.jpg",
+  "Cyber Security":"https://covers.openlibrary.org/b/id/8775165-M.jpg",
+  "Python Basics":"https://covers.openlibrary.org/b/id/9108915-M.jpg",
+  "Robotics":"https://covers.openlibrary.org/b/id/5546156-M.jpg",
+  "Cloud Architecture":"https://covers.openlibrary.org/b/id/8091016-M.jpg",
+};
+
+const CAT_COLORS: Record<string,string> = {
+  Technology:"bg-blue-50 text-blue-600",
+  Research:"bg-purple-50 text-purple-600",
+  Governance:"bg-green-50 text-green-600",
 };
 
 export function FeaturedBooks() {
   const { language } = useLanguage();
   const t = UI_TEXT[language];
-  const [summaryBook, setSummaryBook] = useState<Book | null>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const [summaryBook, setSummaryBook] = useState<Book|null>(null);
   const [summaryText, setSummaryText] = useState("");
   const [loading, setLoading] = useState(false);
 
-  const openSummary = (book: Book) => {
-    setSummaryBook(book);
-    setSummaryText("");
-    setLoading(true);
-    setTimeout(() => {
-      setSummaryText(AI_SUMMARIES[book.title] ?? "Summary not available.");
-      setLoading(false);
-    }, 900);
+  const scroll = (dir:"left"|"right") => {
+    scrollRef.current?.scrollBy({left:dir==="right"?260:-260,behavior:"smooth"});
+  };
+
+  const openSummary = (book:Book) => {
+    setSummaryBook(book); setSummaryText(""); setLoading(true);
+    setTimeout(()=>{ setSummaryText(AI_SUMMARIES[book.title]??"Summary not available."); setLoading(false); }, 900);
   };
 
   return (
     <>
-      <section id="catalog" className="border-b border-orange-100 bg-[#FFFAF5] py-16">
-        <div className="mx-auto max-w-7xl px-6 lg:px-8">
-          <div className="mb-10 flex items-end justify-between">
-            <div>
-              <p className="mb-2 text-[10px] uppercase tracking-[2.5px] text-[#C85A00]">{t.catalogKicker}</p>
-              <h2 className="text-3xl font-light text-stone-900"
-                style={{ fontFamily: "var(--font-cormorant), serif" }}>{t.catalogTitle}</h2>
+      <section id="catalog" className="bg-white border-b border-gray-100 py-10">
+        <div className="mx-auto max-w-[1200px] px-6">
+
+          {/* Header row */}
+          <div className="flex items-center justify-between mb-6">
+            <h2 className="text-[20px] font-extrabold text-gray-900">Featured Books</h2>
+            <div className="flex items-center gap-2">
+              <Link href="/library" className="text-[13px] font-semibold text-orange-500 hover:text-orange-600 mr-2">View all</Link>
+              <button onClick={()=>scroll("left")}
+                className="w-8 h-8 rounded-full border border-gray-200 bg-white flex items-center justify-center text-gray-600 hover:bg-orange-50 hover:border-orange-300 hover:text-orange-500 transition-all shadow-sm text-[16px]">
+                ‹
+              </button>
+              <button onClick={()=>scroll("right")}
+                className="w-8 h-8 rounded-full border border-gray-200 bg-white flex items-center justify-center text-gray-600 hover:bg-orange-50 hover:border-orange-300 hover:text-orange-500 transition-all shadow-sm text-[16px]">
+                ›
+              </button>
             </div>
-            <Link href="/library"
-              className="text-[10px] uppercase tracking-widest text-[#C85A00] transition hover:text-[#a84800]">
-              {t.catalogViewAll}
-            </Link>
           </div>
 
-          <motion.div
-            className="grid gap-px border border-orange-100 bg-orange-100 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5"
-            initial="hidden" whileInView="visible" viewport={{ once: true, margin: "-40px" }}
-            variants={{ hidden: {}, visible: { transition: { staggerChildren: 0.06 } } }}>
-            {ALL_BOOKS.map((book) => (
-              <motion.article key={book.title}
-                variants={{ hidden: { opacity: 0 }, visible: { opacity: 1 } }}
-                className="group flex flex-col bg-white">
-                {/* Cover with real image */}
-                <Link href={`/book/${encodeURIComponent(book.title)}`}
-                  className="relative block overflow-hidden bg-orange-50" style={{ height: "180px" }}>
-                  <img
-                    src={COVER_URLS[book.title] ?? "https://covers.openlibrary.org/b/id/8235116-M.jpg"}
+          {/* Carousel */}
+          <div ref={scrollRef} className="flex gap-5 overflow-x-auto pb-3"
+            style={{scrollbarWidth:"none",msOverflowStyle:"none"}}>
+            {ALL_BOOKS.map((book,i)=>(
+              <motion.div key={book.title}
+                initial={{opacity:0,y:12}} whileInView={{opacity:1,y:0}} viewport={{once:true}}
+                transition={{duration:0.3,delay:i*0.04}}
+                className="group flex-shrink-0 w-[140px]">
+                {/* Cover */}
+                <div className="relative overflow-hidden rounded-2xl bg-gray-100 shadow-md transition-all group-hover:shadow-xl group-hover:-translate-y-1"
+                  style={{height:"192px"}}>
+                  <img src={COVER_URLS[book.title]??"https://covers.openlibrary.org/b/id/8235116-M.jpg"}
                     alt={book.title}
-                    className="h-full w-full object-cover transition group-hover:scale-105 duration-300"
-                    onError={(e) => {
-                      const el = e.target as HTMLImageElement;
-                      el.style.display = "none";
-                      el.parentElement!.style.background = book.coverBg;
-                    }}
-                  />
-                  {/* Spine accent overlay */}
-                  <div className="absolute left-0 top-0 h-full w-1.5" style={{ background: book.spineColor }} />
-                  {/* Badge */}
-                  {book.badge && (
-                    <span className={`absolute right-2 top-2 rounded-sm px-2 py-0.5 text-[8px] uppercase tracking-widest font-medium ${
-                      book.badge === "New" ? "bg-green-100 text-green-700" :
-                      book.badge === "Trending" ? "bg-orange-100 text-orange-700" :
-                      "bg-stone-900 text-white"}`}>
-                      {book.badge === "New" ? t.badgeNew : book.badge === "Trending" ? t.badgeTrending : t.badgeEditorPick}
-                    </span>
-                  )}
-                  {/* Category */}
-                  <span className="absolute bottom-2 left-4 rounded-sm bg-white/90 px-2 py-0.5 text-[9px] uppercase tracking-wider text-stone-700">
-                    {book.category}
-                  </span>
-                </Link>
-
-                <div className="flex flex-1 flex-col p-4">
-                  <Link href={`/book/${encodeURIComponent(book.title)}`}>
-                    <h3 className="text-sm font-light leading-snug text-stone-900 transition group-hover:text-[#C85A00]"
-                      style={{ fontFamily: "var(--font-cormorant), serif", fontSize: "15px" }}>
-                      {book.title}
-                    </h3>
-                  </Link>
-                  <p className="mt-1 text-[10px] text-stone-400">{book.author}</p>
-                  <div className="mt-auto pt-4 flex gap-2">
-                    <Link href={`/book/${encodeURIComponent(book.title)}`}
-                      className="flex-1 rounded-sm border border-stone-200 py-2 text-center text-[10px] uppercase tracking-wider text-stone-600 transition hover:bg-stone-900 hover:text-white hover:border-stone-900">
-                      {t.readBtn}
-                    </Link>
-                    <button onClick={() => openSummary(book)}
-                      className="flex-1 rounded-sm border border-orange-200 bg-orange-50 py-2 text-[10px] uppercase tracking-wider text-[#C85A00] transition hover:bg-orange-100">
-                      {t.aiSummaryBtn}
+                    className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
+                    onError={e=>{ const el=e.target as HTMLImageElement; el.style.display="none"; el.parentElement!.style.background=book.coverBg; }}/>
+                  {/* Hover overlay with AI Summary */}
+                  <div className="absolute inset-0 bg-black/0 group-hover:bg-black/25 transition-all flex items-end p-2 opacity-0 group-hover:opacity-100">
+                    <button onClick={()=>openSummary(book)}
+                      className="w-full rounded-xl bg-white/90 backdrop-blur-sm py-1.5 text-[11px] font-bold text-gray-800 hover:bg-white transition-colors">
+                      AI Summary
                     </button>
                   </div>
                 </div>
-              </motion.article>
+                {/* Info */}
+                <Link href={`/book/${encodeURIComponent(book.title)}`}>
+                  <p className="mt-2.5 text-[13px] font-semibold text-gray-900 leading-tight line-clamp-2 hover:text-orange-500 transition-colors px-0.5">
+                    {book.title}
+                  </p>
+                </Link>
+                <p className="mt-0.5 text-[11px] text-gray-400 truncate px-0.5">{book.author}</p>
+                <span className={`mt-1.5 inline-block rounded-full px-2.5 py-0.5 text-[10px] font-semibold ${CAT_COLORS[book.category]??"bg-gray-100 text-gray-600"}`}>
+                  {book.category}
+                </span>
+              </motion.div>
             ))}
-          </motion.div>
+          </div>
         </div>
       </section>
 
-      {/* AI Summary modal */}
+      {/* AI Summary Modal */}
       {summaryBook && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-stone-900/50 p-4">
-          <motion.div initial={{ opacity: 0, scale: 0.97 }} animate={{ opacity: 1, scale: 1 }}
-            className="w-full max-w-lg rounded-sm border border-orange-100 bg-white p-8 shadow-2xl">
-            <p className="text-[9px] uppercase tracking-[2.5px] text-[#C85A00]">{t.aiSummaryBtn}</p>
-            <div className="mt-3 flex items-center gap-4">
-              <img
-                src={COVER_URLS[summaryBook.title] ?? "https://covers.openlibrary.org/b/id/8235116-M.jpg"}
-                alt={summaryBook.title}
-                className="w-12 h-16 object-cover rounded-sm border border-orange-100 shadow-sm"
-              />
-              <div>
-                <h3 className="text-2xl font-light text-stone-900"
-                  style={{ fontFamily: "var(--font-cormorant), serif" }}>{summaryBook.title}</h3>
-                <p className="mt-0.5 text-xs text-stone-400">{summaryBook.author}</p>
-              </div>
-            </div>
-            <div className="mt-6 rounded-sm border border-orange-100 bg-orange-50 p-5 text-sm leading-relaxed text-stone-700">
-              {loading ? (
-                <div className="space-y-3">
-                  {[2/3, 1, 5/6, 3/4].map((w, i) => (
-                    <div key={i} className="h-3 animate-pulse rounded bg-orange-100" style={{ width: `${w*100}%` }} />
-                  ))}
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4"
+          onClick={()=>setSummaryBook(null)}>
+          <motion.div initial={{opacity:0,scale:0.95}} animate={{opacity:1,scale:1}}
+            onClick={e=>e.stopPropagation()}
+            className="bg-white rounded-3xl shadow-2xl w-full max-w-[420px] overflow-hidden">
+            <div className="p-6">
+              <div className="flex items-center gap-4 mb-5">
+                <img src={COVER_URLS[summaryBook.title]??"https://covers.openlibrary.org/b/id/8235116-M.jpg"}
+                  alt={summaryBook.title} className="w-14 h-20 object-cover rounded-xl shadow-md border border-gray-100"/>
+                <div>
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-orange-500 mb-1">{t.aiSummaryBtn}</p>
+                  <h3 className="text-[16px] font-extrabold text-gray-900 leading-tight">{summaryBook.title}</h3>
+                  <p className="text-[12px] text-gray-400 mt-0.5">{summaryBook.author}</p>
                 </div>
-              ) : <p>{summaryText}</p>}
-            </div>
-            <div className="mt-6 flex gap-3">
-              <Link href={`/book/${encodeURIComponent(summaryBook.title)}`}
-                onClick={() => setSummaryBook(null)}
-                className="flex-1 rounded-sm bg-[#C85A00] py-2.5 text-center text-[10px] uppercase tracking-widest text-white transition hover:bg-[#a84800]">
-                {t.readNow}
-              </Link>
-              <button onClick={() => setSummaryBook(null)}
-                className="flex-1 rounded-sm border border-stone-200 py-2.5 text-[10px] uppercase tracking-widest text-stone-600 transition hover:bg-stone-100">
-                ✕
-              </button>
+              </div>
+              <div className="rounded-2xl bg-orange-50 p-4 min-h-[80px] text-[13px] leading-relaxed text-gray-700">
+                {loading ? (
+                  <div className="space-y-2.5">
+                    {[1,0.85,0.92,0.7].map((w,i)=>(
+                      <div key={i} className="h-3 rounded-full bg-orange-200 animate-pulse" style={{width:`${w*100}%`}}/>
+                    ))}
+                  </div>
+                ) : summaryText}
+              </div>
+              <div className="flex gap-3 mt-5">
+                <Link href={`/book/${encodeURIComponent(summaryBook.title)}`} onClick={()=>setSummaryBook(null)}
+                  className="flex-1 rounded-xl bg-orange-500 hover:bg-orange-600 text-white font-bold text-[13px] py-3 text-center transition-colors">
+                  Read Now →
+                </Link>
+                <button onClick={()=>setSummaryBook(null)}
+                  className="flex-1 rounded-xl border-2 border-gray-200 hover:bg-gray-50 text-gray-600 font-semibold text-[13px] py-3 transition-colors">
+                  Close
+                </button>
+              </div>
             </div>
           </motion.div>
         </div>
