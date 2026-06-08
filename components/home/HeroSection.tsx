@@ -1,8 +1,15 @@
+"use client";
+
 import Link from "next/link";
+import { UI_TEXT } from "@/lib/i18n";
+import { useLanguage } from "@/lib/useLanguage";
 
 const chips = ["UPSC", "NCERT", "Science", "History", "AI", "Engineering", "Psychology"];
 
 export function HeroSection() {
+  const { language } = useLanguage();
+  const t = UI_TEXT[language];
+
   return (
     <section className="px-6 pt-0">
       <div className="relative mx-auto max-w-7xl overflow-hidden rounded-[2.5rem] border border-orange-100 bg-[#fff8ed] shadow-2xl">
@@ -10,15 +17,15 @@ export function HeroSection() {
           <div className="relative z-10 px-9 py-7 lg:px-10 lg:py-8">
             <div className="inline-flex items-center gap-2 rounded-full border border-green-200 bg-white/85 px-5 py-2 text-sm font-bold text-green-700 shadow-sm">
               <span>🇮🇳</span>
-              India’s AI-Powered Knowledge Platform
+              {t.heroKicker}
             </div>
 
             <h1 className="mt-5 text-[40px] font-black leading-[1.02] tracking-tight text-slate-950 lg:text-[56px]">
-              Every Learner.
+              {t.heroH1Line1}
               <br />
-              Every Language.
+              {t.heroH1Line2}
               <br />
-              <span className="text-orange-600">Every Book.</span>
+              <span className="text-orange-600">{t.heroH1Line3}</span>
             </h1>
 
             <p className="mt-4 text-xl font-semibold text-slate-900">
@@ -30,8 +37,7 @@ export function HeroSection() {
             </p>
 
             <p className="mt-3 max-w-xl text-sm leading-6 text-slate-600">
-              AI-powered learning for School, College, UPSC, Researchers and
-              Lifelong Learners in 22+ Indian languages.
+              {t.heroDesc}
             </p>
 
             <div className="mt-5 flex flex-nowrap gap-3">
@@ -39,14 +45,14 @@ export function HeroSection() {
                 href="/library"
                 className="rounded-xl bg-orange-600 px-5 py-3 text-sm font-bold text-white shadow-md shadow-orange-500/25 transition hover:-translate-y-1 hover:bg-orange-700"
               >
-                📚 Explore Library
+                📚 {t.heroExplore}
               </Link>
 
               <Link
                 href="/reader"
                 className="rounded-xl bg-white px-5 py-3 text-sm font-bold text-slate-800 shadow-md ring-1 ring-slate-200 transition hover:-translate-y-1 hover:bg-slate-50"
               >
-                🤖 Ask AI Tutor
+                🤖 {t.heroAiTutor}
               </Link>
 
               <Link
@@ -64,7 +70,6 @@ export function HeroSection() {
               alt="Diverse learners connected by AI through books"
               className="absolute left-[-5%] top-[-10%] h-[125%] w-[125%] object-cover"
             />
-
             <div className="absolute inset-y-0 left-0 w-40 bg-gradient-to-r from-[#fff8ed] to-transparent" />
           </div>
         </div>
@@ -73,13 +78,11 @@ export function HeroSection() {
       <div className="relative z-20 mx-auto -mt-5 max-w-6xl rounded-3xl border border-orange-100 bg-white p-3 shadow-xl">
         <div className="flex items-center gap-3">
           <span className="pl-4 text-xl">🔍</span>
-
           <input
             type="text"
-            placeholder="Search books, topics, authors, exams..."
+            placeholder={t.heroSearchPlaceholder}
             className="h-11 flex-1 border-none bg-transparent text-base outline-none placeholder:text-slate-400"
           />
-
           <button className="h-10 w-10 rounded-xl bg-orange-600 text-white shadow-md transition hover:bg-orange-700">
             🔎
           </button>
@@ -89,7 +92,6 @@ export function HeroSection() {
           <span className="text-xs font-bold uppercase text-orange-600">
             Popular:
           </span>
-
           {chips.map((chip) => (
             <button
               key={chip}

@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { UI_TEXT } from "@/lib/i18n";
+import { useLanguage } from "@/lib/useLanguage";
 function getCover(bookTitle: string) {
     if (bookTitle === "Artificial Intelligence") {
       return "https://covers.openlibrary.org/b/id/10523338-L.jpg";
@@ -21,6 +23,9 @@ function getCover(bookTitle: string) {
     return "https://covers.openlibrary.org/b/id/8235116-L.jpg";
   }
 export default function MyLibraryPage() {
+  const { language } = useLanguage();
+  const t = UI_TEXT[language];
+
   const [notesCount, setNotesCount] = useState(0);
   const [quizCount, setQuizCount] = useState(0);
   const [revisionCount, setRevisionCount] = useState(0);

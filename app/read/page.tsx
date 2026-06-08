@@ -8,6 +8,8 @@ import Tesseract from "tesseract.js";
 
 import "react-pdf/dist/Page/AnnotationLayer.css";
 import "react-pdf/dist/Page/TextLayer.css";
+import { UI_TEXT } from "@/lib/i18n";
+import { useLanguage } from "@/lib/useLanguage";
 
 const Document = dynamic(
   () => import("react-pdf").then((mod) => mod.Document),
@@ -20,6 +22,9 @@ const Page = dynamic(
 );
 
 export default function ReadPage() {
+  const { language } = useLanguage();
+  const t = UI_TEXT[language];
+
   const [pdfFile, setPdfFile] = useState<string | null>(null);
   const [pdfName, setPdfName] = useState("");
   const [numPages, setNumPages] = useState(0);
@@ -55,6 +60,12 @@ export default function ReadPage() {
     ],
   };
   useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+const book = params.get("book");
+
+if (book) {
+  localStorage.setItem("ndl_continue_reading", book);
+}
     async function setupPdfWorker() {
       const { pdfjs } = await import("react-pdf");
       pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
@@ -148,7 +159,7 @@ export default function ReadPage() {
           `Uploaded PDF: ${file.name}. This appears to be scanned or image-based. The system is scanning the visible page automatically.`
         );
         setIsAiReady(false);
-        setNeedsAutoScan(true);
+        setNeedsAutoScan(false);
       }
     } catch (error) {
       console.error("PDF extraction failed", error);
@@ -158,8 +169,8 @@ export default function ReadPage() {
         `Uploaded PDF: ${file.name}. Text extraction failed. The system is scanning the visible page automatically.`
       );
 
-      setIsAiReady(false);
-      setNeedsAutoScan(true);
+      setIsAiReady(true);
+      setNeedsAutoScan(false);
     } finally {
       setIsExtracting(false);
     }
@@ -371,6 +382,22 @@ localStorage.setItem("uploadedPdfCurrentPage", String(page));
         darkMode ? "bg-slate-950 text-white" : "bg-slate-100 text-slate-900"
       }`}
     >
+  
+      <div className="mx-8 pt-6 flex items-center justify-between">
+        <a
+          href="/"
+          className="rounded-xl bg-black px-4 py-2 text-white"
+        >
+          ← Home
+        </a>
+  
+        <a
+          href="/library"
+          className="rounded-xl bg-blue-600 px-4 py-2 text-white"
+        >
+          Back to Library
+        </a>
+      </div>
       <header className="sticky top-0 z-50 bg-white/90 text-slate-900 backdrop-blur-xl border-b px-6 py-4 flex justify-between items-center shadow-sm">
         <div>
           <h1 className="text-xl font-bold">Classic PDF Reader</h1>
@@ -436,13 +463,36 @@ localStorage.setItem("uploadedPdfCurrentPage", String(page));
 
             
             <p className="text-sm text-slate-500 mt-1">
+            {isAiReady && (
+  <div className="mt-3 flex flex-wrap gap-2">
+    <span className="bg-blue-100 text-blue-700 px-3 py-1 rounded-full text-xs">
+      📖 Summary
+    </span>
+
+    <span className="bg-purple-100 text-purple-700 px-3 py-1 rounded-full text-xs">
+      🤖 Ask AI
+    </span>
+
+    <span className="bg-green-100 text-green-700 px-3 py-1 rounded-full text-xs">
+      📝 Notes
+    </span>
+
+    <span className="bg-orange-100 text-orange-700 px-3 py-1 rounded-full text-xs">
+      🎴 Flashcards
+    </span>
+
+    <span className="bg-pink-100 text-pink-700 px-3 py-1 rounded-full text-xs">
+      🧠 Quiz
+    </span>
+  </div>
+)}
               {isRunningOcr
                 ? "Scanning book page automatically..."
                 : isExtracting
                 ? "Reading book text..."
                 : isAiReady
-                ? "Book processed • Ready for AI analysis"
-                : "Preparing book for AI analysis..."}
+                ? "AI Ready • Generate Summary, Ask Questions, Create Notes, Flashcards and Quizzes"
+                : "AI Ready • You can now read, summarize, ask questions and create study notes"}
             </p>
           </div>
 
@@ -453,7 +503,7 @@ localStorage.setItem("uploadedPdfCurrentPage", String(page));
                 : "bg-yellow-100 text-yellow-700 px-4 py-2 rounded-full text-sm font-semibold"
             }
           >
-            {isAiReady ? "AI Ready" : "Processing"}
+            {"✓ AI Ready"}
           </div>
         </div>
       )}

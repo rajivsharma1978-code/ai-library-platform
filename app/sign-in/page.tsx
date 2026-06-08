@@ -3,6 +3,8 @@
 import Link from "next/link";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { UI_TEXT } from "@/lib/i18n";
+import { useLanguage } from "@/lib/useLanguage";
 
 const demoUsers: Record<string, { password: string; role: string; name: string }> = {
   student: { password: "student123", role: "Student", name: "Demo Student" },
@@ -13,6 +15,9 @@ const demoUsers: Record<string, { password: string; role: string; name: string }
 };
 
 export default function SignInPage() {
+  const { language } = useLanguage();
+  const t = UI_TEXT[language];
+
   const router = useRouter();
   const [userId, setUserId] = useState("");
   const [password, setPassword] = useState("");

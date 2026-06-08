@@ -3,6 +3,8 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import AdminSidebar from "@/components/admin/AdminSidebar";
+import { UI_TEXT } from "@/lib/i18n";
+import { useLanguage } from "@/lib/useLanguage";
 
 type ModerationStatus = "Pending" | "Approved" | "Rejected";
 
@@ -37,6 +39,9 @@ const typeIcon: Record<string, string> = {
 };
 
 export default function ModerationPage() {
+  const { language } = useLanguage();
+  const t = UI_TEXT[language];
+
   const router = useRouter();
   const [items, setItems] = useState(mockItems);
   const [filter, setFilter] = useState<ModerationStatus | "All">("All");

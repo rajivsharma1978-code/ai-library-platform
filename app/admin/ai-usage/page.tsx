@@ -3,6 +3,8 @@
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import AdminSidebar from "@/components/admin/AdminSidebar";
+import { UI_TEXT } from "@/lib/i18n";
+import { useLanguage } from "@/lib/useLanguage";
 
 const aiModels = [
   { name: "GPT-4o Mini", provider: "OpenAI", requests: 98200, tokens: "142M", cost: "$284.10", status: "Active", latency: "310ms" },
@@ -36,6 +38,9 @@ const alertStyle: Record<string, string> = {
 const alertIcon: Record<string, string> = { info: "ℹ️", warn: "⚠️", ok: "✅" };
 
 export default function AIUsagePage() {
+  const { language } = useLanguage();
+  const t = UI_TEXT[language];
+
   const router = useRouter();
 
   useEffect(() => {

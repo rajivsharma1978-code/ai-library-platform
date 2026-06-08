@@ -1,4 +1,6 @@
 import Link from "next/link";
+import { UI_TEXT } from "@/lib/i18n";
+import { useLanguage } from "@/lib/useLanguage";
 
 const categories = [
   "Artificial Intelligence",
@@ -30,6 +32,9 @@ const learningPaths = [
 ];
 
 export default function ExplorePage() {
+  const { language } = useLanguage();
+  const t = UI_TEXT[language];
+
   return (
     <main className="min-h-screen bg-slate-100">
       <div className="max-w-7xl mx-auto p-10">

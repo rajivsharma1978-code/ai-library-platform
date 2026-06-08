@@ -2,6 +2,8 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { UI_TEXT } from "@/lib/i18n";
+import { useLanguage } from "@/lib/useLanguage";
 
 
 
@@ -19,6 +21,9 @@ function getCover(book: string) {
 }
 
 export default function LibraryPage() {
+  const { language } = useLanguage();
+  const t = UI_TEXT[language];
+
     const [readingHistory, setReadingHistory] = useState<string[]>([]);
     const [savedBooks, setSavedBooks] = useState<string[]>([]);
     const [bookmarks, setBookmarks] = useState<string[]>([]);

@@ -3,6 +3,8 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import AdminSidebar from "@/components/admin/AdminSidebar";
+import { UI_TEXT } from "@/lib/i18n";
+import { useLanguage } from "@/lib/useLanguage";
 
 const features = [
   { name: "Read Aloud (TTS)", desc: "Text-to-speech for all books in 6 languages", status: true, coverage: 94 },
@@ -29,6 +31,9 @@ const languageTTS = [
 ];
 
 export default function AccessibilityPage() {
+  const { language } = useLanguage();
+  const t = UI_TEXT[language];
+
   const router = useRouter();
   const [features_, setFeatures] = useState(features);
 

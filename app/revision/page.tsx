@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { UI_TEXT } from "@/lib/i18n";
+import { useLanguage } from "@/lib/useLanguage";
 
 type Note = {
   id: string;
@@ -11,6 +13,9 @@ type Note = {
 };
 
 export default function RevisionPage() {
+  const { language } = useLanguage();
+  const t = UI_TEXT[language];
+
   const [notes, setNotes] = useState<Note[]>([]);
   const [revisionText, setRevisionText] = useState("");
   const [aiSummary, setAiSummary] = useState("");

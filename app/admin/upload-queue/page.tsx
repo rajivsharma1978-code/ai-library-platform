@@ -3,6 +3,8 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import AdminSidebar from "@/components/admin/AdminSidebar";
+import { UI_TEXT } from "@/lib/i18n";
+import { useLanguage } from "@/lib/useLanguage";
 
 type UploadStatus = "Processing" | "Extracting" | "Completed" | "Failed" | "Queued";
 
@@ -44,6 +46,9 @@ const progressColor: Record<UploadStatus, string> = {
 };
 
 export default function UploadQueuePage() {
+  const { language } = useLanguage();
+  const t = UI_TEXT[language];
+
   const router = useRouter();
   const [dragging, setDragging] = useState(false);
   const [queue, setQueue] = useState(mockQueue);

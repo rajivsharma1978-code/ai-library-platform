@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { UI_TEXT } from "@/lib/i18n";
+import { useLanguage } from "@/lib/useLanguage";
 
 type Quiz = {
   question: string;
@@ -9,6 +11,9 @@ type Quiz = {
 };
 
 export default function QuizPage() {
+  const { language } = useLanguage();
+  const t = UI_TEXT[language];
+
   const [notesText, setNotesText] = useState("");
   const [quizText, setQuizText] = useState("");
   const [loading, setLoading] = useState(false);

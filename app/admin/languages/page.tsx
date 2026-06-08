@@ -3,6 +3,8 @@
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import AdminSidebar from "@/components/admin/AdminSidebar";
+import { UI_TEXT } from "@/lib/i18n";
+import { useLanguage } from "@/lib/useLanguage";
 
 const languages = [
   { name: "English", code: "EN", books: 6420, coverage: 98, aiSupport: true, voiceSupport: true, ocrSupport: true, status: "Active" },
@@ -33,6 +35,9 @@ const statusStyle: Record<string, string> = {
 };
 
 export default function LanguagesPage() {
+  const { language } = useLanguage();
+  const t = UI_TEXT[language];
+
   const router = useRouter();
 
   useEffect(() => {

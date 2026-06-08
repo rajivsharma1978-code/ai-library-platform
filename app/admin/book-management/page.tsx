@@ -3,6 +3,8 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import AdminSidebar from "@/components/admin/AdminSidebar";
+import { UI_TEXT } from "@/lib/i18n";
+import { useLanguage } from "@/lib/useLanguage";
 
 const mockBooks = [
   { id: 1, title: "Artificial Intelligence: A Modern Approach", author: "Stuart Russell", language: "English", status: "Published", format: "PDF", pages: 1132, uploaded: "2024-01-15" },
@@ -22,6 +24,9 @@ const statusColors: Record<string, string> = {
 };
 
 export default function BookManagementPage() {
+  const { language } = useLanguage();
+  const t = UI_TEXT[language];
+
   const router = useRouter();
   const [search, setSearch] = useState("");
   const [filterStatus, setFilterStatus] = useState("All");
