@@ -6,6 +6,9 @@ import { Suspense, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { UI_TEXT } from "@/lib/i18n";
 import { useLanguage } from "@/lib/useLanguage";
+import FlipBookViewer from "@/components/reader/FlipBookViewer";
+import ReaderLayout from "@/components/reader/ReaderLayout";
+import FlipBookStage from "@/components/reader/FlipBookStage";
 
 const chapters: Record<string, string[]> = {
   Introduction: [
@@ -52,6 +55,7 @@ function ReaderPageContent() {
   const [pdfName, setPdfName] = useState("");
   const [pdfPages, setPdfPages] = useState("");
   const [pageImage, setPageImage] = useState("");
+    const [rightPageImage, setRightPageImage] = useState("");
   const [question, setQuestion] = useState("");
   type SavedNote = {
     id: string;
@@ -68,6 +72,9 @@ const [completedQuizzes, setCompletedQuizzes] = useState(0);
 const [weakTopics, setWeakTopics] = useState<string[]>([]);
 const [flashcards, setFlashcards] = useState<string[]>([]); 
 const [darkMode, setDarkMode] = useState(false);
+const [showBookInfo, setShowBookInfo] = useState(false);
+const [focusMode, setFocusMode] = useState(false);
+const [readerFontSize, setReaderFontSize] = useState(18);
   const [selectedText, setSelectedText] = useState("");
   const [activeChapter, setActiveChapter] = useState("Introduction");
   const [isThinking, setIsThinking] = useState(false);
@@ -175,6 +182,15 @@ if (book) {
   
   useEffect(() => {
     localStorage.setItem("aiReaderPage", String(readerPage));
+  
+    const leftImage =
+      localStorage.getItem(`uploadedPdfPageImage_${readerPage}`) || "";
+  
+    const rightImage =
+      localStorage.getItem(`uploadedPdfPageImage_${Number(readerPage) + 1}`) || "";
+  
+    setPageImage(leftImage);
+    setRightPageImage(rightImage);
   }, [readerPage]);
   
   useEffect(() => {
@@ -490,13 +506,19 @@ ${contentToExplain.slice(0, 6000)}`,
 
   return (
     <main
-      className={
-        darkMode
-          ? "h-screen flex bg-slate-950 text-white overflow-hidden"
-          : "h-screen flex bg-slate-100 text-slate-900 overflow-hidden"
-      }
+    className={
+      darkMode
+        ? "h-screen flex bg-slate-950 text-white overflow-hidden"
+        : "h-screen flex bg-[#f6efe3] text-slate-900 overflow-hidden"
+    }
     >
-      <aside className="w-72 bg-slate-950 text-white p-6 overflow-auto border-r border-white/10">
+      <aside
+  className={
+    focusMode
+      ? "hidden"
+      : "w-72 bg-slate-950 text-white p-6 overflow-auto border-r border-white/10"
+  }
+>
         <Link href="/" className="text-blue-400 font-semibold">
           ← Back to Library
         </Link>
@@ -560,7 +582,28 @@ ${contentToExplain.slice(0, 6000)}`,
           </p>
         </div>
       </aside>
+      <div className="fixed top-4 left-1/2 z-50 -translate-x-1/2 rounded-full border border-white/30 bg-white/80 px-4 py-2 shadow-xl backdrop-blur-xl flex items-center gap-2">
+  <button
+    onClick={() => setReaderFontSize((size) => Math.max(15, size - 1))}
+    className="rounded-full bg-slate-900 px-3 py-2 text-xs font-bold text-white"
+  >
+    A-
+  </button>
 
+  <button
+    onClick={() => setReaderFontSize((size) => Math.min(26, size + 1))}
+    className="rounded-full bg-slate-900 px-3 py-2 text-xs font-bold text-white"
+  >
+    A+
+  </button>
+
+  <button
+    onClick={() => setFocusMode(!focusMode)}
+    className="rounded-full bg-amber-500 px-4 py-2 text-xs font-bold text-white"
+  >
+    {focusMode ? "Exit Focus" : "Focus Mode"}
+  </button>
+</div>
       <section
         onMouseUp={() => {
           const text = window.getSelection()?.toString().trim() || "";
@@ -568,13 +611,13 @@ ${contentToExplain.slice(0, 6000)}`,
         }}
         className="flex-1 overflow-auto p-8"
       >
-        <div className="max-w-5xl mx-auto">
-          <div className="rounded-3xl bg-gradient-to-r from-indigo-700 via-blue-700 to-purple-700 p-10 text-white shadow-2xl">
+        <div className="max-w-[1500px] mx-auto">
+        <div className="rounded-3xl bg-gradient-to-r from-indigo-700 via-blue-700 to-purple-700 p-6 text-white shadow-2xl">
             <p className="uppercase text-sm tracking-widest opacity-80">
               {isPdfMode ? "AI analyzing uploaded PDF" : "AI-powered learning mode"}
             </p>
 
-            <h1 className="text-5xl font-bold mt-3">{book}</h1>
+            <h1 className="text-3xl font-black mt-2">{book}</h1>
 
             <p className="mt-4 text-blue-100 max-w-3xl">
               {isPdfMode
@@ -681,6 +724,106 @@ ${contentToExplain.slice(0, 6000)}`,
               </Link>
             </div>
           </div>
+          <article
+          style={{ fontSize: readerFontSize }}
+          className={
+            darkMode
+              ? "mt-8 bg-slate-900 rounded-[2rem] p-10 shadow-2xl text-slate-100 border border-slate-700"
+              : "mt-8 bg-[#fffaf0] rounded-[2rem] p-10 shadow-2xl text-slate-800 border border-amber-200"
+          }
+          >
+            <h2 className="text-4xl font-bold">
+  {isPdfMode ? `Page ${readerPage}` : activeChapter}
+</h2>
+<FlipBookViewer
+  book={book}
+  readerPage={Number(readerPage)}
+  pdfPages={pdfPages}
+  pageImage={pageImage}
+  rightPageImage={rightPageImage}
+  activeContent={activeContent}
+  onPrevious={() => {
+    const previous = Math.max(1, Number(readerPage) - 2);
+    setReaderPage(previous);
+  }}
+  onNext={() => {
+    const next = Math.min(
+      Number(pdfPages || readerPage),
+      Number(readerPage) + 2
+    );
+    setReaderPage(next);
+  }}
+  onAskAI={(prompt) => addAIMessage(prompt)}
+  onSaveNote={saveCurrentNote}
+/>
+           
+
+            {selectedText && (
+              <button
+                onClick={askAboutSelectedText}
+                className="mt-6 bg-blue-600 text-white px-5 py-3 rounded-xl shadow"
+              >
+                Ask AI about selected text
+              </button>
+            )}
+
+
+<div className="mt-8 space-y-6">
+  <div className="bg-blue-50 border border-blue-200 rounded-2xl p-6">
+    <h3 className="font-bold text-xl text-blue-900">
+      AI Summary
+    </h3>
+
+    <p className="mt-3 text-slate-700 leading-8">
+      This PDF page has been processed and prepared for AI-assisted learning.
+      You can ask for summaries, explanations, quizzes, translations,
+      flashcards, research help, and concept clarification.
+    </p>
+  </div>
+
+  <div className="bg-slate-50 border rounded-2xl p-6">
+  <h3 className="font-bold text-lg">
+  Page Intelligence
+</h3>
+
+<p className="mt-4 leading-8 text-slate-700">
+{modeDescriptions[studyMode]}
+</p>
+
+<Link
+  href={`/read?book=${encodeURIComponent(book)}`}
+  className="inline-block mt-5 bg-blue-600 text-white px-5 py-3 rounded-xl"
+>
+Open This Page in Classic Reader
+</Link>
+  </div>
+</div>
+            <div className="mt-10 bg-yellow-100 text-black border-l-4 border-yellow-500 p-6 rounded-2xl">
+              <p className="font-bold">Highlighted by AI</p>
+
+              <p className="mt-2">
+                {isPdfMode
+                  ? "AI has loaded this PDF text and can summarize, simplify, translate, and generate quizzes from it."
+                  : "AI-first libraries combine reading, tutoring, notes, quizzes, and revision into one experience."}
+              </p>
+
+              <div className="mt-4 flex gap-3">
+  <button
+    onClick={saveCurrentNote}
+    className="bg-black text-white px-4 py-2 rounded-xl"
+  >
+    Save as Note
+  </button>
+
+  <button
+    onClick={saveBookmark}
+    className="bg-blue-600 text-white px-4 py-2 rounded-xl"
+  >
+    Save Bookmark
+  </button>
+</div>
+            </div>
+          </article>
           <div className="mt-8 bg-white rounded-3xl p-6 shadow-lg border">
   <div className="flex items-center justify-between gap-4 flex-wrap">
     <div>
@@ -864,165 +1007,17 @@ ${contentToExplain.slice(0, 6000)}`,
             </div>
           </div>
 
-          <article
-            className={
-              darkMode
-                ? "mt-8 bg-slate-900 rounded-3xl p-10 shadow-xl text-slate-100"
-                : "mt-8 bg-white rounded-3xl p-10 shadow-xl text-slate-800"
-            }
-          >
-            <h2 className="text-4xl font-bold">
-              {isPdfMode ? `PDF Page ${readerPage} AI Context` : activeChapter}
-            </h2>
-            {isPdfMode && (
-  <div className="flex items-center gap-4 mt-6 flex-wrap">
-    <button
-      onClick={() => {
-        const previous = Math.max(1, Number(readerPage) - 1);
 
-        setReaderPage(previous);
-
-        const image =
-  localStorage.getItem(`uploadedPdfPageImage_${previous}`) || "";
-
-setPageImage(image);
-
-if (!image) {
-  setMessages((prev) => [
-    ...prev,
-    {
-      type: "ai",
-      text: `Page ${previous} image is not captured yet. Go back to Classic Read Mode, open page ${previous}, then click Ask AI About This Page.`,
-    },
-  ]);
-}
-      }}
-      className="bg-slate-900 text-white px-5 py-3 rounded-xl"
-    >
-      ← Previous
-    </button>
-
-    <div className="bg-slate-100 px-5 py-3 rounded-xl text-sm font-semibold">
-      Page {readerPage} of {pdfPages || "?"}
-    </div>
-
-    <button
-      onClick={() => {
-        const next = Math.min(
-          Number(pdfPages || readerPage),
-          Number(readerPage) + 1
-        );
-
-        setReaderPage(next);
-
-        const image =
-        localStorage.getItem(`uploadedPdfPageImage_${next}`) || "";
-      
-      setPageImage(image);
-      
-      if (!image) {
-        setMessages((prev) => [
-          ...prev,
-          {
-            type: "ai",
-            text: `Page ${next} image is not captured yet. Go back to Classic Read Mode, open page ${next}, then click Ask AI About This Page.`,
-          },
-        ]);
-      }
-      }}
-      className="bg-blue-600 text-white px-5 py-3 rounded-xl"
-    >
-      Next →
-    </button>
-  </div>
-)}
-
-            {selectedText && (
-              <button
-                onClick={askAboutSelectedText}
-                className="mt-6 bg-blue-600 text-white px-5 py-3 rounded-xl shadow"
-              >
-                Ask AI about selected text
-              </button>
-            )}
-{pageImage && (
-  <div className="mt-8 bg-white rounded-3xl p-5 shadow-xl border">
-    <h3 className="text-2xl font-bold text-slate-900">
-      Original PDF Page
-    </h3>
-
-    <p className="text-sm text-slate-500 mt-2">
-      AI can use this visual page for future diagram and image understanding.
-    </p>
-
-    <img
-      src={pageImage}
-      alt="PDF Page"
-      className="mt-5 rounded-2xl border shadow max-h-[900px] object-contain w-full"
-    />
-  </div>
-)}
-
-<div className="space-y-6">
-  <div className="bg-blue-50 border border-blue-200 rounded-2xl p-6">
-    <h3 className="font-bold text-xl text-blue-900">
-      AI Summary
-    </h3>
-
-    <p className="mt-3 text-slate-700 leading-8">
-      This PDF page has been processed and prepared for AI-assisted learning.
-      You can ask for summaries, explanations, quizzes, translations,
-      flashcards, research help, and concept clarification.
-    </p>
-  </div>
-
-  <div className="bg-slate-50 border rounded-2xl p-6">
-  <h3 className="font-bold text-lg">
-  Page Intelligence
-</h3>
-
-<p className="mt-4 leading-8 text-slate-700">
-{modeDescriptions[studyMode]}
-</p>
-
-<Link
-  href={`/read?book=${encodeURIComponent(book)}`}
-  className="inline-block mt-5 bg-blue-600 text-white px-5 py-3 rounded-xl"
->
-Open This Page in Classic Reader
-</Link>
-  </div>
-</div>
-            <div className="mt-10 bg-yellow-100 text-black border-l-4 border-yellow-500 p-6 rounded-2xl">
-              <p className="font-bold">Highlighted by AI</p>
-
-              <p className="mt-2">
-                {isPdfMode
-                  ? "AI has loaded this PDF text and can summarize, simplify, translate, and generate quizzes from it."
-                  : "AI-first libraries combine reading, tutoring, notes, quizzes, and revision into one experience."}
-              </p>
-
-              <div className="mt-4 flex gap-3">
-  <button
-    onClick={saveCurrentNote}
-    className="bg-black text-white px-4 py-2 rounded-xl"
-  >
-    Save as Note
-  </button>
-
-  <button
-    onClick={saveBookmark}
-    className="bg-blue-600 text-white px-4 py-2 rounded-xl"
-  >
-    Save Bookmark
-  </button>
-</div>
-            </div>
-          </article>
         </div>
       </section>
 
-      <aside className="w-[32%] bg-black text-white p-5 flex flex-col h-screen overflow-hidden">
+      <aside
+  className={
+    focusMode
+      ? "hidden"
+      : "w-[27%] bg-black text-white p-5 flex flex-col h-screen overflow-hidden"
+  }
+>
         <div className="flex items-center justify-between">
           <div>
             <h2 className="text-2xl font-bold">AI Tutor</h2>
@@ -1030,7 +1025,7 @@ Open This Page in Classic Reader
   Active Mode: {studyMode}
 </p>
             <p className="text-xs text-gray-400">
-              Context: {isPdfMode ? `PDF Page ${readerPage}` : activeChapter}
+            {isPdfMode ? `Page ${readerPage}` : activeChapter}
             </p>
             <select
   value={selectedLanguage}
@@ -1169,7 +1164,9 @@ Open This Page in Classic Reader
     Send
   </button>
 </div>
+  
       </aside>
+    
 
      
     </main>

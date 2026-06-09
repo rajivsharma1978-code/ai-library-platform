@@ -35,27 +35,28 @@ const READING_PROGRESS = [
 export function Recommendations() {
   const { language } = useLanguage();
   const t = UI_TEXT[language];
+
   return (
     <section id="recommendations" className="bg-white border-b border-gray-100">
 
       {/* Testimonials */}
       <div className="py-12 border-b border-gray-100">
         <div className="mx-auto max-w-[1200px] px-6">
-          <h2 className="text-[20px] font-extrabold text-gray-900 mb-8">What Learners Say</h2>
+          <h2 className="text-[20px] font-extrabold text-gray-900 mb-8">{t.whatLearnersSay}</h2>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
-            {TESTIMONIALS.map((t,i)=>(
-              <motion.div key={t.name}
+            {TESTIMONIALS.map((item, i) => (
+              <motion.div key={item.name}
                 initial={{opacity:0,y:16}} whileInView={{opacity:1,y:0}} viewport={{once:true}}
                 transition={{duration:0.4,delay:i*0.08}}
                 className="rounded-2xl border border-gray-100 bg-white p-6 shadow-sm hover:shadow-md transition-shadow">
-                <p className="text-[14px] text-gray-700 leading-relaxed italic mb-5">"{t.quote}"</p>
+                <p className="text-[14px] text-gray-700 leading-relaxed italic mb-5">"{item.quote}"</p>
                 <div className="flex items-center gap-3">
-                  <div className={`w-10 h-10 rounded-full ${t.color} flex items-center justify-center text-white font-bold text-[13px] flex-shrink-0`}>
-                    {t.initials}
+                  <div className={`w-10 h-10 rounded-full ${item.color} flex items-center justify-center text-white font-bold text-[13px] flex-shrink-0`}>
+                    {item.initials}
                   </div>
                   <div>
-                    <p className="text-[13px] font-bold text-gray-900">{t.name}</p>
-                    <p className="text-[11px] text-gray-400">{t.role}</p>
+                    <p className="text-[13px] font-bold text-gray-900">{item.name}</p>
+                    <p className="text-[11px] text-gray-400">{item.role}</p>
                   </div>
                 </div>
               </motion.div>
@@ -74,12 +75,12 @@ export function Recommendations() {
       <div className="py-12">
         <div className="mx-auto max-w-[1200px] px-6">
           <div className="flex items-center justify-between mb-6">
-            <h2 className="text-[20px] font-extrabold text-gray-900">Continue Reading</h2>
-            <Link href="/my-library" className="text-[13px] font-semibold text-orange-500 hover:text-orange-600">View all →</Link>
+            <h2 className="text-[20px] font-extrabold text-gray-900">{t.continueReading}</h2>
+            <Link href="/my-library" className="text-[13px] font-semibold text-orange-500 hover:text-orange-600">{t.viewAll} →</Link>
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            {READING_PROGRESS.map((item,i)=>{
-              const book = ALL_BOOKS.find(b=>b.title===item.title);
+            {READING_PROGRESS.map((item, i) => {
+              const book = ALL_BOOKS.find(b => b.title === item.title);
               return (
                 <motion.div key={item.title}
                   initial={{opacity:0,y:10}} whileInView={{opacity:1,y:0}} viewport={{once:true}}

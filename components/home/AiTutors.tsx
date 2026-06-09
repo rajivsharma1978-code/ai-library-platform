@@ -5,26 +5,26 @@ import { motion } from "framer-motion";
 import { UI_TEXT } from "@/lib/i18n";
 import { useLanguage } from "@/lib/useLanguage";
 
-const COMPANION_ACTIONS = [
-  ["📖","Explain this",       "/reader"],
-  ["📝","Generate Notes",     "/notes"],
-  ["❓","Create Quiz",        "/quiz"],
-  ["🌐","Translate",          "/reader"],
-  ["💡","Explain Like I'm 10","/reader"],
-  ["🎙️","Voice Mode",        "/reader"],
-];
-
 export function AiTutors() {
   const { language } = useLanguage();
   const t = UI_TEXT[language];
+
+  const COMPANION_ACTIONS = [
+    ["📖", t.aiF1Title,  "/reader"],
+    ["📝", t.aiF2Title,  "/notes"],
+    ["❓", t.aiF3Title,  "/quiz"],
+    ["🌐", t.aiF4Title,  "/reader"],
+    ["💡", "Explain Like I'm 10", "/reader"],
+    ["🎙️", "Voice Mode", "/reader"],
+  ];
 
   const FEATURES = [
     { emoji:"🤖", title: t.aiF1Title, desc: t.aiF1Desc, href:"/reader",   border:"border-blue-100",   icon:"bg-blue-50"   },
     { emoji:"📝", title: t.aiF2Title, desc: t.aiF2Desc, href:"/notes",    border:"border-green-100",  icon:"bg-green-50"  },
     { emoji:"❓", title: t.aiF3Title, desc: t.aiF3Desc, href:"/quiz",     border:"border-purple-100", icon:"bg-purple-50" },
     { emoji:"🌐", title: t.aiF4Title, desc: t.aiF4Desc, href:"/reader",   border:"border-orange-100", icon:"bg-orange-50" },
-    { emoji:"🎙️", title:"Voice Mode",  desc:"Listen and learn anywhere",   href:"/reader",   border:"border-pink-100",   icon:"bg-pink-50"   },
-    { emoji:"📖", title:"Revision Hub",desc:"Your all-in-one revision space", href:"/revision",border:"border-amber-100", icon:"bg-amber-50"  },
+    { emoji:"🎙️", title: t.aiF4Title, desc: t.aiF1Desc, href:"/reader",   border:"border-pink-100",   icon:"bg-pink-50"   },
+    { emoji:"📖", title: t.aiF3Title, desc: t.aiF2Desc, href:"/revision", border:"border-amber-100",  icon:"bg-amber-50"  },
   ];
 
   return (
@@ -38,7 +38,7 @@ export function AiTutors() {
 
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4 mb-8">
           {FEATURES.map((f,i)=>(
-            <motion.div key={f.title}
+            <motion.div key={i}
               initial={{opacity:0,y:18}} whileInView={{opacity:1,y:0}} viewport={{once:true}}
               transition={{duration:0.35,delay:i*0.06}}>
               <Link href={f.href}
@@ -63,11 +63,11 @@ export function AiTutors() {
             </div>
           </div>
           <div className="flex-1 text-center sm:text-left">
-            <h3 className="text-[18px] font-extrabold text-gray-900">Your 24x7 AI Learning Companion</h3>
-            <p className="mt-1.5 text-[13.5px] text-gray-500 leading-relaxed">{t.aiDesc}</p>
+            <h3 className="text-[18px] font-extrabold text-gray-900">{t.aiCompanionTitle}</h3>
+            <p className="mt-1.5 text-[13.5px] text-gray-500 leading-relaxed">{t.aiCompanionDesc}</p>
           </div>
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 flex-shrink-0">
-            {COMPANION_ACTIONS.map(([emoji,label,href])=>(
+            {COMPANION_ACTIONS.map(([emoji, label, href]) => (
               <Link key={String(label)} href={href}
                 className="flex items-center gap-1.5 rounded-xl border border-gray-200 bg-white px-3 py-2 text-[12px] font-semibold text-gray-700 shadow-sm transition hover:border-orange-300 hover:text-orange-500 hover:bg-orange-50">
                 <span>{emoji}</span><span>{label}</span>

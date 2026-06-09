@@ -38,11 +38,11 @@ export function NewArrivals() {
         {/* Header */}
         <div className="flex items-center justify-between mb-5">
           <div>
-            <h2 className="text-[20px] font-extrabold text-gray-900">Recommended for You</h2>
-            <p className="mt-0.5 text-[13px] text-gray-400">Based on your interests and learning journey</p>
+            <h2 className="text-[20px] font-extrabold text-gray-900">{t.recommendedForYou}</h2>
+            <p className="mt-0.5 text-[13px] text-gray-400">{t.recommendedSub}</p>
           </div>
           <div className="flex items-center gap-2">
-            <Link href="/library" className="text-[13px] font-semibold text-orange-500 hover:text-orange-600 mr-2">View all</Link>
+            <Link href="/library" className="text-[13px] font-semibold text-orange-500 hover:text-orange-600 mr-2">{t.viewAll}</Link>
             <button onClick={()=>scroll("left")}
               className="w-8 h-8 rounded-full border border-gray-200 bg-white flex items-center justify-center text-gray-600 hover:bg-orange-50 hover:text-orange-500 transition-all shadow-sm text-[16px]">‹</button>
             <button onClick={()=>scroll("right")}

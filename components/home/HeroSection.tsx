@@ -29,11 +29,11 @@ export function HeroSection() {
             </h1>
 
             <p className="mt-4 text-xl font-semibold text-slate-900">
-              Powered by AI. ✨
+              {t.poweredByAI} ✨
             </p>
 
             <p className="mt-1 text-base font-semibold text-slate-800">
-              Read. Understand. Revise. Master.
+              {t.readUnderstandRevise}
             </p>
 
             <p className="mt-3 max-w-xl text-sm leading-6 text-slate-600">
@@ -64,13 +64,13 @@ export function HeroSection() {
             </div>
           </div>
 
-          <div className="relative hidden min-h-[430px] overflow-hidden lg:block">
+          <div className="relative hidden min-h-[430px] lg:block">
             <img
               src="/hero-artwork.png"
               alt="Diverse learners connected by AI through books"
-              className="absolute left-[-5%] top-[-10%] h-[125%] w-[125%] object-cover"
+              className="absolute inset-0 h-full w-full object-contain object-center"
             />
-            <div className="absolute inset-y-0 left-0 w-40 bg-gradient-to-r from-[#fff8ed] to-transparent" />
+            <div className="absolute inset-y-0 left-0 w-32 bg-gradient-to-r from-[#fff8ed] to-transparent" />
           </div>
         </div>
       </div>
@@ -90,7 +90,7 @@ export function HeroSection() {
 
         <div className="mt-2 flex flex-wrap items-center gap-3 px-4 pb-1">
           <span className="text-xs font-bold uppercase text-orange-600">
-            Popular:
+            {t.popular}
           </span>
           {chips.map((chip) => (
             <button

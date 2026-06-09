@@ -49,9 +49,9 @@ export function FeaturedBooks() {
 
           {/* Header row */}
           <div className="flex items-center justify-between mb-6">
-            <h2 className="text-[20px] font-extrabold text-gray-900">Featured Books</h2>
+            <h2 className="text-[20px] font-extrabold text-gray-900">{t.featuredBooks}</h2>
             <div className="flex items-center gap-2">
-              <Link href="/library" className="text-[13px] font-semibold text-orange-500 hover:text-orange-600 mr-2">View all</Link>
+              <Link href="/library" className="text-[13px] font-semibold text-orange-500 hover:text-orange-600 mr-2">{t.viewAll}</Link>
               <button onClick={()=>scroll("left")}
                 className="w-8 h-8 rounded-full border border-gray-200 bg-white flex items-center justify-center text-gray-600 hover:bg-orange-50 hover:border-orange-300 hover:text-orange-500 transition-all shadow-sm text-[16px]">
                 ‹
@@ -82,7 +82,7 @@ export function FeaturedBooks() {
                   <div className="absolute inset-0 bg-black/0 group-hover:bg-black/25 transition-all flex items-end p-2 opacity-0 group-hover:opacity-100">
                     <button onClick={()=>openSummary(book)}
                       className="w-full rounded-xl bg-white/90 backdrop-blur-sm py-1.5 text-[11px] font-bold text-gray-800 hover:bg-white transition-colors">
-                      AI Summary
+                      {t.aiSummaryBtn}
                     </button>
                   </div>
                 </div>
@@ -131,11 +131,11 @@ export function FeaturedBooks() {
               <div className="flex gap-3 mt-5">
                 <Link href={`/book/${encodeURIComponent(summaryBook.title)}`} onClick={()=>setSummaryBook(null)}
                   className="flex-1 rounded-xl bg-orange-500 hover:bg-orange-600 text-white font-bold text-[13px] py-3 text-center transition-colors">
-                  Read Now →
+                  {t.readNow}
                 </Link>
                 <button onClick={()=>setSummaryBook(null)}
                   className="flex-1 rounded-xl border-2 border-gray-200 hover:bg-gray-50 text-gray-600 font-semibold text-[13px] py-3 transition-colors">
-                  Close
+                  ✕
                 </button>
               </div>
             </div>

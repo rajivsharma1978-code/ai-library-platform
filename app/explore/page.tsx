@@ -1,3 +1,5 @@
+"use client";
+
 import Link from "next/link";
 import { UI_TEXT } from "@/lib/i18n";
 import { useLanguage } from "@/lib/useLanguage";
