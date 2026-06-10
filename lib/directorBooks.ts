@@ -1,0 +1,32 @@
+export type DirectorBook = {
+    id: string;
+    title: string;
+    author: string;
+    description: string;
+    language: string;
+    cover: string;
+    pdf: string;
+  };
+  
+  export const directorBooks: DirectorBook[] = [
+    {
+      id: "director-book-1",
+      title: "Director Book 1",
+      author: "NDL Director",
+      description:
+        "A featured book selected for demonstrating the future AI-powered National Digital Library reading experience.",
+      language: "English",
+      cover: "/director-books/book-1-cover.jpg",
+      pdf: "/director-books/book-1.pdf",
+    },
+    {
+      id: "director-book-2",
+      title: "Director Book 2",
+      author: "NDL Director",
+      description:
+        "A second featured book for showcasing AI summaries, multilingual explanation, quizzes, notes, and premium flipbook reading.",
+      language: "English",
+      cover: "/director-books/book-2-cover.jpg",
+      pdf: "/director-books/book-2.pdf",
+    },
+  ];

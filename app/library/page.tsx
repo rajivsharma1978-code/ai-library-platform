@@ -5,8 +5,6 @@ import { useEffect, useState } from "react";
 import { UI_TEXT } from "@/lib/i18n";
 import { useLanguage } from "@/lib/useLanguage";
 
-
-
 const uploadedItems = [
   "Uploaded Biology PDF",
   "Scanned History Notes",
@@ -24,48 +22,41 @@ export default function LibraryPage() {
   const { language } = useLanguage();
   const t = UI_TEXT[language];
 
-    const [readingHistory, setReadingHistory] = useState<string[]>([]);
-    const [savedBooks, setSavedBooks] = useState<string[]>([]);
-    const [bookmarks, setBookmarks] = useState<string[]>([]);
-    useEffect(() => {
-      const history = localStorage.getItem("readingHistory");
-    
-      if (history) {
-        setReadingHistory(JSON.parse(history));
-      }
-      const storedBookmarks = localStorage.getItem("aiBookmarks");
+  const [readingHistory, setReadingHistory] = useState<string[]>([]);
+  const [savedBooks, setSavedBooks] = useState<string[]>([]);
+  const [bookmarks, setBookmarks] = useState<string[]>([]);
 
-if (storedBookmarks) {
-  setBookmarks(JSON.parse(storedBookmarks));
-}
-const storedSavedBooks = localStorage.getItem("savedBooks");
+  useEffect(() => {
+    const history = localStorage.getItem("readingHistory");
+    if (history) setReadingHistory(JSON.parse(history));
 
-if (storedSavedBooks) {
-  setSavedBooks(JSON.parse(storedSavedBooks));
-}
-    }, []);  
+    const storedBookmarks = localStorage.getItem("aiBookmarks");
+    if (storedBookmarks) setBookmarks(JSON.parse(storedBookmarks));
+
+    const storedSavedBooks = localStorage.getItem("savedBooks");
+    if (storedSavedBooks) setSavedBooks(JSON.parse(storedSavedBooks));
+  }, []);
+
   return (
     <main className="min-h-screen bg-slate-100">
       <div className="max-w-7xl mx-auto p-10">
         <Link href="/" className="text-blue-600 font-semibold">
-          ← Back to Home
+          ← {t.navLibrary === "Library" ? "Back to Home" : "होम पर वापस"}
         </Link>
 
         <div className="mt-8 bg-gradient-to-r from-slate-900 to-blue-900 text-white rounded-3xl p-10 shadow-xl">
-          <h1 className="text-5xl font-bold">My Library</h1>
-
+          <h1 className="text-5xl font-bold">{t.footerLibraryCatalog}</h1>
           <p className="mt-4 text-lg text-blue-100 max-w-3xl">
-            Your personal learning shelf with saved books, uploaded PDFs,
-            AI notes, bookmarks, and continue-reading items.
+            {t.chatSubtitle}
           </p>
         </div>
 
         <div className="grid md:grid-cols-4 gap-6 mt-10">
           {[
-            ["12", "Saved Books"],
-            ["4", "Uploaded PDFs"],
-            ["24", "Saved Notes"],
-            ["72%", "Reading Progress"],
+            ["12", t.navLibrary === "Library" ? "Saved Books" : "सहेजी गई पुस्तकें"],
+            ["4",  t.navLibrary === "Library" ? "Uploaded PDFs" : "अपलोड किए गए PDFs"],
+            ["24", t.navLibrary === "Library" ? "Saved Notes" : "सहेजे गए नोट्स"],
+            ["72%",t.navLibrary === "Library" ? "Reading Progress" : "पठन प्रगति"],
           ].map(([value, label]) => (
             <div key={label} className="bg-white rounded-3xl p-8 shadow-lg">
               <h2 className="text-4xl font-bold">{value}</h2>
@@ -73,136 +64,108 @@ if (storedSavedBooks) {
             </div>
           ))}
         </div>
-        <section className="mt-12">
-  <h2 className="text-3xl font-bold text-slate-900">
-    Recently Opened
-  </h2>
 
-  <div className="grid md:grid-cols-4 gap-6 mt-6">
-    {readingHistory.length === 0 ? (
-      <div className="bg-white rounded-3xl p-6 shadow">
-        <p className="text-slate-500">
-          No reading history yet.
-        </p>
-      </div>
-    ) : (
-      readingHistory.map((book) => (
-        <Link
-          key={book}
-          href={`/book/${encodeURIComponent(book)}`}
-          className="bg-white rounded-3xl p-5 shadow hover:-translate-y-1 hover:shadow-xl transition"
-        >
-          <img
-            src={getCover(book)}
-            alt={book}
-            className="w-full h-60 rounded-2xl object-cover"
-          />
-
-          <h3 className="font-bold mt-4 text-slate-900">
-            {book}
-          </h3>
-
-          <p className="text-sm text-slate-500 mt-2">
-            Continue learning
-          </p>
-        </Link>
-      ))
-    )}
-  </div>
-</section>
-<section className="mt-12">
-  <h2 className="text-3xl font-bold text-slate-900">
-    Bookmarks
-  </h2>
-
-  <div className="mt-6 space-y-4">
-    {bookmarks.length === 0 ? (
-      <div className="bg-white rounded-3xl p-6 shadow">
-        <p className="text-slate-500">
-          No bookmarks yet.
-        </p>
-      </div>
-    ) : (
-      bookmarks.map((bookmark, index) => (
-        <div
-          key={index}
-          className="bg-white rounded-3xl p-6 shadow flex justify-between items-center"
-        >
-          <p className="font-semibold text-slate-900">
-            🔖 {bookmark}
-          </p>
-
-          <Link
-            href="/reader"
-            className="bg-blue-600 text-white px-4 py-2 rounded-xl text-sm"
-          >
-            Open
-          </Link>
-        </div>
-      ))
-    )}
-  </div>
-</section>
         <section className="mt-12">
           <h2 className="text-3xl font-bold text-slate-900">
-            Saved Books
+            {t.continueReading}
           </h2>
-
           <div className="grid md:grid-cols-4 gap-6 mt-6">
-          {savedBooks.length === 0 ? (
-  <div className="bg-white rounded-3xl p-6 shadow">
-    <p className="text-slate-500">
-      No books saved yet.
-    </p>
-  </div>
-) : (
-  savedBooks.map((book) => (
-              <Link
-                key={book}
-                href={`/book/${encodeURIComponent(book)}`}
-                className="bg-white rounded-3xl p-5 shadow hover:-translate-y-1 hover:shadow-xl transition"
-              >
-                <img
-                  src={getCover(book)}
-                  alt={book}
-                  className="w-full h-60 rounded-2xl object-cover"
-                />
-
-                <h3 className="font-bold mt-4 text-slate-900">
-                  {book}
-                </h3>
-
-                <p className="text-sm text-slate-500 mt-2">
-                  AI Ready • Notes • Quiz
+            {readingHistory.length === 0 ? (
+              <div className="bg-white rounded-3xl p-6 shadow">
+                <p className="text-slate-500">
+                  {t.navLibrary === "Library" ? "No reading history yet." : "अभी तक कोई पठन इतिहास नहीं।"}
                 </p>
-              </Link>
-            ))
-        )}
+              </div>
+            ) : (
+              readingHistory.map((book) => (
+                <Link
+                  key={book}
+                  href={`/book/${encodeURIComponent(book)}`}
+                  className="bg-white rounded-3xl p-5 shadow hover:-translate-y-1 hover:shadow-xl transition"
+                >
+                  <img src={getCover(book)} alt={book}
+                    className="w-full h-60 rounded-2xl object-cover" />
+                  <h3 className="font-bold mt-4 text-slate-900">{book}</h3>
+                  <p className="text-sm text-slate-500 mt-2">
+                    {t.navLibrary === "Library" ? "Continue learning" : "सीखना जारी रखें"}
+                  </p>
+                </Link>
+              ))
+            )}
+          </div>
+        </section>
+
+        <section className="mt-12">
+          <h2 className="text-3xl font-bold text-slate-900">
+            {t.navLibrary === "Library" ? "Bookmarks" : "बुकमार्क"}
+          </h2>
+          <div className="mt-6 space-y-4">
+            {bookmarks.length === 0 ? (
+              <div className="bg-white rounded-3xl p-6 shadow">
+                <p className="text-slate-500">
+                  {t.navLibrary === "Library" ? "No bookmarks yet." : "अभी तक कोई बुकमार्क नहीं।"}
+                </p>
+              </div>
+            ) : (
+              bookmarks.map((bookmark, index) => (
+                <div key={index}
+                  className="bg-white rounded-3xl p-6 shadow flex justify-between items-center">
+                  <p className="font-semibold text-slate-900">🔖 {bookmark}</p>
+                  <Link href="/reader"
+                    className="bg-blue-600 text-white px-4 py-2 rounded-xl text-sm">
+                    {t.readBtn}
+                  </Link>
+                </div>
+              ))
+            )}
+          </div>
+        </section>
+
+        <section className="mt-12">
+          <h2 className="text-3xl font-bold text-slate-900">
+            {t.navLibrary === "Library" ? "Saved Books" : "सहेजी गई पुस्तकें"}
+          </h2>
+          <div className="grid md:grid-cols-4 gap-6 mt-6">
+            {savedBooks.length === 0 ? (
+              <div className="bg-white rounded-3xl p-6 shadow">
+                <p className="text-slate-500">
+                  {t.navLibrary === "Library" ? "No books saved yet." : "अभी तक कोई पुस्तक सहेजी नहीं।"}
+                </p>
+              </div>
+            ) : (
+              savedBooks.map((book) => (
+                <Link key={book} href={`/book/${encodeURIComponent(book)}`}
+                  className="bg-white rounded-3xl p-5 shadow hover:-translate-y-1 hover:shadow-xl transition">
+                  <img src={getCover(book)} alt={book}
+                    className="w-full h-60 rounded-2xl object-cover" />
+                  <h3 className="font-bold mt-4 text-slate-900">{book}</h3>
+                  <p className="text-sm text-slate-500 mt-2">
+                    {t.aiSummaryBtn} • {t.aiF3Title} • {t.aiF2Title}
+                  </p>
+                </Link>
+              ))
+            )}
           </div>
         </section>
 
         <section className="mt-12 grid lg:grid-cols-2 gap-8">
           <div className="bg-white rounded-3xl p-8 shadow-lg">
-            <h2 className="text-2xl font-bold">Uploaded Learning Files</h2>
-
+            <h2 className="text-2xl font-bold">
+              {t.navLibrary === "Library" ? "Uploaded Learning Files" : "अपलोड की गई फ़ाइलें"}
+            </h2>
             <div className="mt-6 space-y-4">
               {uploadedItems.map((item) => (
-                <div
-                  key={item}
-                  className="border rounded-2xl p-5 flex justify-between items-center"
-                >
+                <div key={item}
+                  className="border rounded-2xl p-5 flex justify-between items-center">
                   <div>
                     <p className="font-semibold">{item}</p>
                     <p className="text-sm text-slate-500">
-                      PDF / scanned document
+                      {t.navLibrary === "Library" ? "PDF / scanned document" : "PDF / स्कैन किया गया दस्तावेज़"}
                     </p>
                   </div>
-
-                  <Link
-                    href="/read"
-                    className="bg-blue-600 text-white px-4 py-2 rounded-xl text-sm"
-                  >
-                    Open
+                  <Link href="/read"
+                    className="bg-blue-600 text-white px-4 py-2 rounded-xl text-sm">
+                    {t.readBtn}
                   </Link>
                 </div>
               ))}
@@ -210,20 +173,11 @@ if (storedSavedBooks) {
           </div>
 
           <div className="bg-gradient-to-br from-indigo-700 to-purple-700 rounded-3xl p-8 text-white shadow-lg">
-            <h2 className="text-2xl font-bold">
-              Continue Learning
-            </h2>
-
-            <p className="mt-4 text-indigo-100 leading-7">
-              AI recommends continuing Artificial Intelligence and reviewing weak
-              topics from your recent quiz attempts.
-            </p>
-
-            <Link
-              href="/reader"
-              className="inline-block mt-6 bg-white text-black px-5 py-3 rounded-xl"
-            >
-              Open AI Tutor
+            <h2 className="text-2xl font-bold">{t.continueReading}</h2>
+            <p className="mt-4 text-indigo-100 leading-7">{t.chatWelcome}</p>
+            <Link href="/reader"
+              className="inline-block mt-6 bg-white text-black px-5 py-3 rounded-xl">
+              {t.aiF1Title}
             </Link>
           </div>
         </section>

@@ -26,14 +26,21 @@ const USER_NAV = [
 
 export function SiteHeader() {
   const { language, setLanguage } = useLanguage();
-  const t = UI_TEXT[language];
   const [user, setUser] = useState<NDLUser | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
+  const [mounted, setMounted] = useState(false);
+  const t = mounted ? UI_TEXT[language] : UI_TEXT.en;
 
   useEffect(() => {
+    setMounted(true);
+  
     const s = localStorage.getItem("ndlUser");
-    if (s) { try { setUser(JSON.parse(s)); } catch {} }
+    if (s) {
+      try {
+        setUser(JSON.parse(s));
+      } catch {}
+    }
   }, []);
 
   const logout = () => {

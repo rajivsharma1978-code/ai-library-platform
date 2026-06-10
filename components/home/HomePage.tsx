@@ -1,3 +1,4 @@
+import DirectorCollection from "./DirectorCollection";
 import { SiteHeader } from "./SiteHeader";
 import { HeroSection } from "./HeroSection";
 import { StatsDashboard } from "./StatsDashboard";
@@ -13,6 +14,7 @@ export function HomePage() {
       <SiteHeader />
       <main>
         <HeroSection />
+        <DirectorCollection />
         <StatsDashboard />
         <FeaturedBooks />
         <NewArrivals />

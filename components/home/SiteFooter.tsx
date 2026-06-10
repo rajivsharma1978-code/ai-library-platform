@@ -4,16 +4,17 @@ import Link from "next/link";
 import { UI_TEXT } from "@/lib/i18n";
 import { useLanguage } from "@/lib/useLanguage";
 
-const LINKS = {
-  Platform: [["Library","/library"],["AI Tutor","/reader"],["Upload PDF","/read"],["Explore","/explore"],["My Space","/my-library"]],
-  Learning: [["Notes","/notes"],["Flashcards","/flashcards"],["Quiz Generator","/quiz"],["Revision Hub","/revision"],["AI Summaries","/reader"]],
-  Company:  [["About Us","/"],["Careers","/"],["Press","/"],["Blog","/"],["Contact Us","/"]],
-  Support:  [["Help Center","/"],["Privacy Policy","/"],["Terms of Service","/"],["Accessibility","/"]],
-};
-
 export function SiteFooter() {
   const { language } = useLanguage();
   const t = UI_TEXT[language];
+
+  const LINKS = {
+    [t.footerResources]:  [["Library","/library"],["AI Tutor","/reader"],["Upload PDF","/read"],["Explore","/explore"],["My Space","/my-library"]],
+    [t.footerResources === "Resources" ? "Learning" : "शिक्षण"]: [["Notes","/notes"],["Flashcards","/flashcards"],["Quiz Generator","/quiz"],["Revision Hub","/revision"],["AI Summaries","/reader"]],
+    [t.footerContact === "Contact" ? "Company" : "कंपनी"]:  [["About Us","/"],["Careers","/"],["Press","/"],["Blog","/"],["Contact Us","/"]],
+    [t.footerSupport]:    [["Help Center","/"],["Privacy Policy","/"],["Terms of Service","/"],["Accessibility","/"]],
+  };
+
   return (
     <footer className="bg-white border-t border-gray-100">
       <div className="mx-auto max-w-[1200px] px-6 py-14">
@@ -32,10 +33,10 @@ export function SiteFooter() {
               </div>
               <div>
                 <div className="text-[14px] font-extrabold text-gray-900">NDL AI</div>
-                <div className="text-[10px] text-gray-400 leading-tight">National Digital Learning<br/>Intelligence Platform</div>
+                <div className="text-[10px] text-gray-400 leading-tight">{t.siteName}<br/>{t.government}</div>
               </div>
             </div>
-            <p className="text-[13px] text-gray-500 leading-relaxed mb-5">AI-powered knowledge for<br/>every learner in every language.</p>
+            <p className="text-[13px] text-gray-500 leading-relaxed mb-5">{t.footerDesc}</p>
             <div className="flex items-center gap-2.5">
               {[["𝕏","#"],["f","#"],["▶","#"],["in","#"]].map(([icon,href])=>(
                 <a key={icon} href={href}
@@ -80,7 +81,7 @@ export function SiteFooter() {
 
         {/* Bottom bar */}
         <div className="mt-12 pt-8 border-t border-gray-100 flex flex-col sm:flex-row items-center justify-between gap-3">
-          <p className="text-[12.5px] text-gray-400">© 2025 NDL AI. All rights reserved.</p>
+          <p className="text-[12.5px] text-gray-400">{t.footerCopy}</p>
           <p className="text-[12.5px] text-gray-400 flex items-center gap-1">Made with <span className="text-red-500 text-base">❤</span> in India</p>
         </div>
       </div>
