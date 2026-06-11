@@ -6,27 +6,30 @@ export type DirectorBook = {
     language: string;
     cover: string;
     pdf: string;
+    pages: number;
   };
   
   export const directorBooks: DirectorBook[] = [
     {
-      id: "director-book-1",
-      title: "Director Book 1",
-      author: "NDL Director",
+      id: "nalanda",
+      title: "Nalanda: The Untold Story",
+      author: "Yuvraj Malik",
       description:
-        "A featured book selected for demonstrating the future AI-powered National Digital Library reading experience.",
+        "A richly illustrated story that brings the legacy of Nalanda to life for young readers through history, culture, imagination, and learning.",
       language: "English",
-      cover: "/director-books/book-1-cover.jpg",
-      pdf: "/director-books/book-1.pdf",
+      cover: "/director-books/nalanda-cover.jpg",
+      pdf: "/director-books/nalanda.pdf",
+      pages: 32,
     },
     {
-      id: "director-book-2",
-      title: "Director Book 2",
-      author: "NDL Director",
+      id: "chandrayaan-3",
+      title: "Chandrayaan 3: Tiranga Flies on the Moon",
+      author: "Yuvraj Malik",
       description:
-        "A second featured book for showcasing AI summaries, multilingual explanation, quizzes, notes, and premium flipbook reading.",
+        "An inspiring illustrated book on India’s Chandrayaan 3 mission, space exploration, science, curiosity, and national achievement.",
       language: "English",
-      cover: "/director-books/book-2-cover.jpg",
-      pdf: "/director-books/book-2.pdf",
+      cover: "/director-books/chandrayaan-3-cover.jpg",
+      pdf: "/director-books/chandrayaan-3.pdf",
+      pages: 35,
     },
   ];

@@ -7,11 +7,11 @@ import { UI_TEXT } from "@/lib/i18n";
 import { useLanguage } from "@/lib/useLanguage";
 
 const demoUsers: Record<string, { password: string; role: string; name: string }> = {
-  student: { password: "student123", role: "Student", name: "Demo Student" },
-  teacher: { password: "teacher123", role: "Teacher", name: "Demo Teacher" },
-  researcher: { password: "researcher123", role: "Researcher", name: "Demo Researcher" },
-  senior: { password: "senior123", role: "Senior Learner", name: "Senior Learner" },
-  demo: { password: "demo123", role: "Admin", name: "Admin User" },
+  student:    { password: "student123",    role: "Student",       name: "Demo Student"  },
+  teacher:    { password: "teacher123",    role: "Teacher",       name: "Demo Teacher"  },
+  researcher: { password: "researcher123", role: "Researcher",    name: "Demo Researcher" },
+  senior:     { password: "senior123",     role: "Senior Learner",name: "Senior Learner" },
+  demo:       { password: "demo123",       role: "Admin",         name: "Admin User"    },
 };
 
 export default function SignInPage() {
@@ -25,26 +25,19 @@ export default function SignInPage() {
 
   function signIn() {
     const user = demoUsers[userId.toLowerCase()];
-
     if (!user || user.password !== password) {
-      setError("Invalid user ID or password");
+      setError(t.chatError);
       return;
     }
-
     if (user.role === "Admin") {
       router.push("/admin-login");
       return;
     }
-
-    localStorage.setItem(
-      "ndlUser",
-      JSON.stringify({
-        name: user.name,
-        role: user.role,
-        signedIn: true,
-      })
-    );
-
+    localStorage.setItem("ndlUser", JSON.stringify({
+      name: user.name,
+      role: user.role,
+      signedIn: true,
+    }));
     router.push("/");
   }
 
@@ -52,19 +45,19 @@ export default function SignInPage() {
     <main className="min-h-screen bg-slate-100 flex items-center justify-center p-8">
       <div className="bg-white rounded-3xl p-10 shadow-2xl w-full max-w-xl">
         <Link href="/" className="text-blue-600 font-semibold">
-          ← Back to Library
+          ← {t.navLibrary}
         </Link>
 
-        <h1 className="text-4xl font-bold mt-8">Sign in to NDL AI</h1>
+        <h1 className="text-4xl font-bold mt-8">{t.signIn} — NDL AI</h1>
 
         <p className="text-slate-500 mt-3">
-          Use a demo account to experience role-based learning.
+          {t.chatSubtitle}
         </p>
 
         <input
           value={userId}
           onChange={(e) => setUserId(e.target.value)}
-          placeholder="User ID"
+          placeholder={t.searchPlaceholder.includes("Search") ? "User ID" : "उपयोगकर्ता आईडी"}
           className="w-full border rounded-2xl px-5 py-4 mt-8"
         />
 
@@ -72,7 +65,7 @@ export default function SignInPage() {
           type="password"
           value={password}
           onChange={(e) => setPassword(e.target.value)}
-          placeholder="Password"
+          placeholder={t.searchPlaceholder.includes("Search") ? "Password" : "पासवर्ड"}
           className="w-full border rounded-2xl px-5 py-4 mt-4"
         />
 
@@ -82,7 +75,7 @@ export default function SignInPage() {
           onClick={signIn}
           className="w-full bg-black text-white py-4 rounded-2xl mt-6 font-semibold"
         >
-          Sign In
+          {t.signIn}
         </button>
 
         <div className="mt-8 bg-blue-50 border border-blue-200 rounded-2xl p-5 text-sm">

@@ -1,11 +1,14 @@
 "use client";
 
+import PdfBookSpread from "@/components/reader-premium/PdfBookSpread";
 import AICompanion from "@/components/reader-premium/AICompanion";
 import FloatingToolbar from "@/components/reader-premium/FloatingToolbar";
 import BookOpeningAnimation from "@/components/reader-premium/BookOpeningAnimation";
-import OpenBook from "@/components/reader-premium/OpenBook";
+
 import BookCover from "@/components/reader-premium/BookCover";
 import { useState } from "react";
+import { useSearchParams } from "next/navigation";
+import { directorBooks } from "@/lib/directorBooks";
 import ReaderLayout from "@/components/reader/ReaderLayout";
 import FlipBookStage from "@/components/reader/FlipBookStage";
 
@@ -18,13 +21,21 @@ export default function PremiumReaderPreview() {
     "Select text from the book or ask anything about this reading spread."
   );
   const [aiQuestion, setAiQuestion] = useState("");
-  
-  const book = "NDL AI Premium Flipbook Demo";
-  const pdfPages = "120";
+  const searchParams = useSearchParams();
 
-  const activeContent =
-    "This premium reader is designed for the National Digital Library AI platform. It supports open-book reading, double-page spread, AI explanation, summaries, multilingual learning, quizzes, notes, and future visual understanding of diagrams, maps, charts, and illustrations.";
-    function askPremiumAI() {
+const bookId = searchParams.get("book") || "nalanda";
+
+const currentBook =
+  directorBooks.find((b) => b.id === bookId) || directorBooks[0];
+
+const book = currentBook.title;
+
+const pdfPages = String(currentBook.pages);
+
+const activeContent = currentBook.description;
+const pdfPath = currentBook.pdf;
+  
+  function askPremiumAI() {
       if (!aiQuestion.trim()) return;
     
       setAiResponse(
@@ -47,22 +58,46 @@ export default function PremiumReaderPreview() {
     {bookOpening ? (
   <BookOpeningAnimation title={book} />
 ) : !bookOpened ? (
-      <BookCover
-        title="Artificial Intelligence"
-        subtitle="National Digital Library AI"
-        author="Director Demo Collection"
-        onOpen={openBookWithAnimation}
-      />
+  <BookCover
+  title={currentBook.title}
+  subtitle="National Digital Library AI"
+  author={currentBook.author}
+  description={currentBook.description}
+  onOpen={openBookWithAnimation}
+/>
     ) : (
     <ReaderLayout
-      leftPanel={
-        <div>
-          <h2 className="text-2xl font-black">Book Info</h2>
-          <p className="mt-3 text-sm text-slate-400">
-            Chapters, thumbnails, bookmarks, and reading history will appear here.
+    leftPanel={
+      <div>
+        <h2 className="text-2xl font-black">{currentBook.title}</h2>
+    
+        <p className="mt-3 text-sm text-slate-400">
+          {currentBook.author}
+        </p>
+    
+        <p className="mt-5 text-sm leading-7 text-slate-300">
+          {currentBook.description}
+        </p>
+    
+        <div className="mt-6 rounded-2xl bg-white/10 p-4">
+          <p className="text-xs font-bold uppercase tracking-widest text-slate-400">
+            Book Details
           </p>
+    
+          <p className="mt-3 text-sm">Pages: {currentBook.pages}</p>
+          <p className="mt-2 text-sm">Language: {currentBook.language}</p>
         </div>
-      }
+    
+        <a
+          href={pdfPath}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="mt-6 inline-block rounded-xl bg-amber-500 px-5 py-3 text-sm font-black text-white"
+        >
+          Open Original PDF
+        </a>
+      </div>
+    }
       center={
         <div
           onMouseUp={() => {
@@ -101,15 +136,18 @@ export default function PremiumReaderPreview() {
   }}
 />
       
-          <OpenBook
-          title={book}
-          pageNumber={readerPage}
-          totalPages={pdfPages}
-          leftText={activeContent}
-          rightText="The AI-powered National Digital Library experience continues on the next page. Learners can ask questions, translate content, create notes, generate quizzes, and build flashcards directly from the book."
-          onPrevious={() => setReaderPage((page) => Math.max(1, page - 2))}
-          onNext={() => setReaderPage((page) => Math.min(120, page + 2))}
-          />
+<PdfBookSpread
+  title={book}
+  pdfPath={currentBook.pdf}
+  pageNumber={readerPage}
+  totalPages={pdfPages}
+  onPrevious={() => setReaderPage((page) => Math.max(1, page - 1))}
+  onNext={() =>
+    setReaderPage((page) =>
+      Math.min(Number(pdfPages), page + 1)
+    )
+  }
+/>
           </div>
         }
 

@@ -52,18 +52,18 @@ export default function BookManagementPage() {
 
       <section className="flex-1 p-8 overflow-auto">
         <div className="bg-gradient-to-r from-blue-700 to-indigo-700 text-white rounded-3xl p-10 shadow-2xl">
-          <p className="uppercase tracking-widest text-sm opacity-80">Admin · Book Management</p>
-          <h2 className="text-4xl font-bold mt-2">Book Management</h2>
-          <p className="mt-3 text-blue-100">Browse, edit, approve, and manage all books in the national digital library.</p>
+          <p className="uppercase tracking-widest text-sm opacity-80">Admin · {t.featuredBooks}</p>
+          <h2 className="text-4xl font-bold mt-2">{t.featuredBooks}</h2>
+          <p className="mt-3 text-blue-100">{t.footerLibraryCatalog}</p>
         </div>
 
         {/* Stats row */}
         <div className="grid grid-cols-4 gap-4 mt-6">
           {[
-            ["12,540", "Total Books", "text-blue-600"],
-            [books.filter(b => b.status === "Published").length.toString(), "Published", "text-green-600"],
-            [books.filter(b => b.status === "Pending").length.toString(), "Pending Review", "text-yellow-600"],
-            [books.filter(b => b.status === "Under Review").length.toString(), "Under Review", "text-blue-500"],
+            ["12,540", t.stat1Label,   "text-blue-600"],
+            [books.filter(b => b.status === "Published").length.toString(),  t.badgeNew === "New" ? "Published"     : "प्रकाशित",    "text-green-600"],
+            [books.filter(b => b.status === "Pending").length.toString(),    t.badgeNew === "New" ? "Pending Review": "समीक्षा बाकी", "text-yellow-600"],
+            [books.filter(b => b.status === "Under Review").length.toString(),t.badgeNew === "New" ? "Under Review" : "समीक्षाधीन",  "text-blue-500"],
           ].map(([val, label, color]) => (
             <div key={label} className="bg-white rounded-2xl p-5 shadow">
               <p className={`text-3xl font-bold ${color}`}>{val}</p>
@@ -76,31 +76,25 @@ export default function BookManagementPage() {
         <div className="bg-white rounded-2xl p-5 shadow mt-6 flex flex-wrap gap-4 items-center">
           <input
             type="text"
-            placeholder="Search title or author..."
+            placeholder={t.heroSearchPlaceholder}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="flex-1 min-w-[200px] border border-slate-200 rounded-xl px-4 py-2.5 outline-none text-sm focus:border-blue-400"
           />
-          <select
-            value={filterStatus}
-            onChange={(e) => setFilterStatus(e.target.value)}
-            className="border border-slate-200 rounded-xl px-4 py-2.5 outline-none text-sm"
-          >
+          <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)}
+            className="border border-slate-200 rounded-xl px-4 py-2.5 outline-none text-sm">
             {["All", "Published", "Pending", "Under Review"].map((s) => (
               <option key={s}>{s}</option>
             ))}
           </select>
-          <select
-            value={filterLanguage}
-            onChange={(e) => setFilterLanguage(e.target.value)}
-            className="border border-slate-200 rounded-xl px-4 py-2.5 outline-none text-sm"
-          >
+          <select value={filterLanguage} onChange={(e) => setFilterLanguage(e.target.value)}
+            className="border border-slate-200 rounded-xl px-4 py-2.5 outline-none text-sm">
             {["All", "English", "Hindi", "Tamil", "Bengali", "Telugu", "Marathi"].map((l) => (
               <option key={l}>{l}</option>
             ))}
           </select>
           <button className="bg-blue-600 text-white px-5 py-2.5 rounded-xl text-sm font-semibold hover:bg-blue-700 transition">
-            + Add Book
+            + {t.uploadPdf}
           </button>
         </div>
 
@@ -109,7 +103,16 @@ export default function BookManagementPage() {
           <table className="w-full text-sm">
             <thead className="bg-slate-50 border-b border-slate-200">
               <tr>
-                {["Title", "Author", "Language", "Format", "Pages", "Status", "Uploaded", "Actions"].map((h) => (
+                {[
+                  t.catalogTitle,
+                  t.badgeNew === "New" ? "Author"   : "लेखक",
+                  t.navLanguages,
+                  t.badgeNew === "New" ? "Format"   : "प्रारूप",
+                  t.pages,
+                  t.badgeNew === "New" ? "Status"   : "स्थिति",
+                  t.badgeNew === "New" ? "Uploaded" : "अपलोड किया",
+                  t.badgeNew === "New" ? "Actions"  : "क्रियाएं",
+                ].map((h) => (
                   <th key={h} className="text-left px-6 py-4 font-semibold text-slate-600">{h}</th>
                 ))}
               </tr>
@@ -134,8 +137,12 @@ export default function BookManagementPage() {
                   <td className="px-6 py-4 text-slate-500">{book.uploaded}</td>
                   <td className="px-6 py-4">
                     <div className="flex gap-2">
-                      <button className="text-blue-600 hover:underline text-xs">Edit</button>
-                      <button className="text-red-500 hover:underline text-xs">Delete</button>
+                      <button className="text-blue-600 hover:underline text-xs">
+                        {t.readBtn}
+                      </button>
+                      <button className="text-red-500 hover:underline text-xs">
+                        {t.badgeNew === "New" ? "Delete" : "हटाएं"}
+                      </button>
                     </div>
                   </td>
                 </tr>
@@ -143,7 +150,7 @@ export default function BookManagementPage() {
             </tbody>
           </table>
           {filtered.length === 0 && (
-            <p className="text-center text-slate-400 py-12">No books match your filters.</p>
+            <p className="text-center text-slate-400 py-12">{t.searchNoResults}</p>
           )}
         </div>
       </section>

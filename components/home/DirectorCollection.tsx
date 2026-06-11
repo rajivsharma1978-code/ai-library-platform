@@ -36,7 +36,7 @@ export default function DirectorCollection() {
           {directorBooks.map((book) => (
             <Link
               key={book.id}
-              href={`/reader-premium?book=${encodeURIComponent(book.id)}`}
+              href={`/reader-premium?book=${book.id}`}
               className="group grid gap-6 rounded-[2rem] border border-amber-200 bg-white p-6 shadow-lg transition hover:-translate-y-1 hover:shadow-2xl md:grid-cols-[180px_1fr]"
             >
               <div className="relative mx-auto h-64 w-44 rounded-r-3xl rounded-l-lg bg-gradient-to-br from-slate-900 via-blue-900 to-slate-950 p-5 text-white shadow-2xl">
