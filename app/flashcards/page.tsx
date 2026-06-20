@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState } from "react";
 import { UI_TEXT } from "@/lib/i18n";
 import { useLanguage } from "@/lib/useLanguage";
@@ -53,11 +54,9 @@ export default function FlashcardsPage() {
           </div>
 
           
-            href="/"
-            className="rounded-xl bg-black px-4 py-2 text-white"
-          >
-            ← {t.navLibrary === "Library" ? "Home" : "होम"}
-          </a>
+          <Link href="/" className="rounded-xl bg-black px-4 py-2 text-white">
+  {t.navLibrary === "Library" ? "\u2190 Home" : "\u2190 होम"}
+</Link>
         </div>
 
         <p className="mb-8 text-slate-600">

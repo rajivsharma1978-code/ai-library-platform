@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState } from "react";
 import { UI_TEXT } from "@/lib/i18n";
 import { useLanguage } from "@/lib/useLanguage";
@@ -62,11 +63,9 @@ export default function MyLibraryPage() {
           </div>
 
           
-            href="/"
-            className="rounded-xl bg-black px-4 py-2 text-white"
-          >
-            ← {t.navLibrary === "Library" ? "Home" : "होम"}
-          </a>
+          <Link href="/" className="rounded-xl bg-black px-4 py-2 text-white">
+  {t.navLibrary === "Library" ? "\u2190 Home" : "\u2190 होम"}
+</Link>
         </div>
 
         <div className="grid gap-6 md:grid-cols-3">
@@ -126,18 +125,20 @@ export default function MyLibraryPage() {
 
                   <div className="mt-4 flex gap-2">
                     
-                      href={`/read?book=${encodeURIComponent(book)}`}
-                      className="rounded-xl bg-black px-3 py-2 text-white text-sm"
-                    >
-                      {t.readBtn}
-                    </a>
+                  <Link
+  href={`/read?book=${encodeURIComponent(book)}`}
+  className="rounded-xl bg-black px-3 py-2 text-white"
+>
+  {t.readBtn}
+</Link>
 
                     
-                      href={`/reader?book=${encodeURIComponent(book)}`}
-                      className="rounded-xl bg-blue-600 px-3 py-2 text-white text-sm"
-                    >
-                      {t.aiF1Title}
-                    </a>
+<Link
+  href={`/reader?book=${encodeURIComponent(book)}`}
+  className="rounded-xl border px-3 py-2"
+>
+{t.navLibrary === "Library" ? "Ask AI" : "AI से पूछें"}
+</Link>
                     <button
                       onClick={() => removeBook(book)}
                       className="rounded-xl bg-red-600 px-3 py-2 text-white text-sm"

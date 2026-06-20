@@ -28,8 +28,9 @@ export default function PdfPageCanvas({
   useEffect(() => {
     if (!pdf || width <= 0 || height <= 0) return;
 
-    const currentRenderId = ++renderIdRef.current;
-    let cancelled = false;
+const safePdf = pdf;
+const currentRenderId = ++renderIdRef.current;
+let cancelled = false;
 
     // Cancel any render still in flight on this canvas before starting
     // a new one — this is the actual fix. Without this, pdfjs throws
@@ -43,7 +44,7 @@ export default function PdfPageCanvas({
       setIsLoading(true);
 
       try {
-        const page = await pdf.getPage(pageNumber);
+        const page = await safePdf.getPage(pageNumber); 
         if (cancelled || renderIdRef.current !== currentRenderId) return;
 
         const naturalViewport = page.getViewport({ scale: 1 });
@@ -67,7 +68,11 @@ export default function PdfPageCanvas({
 
         // Track the render task so it can be cancelled if this effect
         // re-runs (new page/size) before the render finishes.
-        const task = page.render({ canvasContext: ctx, viewport });
+        const task = page.render({
+          canvas,
+          canvasContext: ctx,
+          viewport,
+        });
         renderTaskRef.current = task;
 
         await task.promise;

@@ -1,5 +1,6 @@
 "use client";
 
+import { Suspense } from "react";
 import PdfBookSpread from "@/components/reader-premium/PdfBookSpread";
 import AICompanion from "@/components/reader-premium/AICompanion";
 import FloatingToolbar from "@/components/reader-premium/FloatingToolbar";
@@ -13,6 +14,14 @@ import ReaderLayout from "@/components/reader/ReaderLayout";
 import FlipBookStage from "@/components/reader/FlipBookStage";
 
 export default function PremiumReaderPreview() {
+  return (
+    <Suspense fallback={<div className="p-6">Loading reader...</div>}>
+      <PremiumReaderPreviewContent />
+    </Suspense>
+  );
+}
+
+function PremiumReaderPreviewContent() {
   const [readerPage, setReaderPage] = useState(1);
   const [bookOpened, setBookOpened] = useState(false);
   const [bookOpening, setBookOpening] = useState(false);

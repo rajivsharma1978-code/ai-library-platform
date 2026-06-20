@@ -60,7 +60,7 @@ export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
 
       for (const p of pagesToCheck) {
         try {
-          const dims = await getRealPageDims(pdf, p);
+          const dims = await getRealPageDims(pdf!, p);
           if (cancelled) return;
           newDims.set(p, dims);
         } catch (err) {
@@ -102,7 +102,7 @@ export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
       for (const p of currentPageNumbers) {
         if (pageDims.has(p)) continue;
         try {
-          const dims = await getRealPageDims(pdf, p);
+          const dims = await getRealPageDims(pdf!, p);
           if (cancelled) return;
           setPageDims((prev) => {
             const next = new Map(prev);
