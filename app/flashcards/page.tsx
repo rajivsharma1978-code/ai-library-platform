@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { UI_TEXT } from "@/lib/i18n";
+import { useLanguage } from "@/lib/useLanguage";
 
 type Card = {
   question: string;
@@ -8,6 +10,9 @@ type Card = {
 };
 
 export default function FlashcardsPage() {
+  const { language } = useLanguage();
+  const t = UI_TEXT[language];
+
   const [cards, setCards] = useState<Card[]>([]);
   const [openCards, setOpenCards] = useState<number[]>([]);
 
@@ -36,32 +41,32 @@ export default function FlashcardsPage() {
   return (
     <main className="min-h-screen bg-slate-50 p-6">
       <div className="mx-auto max-w-5xl">
-      <div className="mb-6 flex items-center justify-between">
-  <div>
-    <h1 className="text-4xl font-bold">
-      AI Flashcards
-    </h1>
+        <div className="mb-6 flex items-center justify-between">
+          <div>
+            <h1 className="text-4xl font-bold">
+              {t.aiF3Title}
+            </h1>
 
-    <p className="mt-2 text-slate-600">
-      Click a card to reveal the answer.
-    </p>
-  </div>
+            <p className="mt-2 text-slate-600">
+              {t.navLibrary === "Library" ? "Click a card to reveal the answer." : "उत्तर देखने के लिए कार्ड पर क्लिक करें।"}
+            </p>
+          </div>
 
-  <a
-    href="/"
-    className="rounded-xl bg-black px-4 py-2 text-white"
-  >
-    ← Home
-  </a>
-</div>
+          
+            href="/"
+            className="rounded-xl bg-black px-4 py-2 text-white"
+          >
+            ← {t.navLibrary === "Library" ? "Home" : "होम"}
+          </a>
+        </div>
 
         <p className="mb-8 text-slate-600">
-          Click a card to reveal the answer.
+          {t.navLibrary === "Library" ? "Click a card to reveal the answer." : "उत्तर देखने के लिए कार्ड पर क्लिक करें।"}
         </p>
 
         {cards.length === 0 ? (
           <div className="rounded-3xl bg-white p-8 shadow">
-            No flashcards yet. Save notes from the Reader first.
+            {t.searchNoResults}
           </div>
         ) : (
           <div className="grid gap-4 md:grid-cols-2">
@@ -72,7 +77,7 @@ export default function FlashcardsPage() {
                 className="min-h-48 rounded-3xl bg-white p-6 text-left shadow hover:shadow-md"
               >
                 <p className="mb-3 text-xs font-semibold text-slate-400">
-                  Flashcard {index + 1}
+                  {t.aiF3Title} {index + 1}
                 </p>
 
                 <h3 className="mb-4 text-lg font-bold text-slate-900">
@@ -83,7 +88,7 @@ export default function FlashcardsPage() {
                   <p className="text-slate-700">{card.answer}</p>
                 ) : (
                   <p className="text-sm text-slate-400">
-                    Tap to reveal answer
+                    {t.navLibrary === "Library" ? "Tap to reveal answer" : "उत्तर देखने के लिए टैप करें"}
                   </p>
                 )}
               </button>

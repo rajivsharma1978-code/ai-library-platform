@@ -4,6 +4,7 @@ type BookCoverProps = {
   title: string;
   subtitle?: string;
   author?: string;
+  description?: string;
   onOpen: () => void;
 };
 
@@ -11,7 +12,8 @@ export default function BookCover({
   title,
   subtitle = "National Digital Library AI",
   author = "Premium AI Reading Experience",
-  onOpen,
+description = "AI-powered reading, translation, summaries, quizzes, notes, flashcards, and visual understanding.",
+onOpen,
 }: BookCoverProps) {
   return (
     <section className="flex h-full min-h-[720px] items-center justify-center bg-[radial-gradient(circle_at_center,#fff7df_0%,#ead0a0_52%,#b9823d_100%)] px-8 py-10">
@@ -38,8 +40,7 @@ export default function BookCover({
               </h1>
 
               <p className="mt-8 max-w-sm text-lg leading-9 text-blue-100">
-  AI-powered reading, translation, summaries, quizzes, notes,
-  flashcards, and visual understanding.
+  {description}
 </p>
             </div>
 
