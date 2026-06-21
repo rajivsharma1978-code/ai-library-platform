@@ -24,17 +24,15 @@ export default function PdfPageCanvas({
   const renderIdRef = useRef(0);
   const renderTaskRef = useRef<RenderTask | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [renderedSize, setRenderedSize] = useState({ width: 0, height: 0 });
 
   useEffect(() => {
     if (!pdf || width <= 0 || height <= 0) return;
 
 const safePdf = pdf;
 const currentRenderId = ++renderIdRef.current;
-let cancelled = false;
+    let cancelled = false;
 
-    // Cancel any render still in flight on this canvas before starting
-    // a new one — this is the actual fix. Without this, pdfjs throws
-    // "Cannot use the same canvas during multiple render() operations."
     if (renderTaskRef.current) {
       renderTaskRef.current.cancel();
       renderTaskRef.current = null;
@@ -44,21 +42,30 @@ let cancelled = false;
       setIsLoading(true);
 
       try {
-        const page = await safePdf.getPage(pageNumber); 
+        const page = await safePdf.getPage(pageNumber);
         if (cancelled || renderIdRef.current !== currentRenderId) return;
 
-        const naturalViewport = page.getViewport({ scale: 1 });
+        const nativeViewport = page.getViewport({ scale: 1 });
+        const nativeWidth = nativeViewport.width;
+        const nativeHeight = nativeViewport.height;
+
         const dpr = Math.min(window.devicePixelRatio || 1, 2);
-        const scale = (width / naturalViewport.width) * dpr;
-        const viewport = page.getViewport({ scale });
+        const fitScale = Math.min(width / nativeWidth, height / nativeHeight);
+        const renderScale = fitScale * dpr;
+
+        const viewport = page.getViewport({ scale: renderScale });
 
         const canvas = canvasRef.current;
         if (!canvas) return;
 
         canvas.width = Math.ceil(viewport.width);
         canvas.height = Math.ceil(viewport.height);
-        canvas.style.width = `${width}px`;
-        canvas.style.height = `${height}px`;
+
+        const cssWidth = Math.round(nativeWidth * fitScale);
+        const cssHeight = Math.round(nativeHeight * fitScale);
+
+        canvas.style.width = `${cssWidth}px`;
+        canvas.style.height = `${cssHeight}px`;
 
         const ctx = canvas.getContext("2d");
         if (!ctx) return;
@@ -66,8 +73,6 @@ let cancelled = false;
         ctx.fillStyle = "#ffffff";
         ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-        // Track the render task so it can be cancelled if this effect
-        // re-runs (new page/size) before the render finishes.
         const task = page.render({
           canvas,
           canvasContext: ctx,
@@ -83,15 +88,12 @@ let cancelled = false;
 
         if (cancelled || renderIdRef.current !== currentRenderId) return;
 
-        onRendered?.({
-          width: naturalViewport.width,
-          height: naturalViewport.height,
-        });
+        setRenderedSize({ width: cssWidth, height: cssHeight });
+
+        onRendered?.({ width: nativeWidth, height: nativeHeight });
 
         setIsLoading(false);
       } catch (err: any) {
-        // pdfjs throws a RenderingCancelledException when we cancel on
-        // purpose above — this is expected and not a real error.
         if (err?.name === "RenderingCancelledException") return;
 
         console.error(`[PdfPageCanvas] render error on page ${pageNumber}:`, err);
@@ -122,6 +124,8 @@ let cancelled = false;
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
+        background: "#fdfcf9",
+        overflow: "hidden",
       }}
     >
       {isLoading && (
@@ -132,7 +136,7 @@ let cancelled = false;
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
-            background: "#fafafa",
+            background: "#fdfcf9",
           }}
         >
           <div
@@ -151,9 +155,8 @@ let cancelled = false;
       <canvas
         ref={canvasRef}
         style={{
-          maxWidth: "100%",
-          maxHeight: "100%",
-          objectFit: "contain",
+          width: renderedSize.width || undefined,
+          height: renderedSize.height || undefined,
           display: isLoading ? "none" : "block",
         }}
       />

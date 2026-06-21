@@ -8,13 +8,12 @@ import {
   useRef,
   useState,
 } from "react";
-import dynamic from "next/dynamic";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import PdfPageCanvas from "./PdfPageCanvas";
 import type { RealPageDims } from "@/lib/premium-reader/pdfLayoutAnalyzer";
-import type { ReadingDirection } from "@/lib/premium-reader/bookProfile";
-
-const HTMLFlipBook = dynamic(() => import("react-pageflip"), { ssr: false }) as any;
+import { resolveFrontMatterPages, resolvePageRole } from "@/lib/premium-reader/pdfLayoutAnalyzer";
+import type { BookProfile, ReadingDirection } from "@/lib/premium-reader/bookProfile";
+import { getPdfPageMode, getDisplayLabel } from "@/lib/premium-reader/bookProfile";
 
 export interface FlipEngineHandle {
   flipNext: () => void;
@@ -26,104 +25,137 @@ export type FlipMode = "single" | "double";
 
 interface FlipEngineProps {
   pdf: PDFDocumentProxy | null;
-  totalPages: number;
-  hasCover: boolean;
+  profile: BookProfile;
   pageDims: Map<number, RealPageDims>;
-  mode: FlipMode;
-  readingDirection: ReadingDirection;
   stageWidth: number;
   stageHeight: number;
-  onPageChange: (pageNumbers: number[]) => void;
+  /** Now reports a display LABEL (e.g. "02–03", "Cover") alongside raw page numbers. */
+  onPageChange: (info: { pageNumbers: number[]; label: string }) => void;
 }
 
-function computeLeafSize(
+const FALLBACK_ASPECT = 0.72;
+
+function detectOverallModeSinglePages(
   pageDims: Map<number, RealPageDims>,
-  mode: FlipMode,
-  stageWidth: number,
-  stageHeight: number
-): { width: number; height: number } {
-  const reference = pageDims.get(1) ?? Array.from(pageDims.values())[0];
-  const aspect = reference ? reference.width / reference.height : 0.72;
+  frontMatterPages: number
+): FlipMode {
+  const firstContent = pageDims.get(frontMatterPages + 1);
+  if (!firstContent) return "double";
+  return firstContent.orientation === "landscape" ? "single" : "double";
+}
 
-  const usableWidth = mode === "double" ? (stageWidth - 8) / 2 : stageWidth;
-  const usableHeight = stageHeight;
+function resolveAspectSinglePages(
+  pageDims: Map<number, RealPageDims>,
+  frontMatterPages: number
+): number {
+  const firstContent = pageDims.get(frontMatterPages + 1);
+  if (firstContent) return firstContent.width / firstContent.height;
 
-  const widthFromHeight = usableHeight * aspect;
+  const anyFrontMatter = Array.from(pageDims.values())[0];
+  if (anyFrontMatter) return anyFrontMatter.width / anyFrontMatter.height;
 
-  let leafWidth: number;
-  let leafHeight: number;
+  return FALLBACK_ASPECT;
+}
 
-  if (widthFromHeight <= usableWidth) {
-    leafHeight = usableHeight;
-    leafWidth = widthFromHeight;
-  } else {
-    leafWidth = usableWidth;
-    leafHeight = usableWidth / aspect;
-  }
+/**
+ * In "prebuilt-spreads" mode, the leaf box must fit the WIDEST real
+ * page in the book (since each PDF page is already a full spread and
+ * may vary slightly in aspect ratio between pages). We use the first
+ * known page as the reference, falling back to a wide-spread default
+ * aspect ratio if nothing has loaded yet.
+ */
+function resolveAspectPrebuiltSpreads(pageDims: Map<number, RealPageDims>): number {
+  const first = pageDims.get(1);
+  if (first) return first.width / first.height;
 
-  return {
-    width: Math.max(Math.floor(leafWidth), 1),
-    height: Math.max(Math.floor(leafHeight), 1),
-  };
+  const any = Array.from(pageDims.values())[0];
+  if (any) return any.width / any.height;
+
+  // Wide-spread fallback (roughly two portrait pages side by side).
+  return 1.4;
 }
 
 const FlipEngine = forwardRef<FlipEngineHandle, FlipEngineProps>(
   function FlipEngine(
-    {
-      pdf,
-      totalPages,
-      hasCover,
-      pageDims,
-      mode,
-      readingDirection,
-      stageWidth,
-      stageHeight,
-      onPageChange,
-    },
+    { pdf, profile, pageDims, stageWidth, stageHeight, onPageChange },
     ref
   ) {
     const flipBookRef = useRef<any>(null);
     const [bookOpened, setBookOpened] = useState(false);
-
-    // Lock leaf size once we have a real cover/page-1 aspect ratio AND a
-    // stable stage size — but only re-lock if the size changed by a
-    // meaningful amount (>4px), to avoid remounting HTMLFlipBook every
-    // time an async page-dim resolves.
-    const leafSizeRef = useRef<{ width: number; height: number } | null>(null);
-    const [lockedLeafSize, setLockedLeafSize] = useState<{
-      width: number;
-      height: number;
-    } | null>(null);
-
-    const computedLeafSize = useMemo(
-      () => computeLeafSize(pageDims, mode, stageWidth, stageHeight),
-      [pageDims, mode, stageWidth, stageHeight]
-    );
+    const [HTMLFlipBook, setHTMLFlipBook] = useState<any>(null);
 
     useEffect(() => {
-      if (computedLeafSize.width <= 0 || computedLeafSize.height <= 0) return;
+      let cancelled = false;
+      import("react-pageflip").then((mod) => {
+        if (!cancelled) setHTMLFlipBook(mod.default);
+      });
+      return () => {
+        cancelled = true;
+      };
+    }, []);
 
-      const prev = leafSizeRef.current;
-      const changed =
-        !prev ||
-        Math.abs(prev.width - computedLeafSize.width) > 4 ||
-        Math.abs(prev.height - computedLeafSize.height) > 4;
+    const pdfPageMode = useMemo(() => getPdfPageMode(profile), [profile]);
+    const isPrebuiltSpreads = pdfPageMode === "prebuilt-spreads";
 
-      if (changed) {
-        leafSizeRef.current = computedLeafSize;
-        setLockedLeafSize(computedLeafSize);
+    const frontMatterPages = useMemo(
+      () =>
+        isPrebuiltSpreads
+          ? 0
+          : resolveFrontMatterPages(profile, pageDims),
+      [profile, pageDims, isPrebuiltSpreads]
+    );
+
+    // In prebuilt-spreads mode the book is ALWAYS single-leaf-at-a-time
+    // (usePortrait must be true, per requirement) — there is no
+    // pairing concept since each PDF page already IS the full spread.
+    const mode: FlipMode = useMemo(() => {
+      if (isPrebuiltSpreads) return "single";
+      return detectOverallModeSinglePages(pageDims, frontMatterPages);
+    }, [isPrebuiltSpreads, pageDims, frontMatterPages]);
+
+    const aspect = useMemo(() => {
+      if (isPrebuiltSpreads) return resolveAspectPrebuiltSpreads(pageDims);
+      return resolveAspectSinglePages(pageDims, frontMatterPages);
+    }, [isPrebuiltSpreads, pageDims, frontMatterPages]);
+
+    const leafBox = useMemo(() => {
+      if (stageWidth <= 0 || stageHeight <= 0) {
+        return { width: 0, height: 0 };
       }
-    }, [computedLeafSize]);
+
+      // mode is always "single" in prebuilt-spreads mode, so the leaf
+      // always gets the FULL stage width — never halved for pairing.
+      const usableWidth = mode === "double" ? (stageWidth - 6) / 2 : stageWidth;
+      const usableHeight = stageHeight;
+
+      const widthFromHeight = usableHeight * aspect;
+
+      let leafWidth: number;
+      let leafHeight: number;
+
+      if (widthFromHeight <= usableWidth) {
+        leafHeight = usableHeight;
+        leafWidth = widthFromHeight;
+      } else {
+        leafWidth = usableWidth;
+        leafHeight = usableWidth / aspect;
+      }
+
+      return {
+        width: Math.max(Math.floor(leafWidth), 1),
+        height: Math.max(Math.floor(leafHeight), 1),
+      };
+    }, [aspect, mode, stageWidth, stageHeight]);
 
     useImperativeHandle(ref, () => ({
       flipNext: () => {
-        flipBookRef.current?.getPageFlip()?.flipNext();
+        flipBookRef.current?.pageFlip?.()?.flipNext();
       },
       flipPrev: () => {
-        flipBookRef.current?.getPageFlip()?.flipPrev();
+        flipBookRef.current?.pageFlip?.()?.flipPrev();
       },
       flipToPage: (pageIndex: number) => {
-        flipBookRef.current?.getPageFlip()?.flip(pageIndex);
+        flipBookRef.current?.pageFlip?.()?.flip(pageIndex);
       },
     }));
 
@@ -133,19 +165,98 @@ const FlipEngine = forwardRef<FlipEngineHandle, FlipEngineProps>(
       return () => clearTimeout(timeout);
     }, [pdf]);
 
-    if (!pdf || !lockedLeafSize || lockedLeafSize.width <= 0 || lockedLeafSize.height <= 0) {
+    useEffect(() => {
+      if (!pdf || !HTMLFlipBook) return;
+      const timeout = setTimeout(() => {
+        flipBookRef.current?.pageFlip?.()?.turnToPage(0);
+      }, 150);
+      return () => clearTimeout(timeout);
+    }, [pdf, HTMLFlipBook]);
+
+    if (!pdf || !HTMLFlipBook || leafBox.width <= 0 || leafBox.height <= 0) {
       return null;
     }
 
-    const leafSize = lockedLeafSize;
-    const pageNumbers = Array.from({ length: totalPages }, (_, i) => i + 1);
+    const totalPages = profile.totalPages;
+    const hasCover = profile.hasCover;
+    const readingDirection: ReadingDirection = profile.readingDirection;
+    const allPageNumbers = Array.from({ length: totalPages }, (_, i) => i + 1);
+
+    function handleFlip() {
+      const flip = flipBookRef.current?.pageFlip?.();
+      if (!flip) return;
+
+      const currentLeafIndex = flip.getCurrentPageIndex();
+      const currentPageNumber = currentLeafIndex + 1;
+
+      // ── PREBUILT-SPREADS MODE ───────────────────────────────────────
+      // Every leaf is shown alone, always. No pairing math at all.
+      // Display label comes from pageMap (e.g. "02–03") if available,
+      // otherwise just the raw PDF page number.
+      if (isPrebuiltSpreads) {
+        onPageChange({
+          pageNumbers: [currentPageNumber],
+          label: getDisplayLabel(profile, currentPageNumber),
+        });
+        return;
+      }
+
+      // ── SINGLE-PAGES MODE (original pairing behaviour) ─────────────
+      if (currentPageNumber <= frontMatterPages) {
+        onPageChange({
+          pageNumbers: [currentPageNumber],
+          label: getDisplayLabel(profile, currentPageNumber),
+        });
+        return;
+      }
+
+      const role = resolvePageRole(profile, currentPageNumber, frontMatterPages);
+      if (role !== "content") {
+        onPageChange({
+          pageNumbers: [currentPageNumber],
+          label: getDisplayLabel(profile, currentPageNumber),
+        });
+        return;
+      }
+
+      const currentDims = pageDims.get(currentPageNumber);
+      if (currentDims?.orientation === "landscape") {
+        onPageChange({
+          pageNumbers: [currentPageNumber],
+          label: getDisplayLabel(profile, currentPageNumber),
+        });
+        return;
+      }
+
+      const firstContentPage = frontMatterPages + 1;
+      const offset = currentPageNumber - firstContentPage;
+      const isLeftOfPair = offset % 2 === 0;
+      const partner = isLeftOfPair
+        ? currentPageNumber + 1
+        : currentPageNumber - 1;
+      const partnerClamped = Math.max(1, Math.min(partner, totalPages));
+
+      const left = isLeftOfPair ? currentPageNumber : partnerClamped;
+      const right = isLeftOfPair ? partnerClamped : currentPageNumber;
+
+      const orderedPages =
+        readingDirection === "rtl" ? [right, left] : [left, right];
+
+      const leftLabel = getDisplayLabel(profile, orderedPages[0]);
+      const rightLabel = getDisplayLabel(profile, orderedPages[1]);
+
+      onPageChange({
+        pageNumbers: orderedPages,
+        label: `${leftLabel}–${rightLabel}`,
+      });
+    }
 
     return (
       <div
         className={`ndl-flip-stage ${bookOpened ? "ndl-flip-opened" : "ndl-flip-closed"}`}
         style={{
-          width: mode === "double" ? leafSize.width * 2 + 8 : leafSize.width,
-          height: leafSize.height,
+          width: mode === "double" ? leafBox.width * 2 + 6 : leafBox.width,
+          height: leafBox.height,
           position: "relative",
           margin: "0 auto",
         }}
@@ -155,15 +266,15 @@ const FlipEngine = forwardRef<FlipEngineHandle, FlipEngineProps>(
 
           <HTMLFlipBook
             ref={flipBookRef}
-            width={leafSize.width}
-            height={leafSize.height}
+            width={leafBox.width}
+            height={leafBox.height}
             size="fixed"
-            minWidth={leafSize.width}
-            maxWidth={leafSize.width}
-            minHeight={leafSize.height}
-            maxHeight={leafSize.height}
-            showCover={hasCover}
-            usePortrait={mode === "single"}
+            minWidth={leafBox.width}
+            maxWidth={leafBox.width}
+            minHeight={leafBox.height}
+            maxHeight={leafBox.height}
+            showCover={isPrebuiltSpreads ? false : hasCover}
+            usePortrait={isPrebuiltSpreads ? true : mode === "single"}
             startPage={0}
             drawShadow
             maxShadowOpacity={0.3}
@@ -176,45 +287,27 @@ const FlipEngine = forwardRef<FlipEngineHandle, FlipEngineProps>(
             rtl={readingDirection === "rtl"}
             className="ndl-pageflip"
             style={{}}
-            onFlip={(e: { data: number }) => {
-              const leafIndex = e.data;
-
-              if (mode === "single") {
-                onPageChange([leafIndex + 1]);
-                return;
-              }
-
-              if (hasCover && leafIndex === 0) {
-                onPageChange([1]);
-                return;
-              }
-
-              const firstContentPage = hasCover ? 2 : 1;
-              const pairStart = firstContentPage + (leafIndex - (hasCover ? 1 : 0)) * 2;
-              const right = Math.min(pairStart + 1, totalPages);
-
-              onPageChange(
-                readingDirection === "rtl" ? [right, pairStart] : [pairStart, right]
-              );
-            }}
+            onFlip={handleFlip}
           >
-           {pageNumbers.map((pageNumber) => {
-  const isCoverLeaf = hasCover && pageNumber === 1;
-  return (
-    <div
-      key={pageNumber}
-      className="ndl-flip-page"
-      data-density={isCoverLeaf ? "hard" : "soft"}
-    >
-      <PdfPageCanvas
-        pdf={pdf}
-        pageNumber={pageNumber}
-        width={leafSize.width}
-        height={leafSize.height}
-      />
-    </div>
-  );
-})} 
+            {allPageNumbers.map((pageNumber) => {
+              const role = isPrebuiltSpreads
+                ? (pageNumber === 1 ? "cover" : "content")
+                : resolvePageRole(profile, pageNumber, frontMatterPages);
+              return (
+                <div
+                  key={pageNumber}
+                  className="ndl-flip-page"
+                  data-density={role === "cover" && !isPrebuiltSpreads ? "hard" : "soft"}
+                >
+                  <PdfPageCanvas
+                    pdf={pdf}
+                    pageNumber={pageNumber}
+                    width={leafBox.width}
+                    height={leafBox.height}
+                  />
+                </div>
+              );
+            })}
           </HTMLFlipBook>
         </div>
 
@@ -223,12 +316,8 @@ const FlipEngine = forwardRef<FlipEngineHandle, FlipEngineProps>(
             transition: opacity 0.6s cubic-bezier(0.22, 1, 0.36, 1);
             will-change: opacity;
           }
-          .ndl-flip-closed {
-            opacity: 0;
-          }
-          .ndl-flip-opened {
-            opacity: 1;
-          }
+          .ndl-flip-closed { opacity: 0; }
+          .ndl-flip-opened { opacity: 1; }
           .ndl-flip-shadow-wrap {
             position: relative;
             filter: drop-shadow(0 20px 40px rgba(40,28,8,0.30))
@@ -237,56 +326,30 @@ const FlipEngine = forwardRef<FlipEngineHandle, FlipEngineProps>(
           .ndl-flip-page {
             background: #fdfcf9;
             overflow: hidden;
+            width: 100%;
+            height: 100%;
           }
-          .ndl-pageflip {
-            margin: 0 auto;
-          }
-
+          .ndl-pageflip { margin: 0 auto; }
           .ndl-flip-shadow-wrap::after {
             content: "";
             position: absolute;
             inset: -3px;
             border-radius: 4px;
-            background: linear-gradient(
-              135deg,
-              rgba(154,107,47,0.0) 0%,
-              rgba(154,107,47,0.08) 50%,
-              rgba(154,107,47,0.0) 100%
-            );
+            background: linear-gradient(135deg, rgba(154,107,47,0.0) 0%, rgba(154,107,47,0.08) 50%, rgba(154,107,47,0.0) 100%);
             pointer-events: none;
             z-index: -1;
           }
-
           .stf__parent .stf__item:first-child {
-            box-shadow:
-              inset 0 0 0 1px rgba(60,40,10,0.07),
-              2px 0 0 rgba(250,247,240,0.9),
-              4px 0 0 rgba(235,228,210,0.7),
-              6px 0 0 rgba(220,210,185,0.5),
-              4px 0 16px rgba(60,40,10,0.16);
+            box-shadow: inset 0 0 0 1px rgba(60,40,10,0.07), 2px 0 0 rgba(250,247,240,0.9), 4px 0 0 rgba(235,228,210,0.7), 6px 0 0 rgba(220,210,185,0.5), 4px 0 16px rgba(60,40,10,0.16);
           }
           .stf__parent .stf__item:last-child {
-            box-shadow:
-              inset 0 0 0 1px rgba(60,40,10,0.07),
-              -2px 0 0 rgba(250,247,240,0.9),
-              -4px 0 0 rgba(235,228,210,0.7),
-              -6px 0 0 rgba(220,210,185,0.5),
-              -4px 0 16px rgba(60,40,10,0.16);
+            box-shadow: inset 0 0 0 1px rgba(60,40,10,0.07), -2px 0 0 rgba(250,247,240,0.9), -4px 0 0 rgba(235,228,210,0.7), -6px 0 0 rgba(220,210,185,0.5), -4px 0 16px rgba(60,40,10,0.16);
           }
-
           .ndl-book-ambient-shadow {
             position: absolute;
-            left: 6%;
-            right: 6%;
-            bottom: -24px;
-            height: 30px;
+            left: 6%; right: 6%; bottom: -24px; height: 30px;
             border-radius: 50%;
-            background: radial-gradient(
-              ellipse at center,
-              rgba(40,28,8,0.24) 0%,
-              rgba(40,28,8,0.10) 45%,
-              transparent 75%
-            );
+            background: radial-gradient(ellipse at center, rgba(40,28,8,0.24) 0%, rgba(40,28,8,0.10) 45%, transparent 75%);
             filter: blur(7px);
             pointer-events: none;
             z-index: -1;
@@ -295,14 +358,8 @@ const FlipEngine = forwardRef<FlipEngineHandle, FlipEngineProps>(
           }
           .ndl-flip-closed .ndl-book-ambient-shadow { opacity: 0; }
           .ndl-flip-opened .ndl-book-ambient-shadow { opacity: 1; }
-
-          .stf__item .stf__corner {
-            opacity: 0;
-            transition: opacity 0.3s ease;
-          }
-          .stf__block:hover .stf__corner {
-            opacity: 0.5;
-          }
+          .stf__item .stf__corner { opacity: 0; transition: opacity 0.3s ease; }
+          .stf__block:hover .stf__corner { opacity: 0.5; }
         `}</style>
       </div>
     );

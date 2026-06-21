@@ -1,5 +1,6 @@
 "use client";
 
+import ReaderToolbar from "./ReaderToolbar";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import type { BookProfile } from "@/lib/premium-reader/bookProfile";
@@ -8,7 +9,6 @@ import {
   type RealPageDims,
 } from "@/lib/premium-reader/pdfLayoutAnalyzer";
 import BookSpread, { type BookSpreadHandle } from "./BookSpread";
-import type { FlipMode } from "./FlipEngine";
 
 interface PremiumReaderV2Props {
   profile: BookProfile;
@@ -19,7 +19,9 @@ export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [pageDims, setPageDims] = useState<Map<number, RealPageDims>>(new Map());
   const [currentPageNumbers, setCurrentPageNumbers] = useState<number[]>([1]);
+  const [currentLabel, setCurrentLabel] = useState<string>("1");
   const [isReady, setIsReady] = useState(false);
+  const [zoom, setZoom] = useState(100);
 
   const flipRef = useRef<BookSpreadHandle>(null);
 
@@ -52,15 +54,16 @@ export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
 
   useEffect(() => {
     if (!pdf) return;
-    let cancelled = false;
+const safePdf = pdf;
+let cancelled = false;
 
     async function analyzeInitial() {
       const newDims = new Map<number, RealPageDims>();
-      const pagesToCheck = [1, 2, 3].filter((p) => p <= profile.totalPages);
+      const pagesToCheck = [1, 2, 3, 4, 5, 6].filter((p) => p <= profile.totalPages);
 
       for (const p of pagesToCheck) {
         try {
-          const dims = await getRealPageDims(pdf!, p);
+          const dims = await getRealPageDims(safePdf, p);
           if (cancelled) return;
           newDims.set(p, dims);
         } catch (err) {
@@ -80,29 +83,24 @@ export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
     };
   }, [pdf, profile.totalPages]);
 
-  const mode: FlipMode = (() => {
-    const cover = pageDims.get(1);
-    const secondPage = pageDims.get(2);
-
-    if (cover && cover.orientation === "landscape") return "single";
-    if (secondPage && secondPage.orientation === "landscape") return "single";
-    if (profile.preferredView === "single") return "single";
-    return "double";
-  })();
-
-  const handlePageChange = useCallback((pageNumbers: number[]) => {
-    setCurrentPageNumbers(pageNumbers);
-  }, []);
+  const handlePageChange = useCallback(
+    (info: { pageNumbers: number[]; label: string }) => {
+      setCurrentPageNumbers(info.pageNumbers);
+      setCurrentLabel(info.label);
+    },
+    []
+  );
 
   useEffect(() => {
     if (!pdf) return;
-    let cancelled = false;
+const safePdf = pdf;
+let cancelled = false;
 
-    async function fillMissing() {
+async function fillMissing() {
       for (const p of currentPageNumbers) {
         if (pageDims.has(p)) continue;
         try {
-          const dims = await getRealPageDims(pdf!, p);
+          const dims = await getRealPageDims(safePdf, p);
           if (cancelled) return;
           setPageDims((prev) => {
             const next = new Map(prev);
@@ -129,25 +127,47 @@ export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
     flipRef.current?.flipPrev();
   }, []);
 
-  const currentLabel =
-    currentPageNumbers.length === 2
-      ? `${currentPageNumbers[0]}–${currentPageNumbers[1]}`
-      : `${currentPageNumbers[0]}`;
+  function zoomIn() {
+    setZoom((current) => Math.min(current + 10, 160));
+  }
+  
+  function zoomOut() {
+    setZoom((current) => Math.max(current - 10, 60));
+  }
+  
+  function fitToScreen() {
+    setZoom(100);
+  }
+  
+  function readAloud() {
+    alert("Read Aloud will be connected next.");
+  }
+  
+  function toggleTheme() {
+    alert("Dark mode will be connected next.");
+  }
+  
+  function enterFullscreen() {
+    document.documentElement.requestFullscreen?.();
+  }
 
   const isAtStart = currentPageNumbers[0] <= 1;
   const isAtEnd =
     currentPageNumbers[currentPageNumbers.length - 1] >= profile.totalPages;
 
+  const currentViewLabel =
+    currentPageNumbers.length === 2 ? "Two-Page Spread" : "Single Page";
+
   return (
     <div
-    style={{
-      display: "grid",
-      gridTemplateColumns: "280px 1fr 320px",
-      height: "100vh",
-      maxHeight: "100vh",
-      overflow: "hidden",
-      background: "#f4efe6",
-    }}
+      style={{
+        display: "grid",
+        gridTemplateColumns: "280px 1fr 320px",
+        height: "100vh",
+        maxHeight: "100vh",
+        overflow: "hidden",
+        background: "#f4efe6",
+      }}
     >
       <aside
         style={{
@@ -181,7 +201,7 @@ export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
         <div style={{ marginTop: 16 }}>
           <p style={{ fontSize: 12, color: "#9a8c6b", marginBottom: 4 }}>Current View</p>
           <p style={{ fontSize: 15, fontWeight: 600, color: "#2c2416" }}>
-            {mode === "double" ? "Two-Page Spread" : "Single Page"}
+            {currentViewLabel}
           </p>
         </div>
       </aside>
@@ -206,15 +226,21 @@ export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
 
         {!loadError && (
           <>
+          <ReaderToolbar
+  zoom={zoom}
+  onZoomIn={zoomIn}
+  onZoomOut={zoomOut}
+  onFit={fitToScreen}
+  onReadAloud={readAloud}
+  onToggleTheme={toggleTheme}
+  onFullscreen={enterFullscreen}
+/>
             <div style={{ flex: 1, width: "100%", minHeight: 0 }}>
               <BookSpread
                 ref={flipRef}
                 pdf={pdf}
-                totalPages={profile.totalPages}
-                hasCover={profile.hasCover}
+                profile={profile}
                 pageDims={pageDims}
-                mode={mode}
-                readingDirection={profile.readingDirection}
                 onPageChange={handlePageChange}
               />
             </div>

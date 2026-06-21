@@ -1,5 +1,6 @@
 import type { PDFDocumentProxy } from "pdfjs-dist";
-import type { PageOrientation, ReadingDirection } from "./bookProfile";
+import type { PageOrientation, ReadingDirection, BookProfile, PageRole } from "./bookProfile";
+import { getExplicitPageRole, getPdfPageMode } from "./bookProfile";
 
 export interface RealPageDims {
   pageNumber: number;
@@ -9,12 +10,6 @@ export interface RealPageDims {
   aspectRatio: number;
 }
 
-/**
- * Reads a single PDF page's NATIVE viewport (scale 1) and derives its
- * real dimensions and orientation. This is the single source of truth —
- * any width/height/orientation provided in BookProfile.pages is only
- * a fallback used before this resolves, or if pdfjs throws.
- */
 export async function getRealPageDims(
   pdf: PDFDocumentProxy,
   pageNumber: number
@@ -31,36 +26,92 @@ export async function getRealPageDims(
 }
 
 /**
- * Decide whether a given page number should render as a single page
- * or be paired into a double-spread, based on REAL detected dimensions
- * of the page (and the next page if relevant) — not on assumptions.
- *
- * Rules:
- *  - Landscape pages always render alone (single).
- *  - Page 1 with hasCover=true always renders alone (cover), regardless
- *    of its orientation.
- *  - Otherwise, portrait pages pair up into spreads: (2,3), (4,5), etc.
- *    Page 1 is alone (as the page directly after the cover, or as page 1
- *    itself if there is no cover), so spreads start from the first
- *    available even pair after that.
+ * Only relevant in "single-pages" mode. Estimates how many pages at
+ * the start of the book are standalone front matter before real
+ * left-right pairing begins. Ignored entirely in "prebuilt-spreads"
+ * mode, where nothing is ever paired.
  */
+export function resolveFrontMatterCount(
+  pageDims: Map<number, RealPageDims>,
+  totalPages: number
+): number {
+  const MAX_SCAN = Math.min(6, totalPages);
+
+  const first = pageDims.get(1);
+  if (!first) return 1;
+
+  let frontMatterCount = 1;
+
+  for (let p = 2; p <= MAX_SCAN; p++) {
+    const current = pageDims.get(p);
+    const next = pageDims.get(p + 1);
+
+    if (!current) break;
+
+    if (!next) {
+      frontMatterCount = p;
+      continue;
+    }
+
+    if (current.orientation === next.orientation) {
+      frontMatterCount = p - 1;
+      break;
+    }
+
+    frontMatterCount = p;
+  }
+
+  return Math.max(1, frontMatterCount);
+}
+
+export function resolveFrontMatterPages(
+  profile: BookProfile,
+  pageDims: Map<number, RealPageDims>
+): number {
+  if (typeof profile.frontMatterPages === "number") {
+    return Math.max(0, profile.frontMatterPages);
+  }
+  return resolveFrontMatterCount(pageDims, profile.totalPages);
+}
+
+export function resolvePageRole(
+  profile: BookProfile,
+  pageNumber: number,
+  frontMatterPages: number
+): PageRole {
+  const explicit = getExplicitPageRole(profile, pageNumber);
+  if (explicit) return explicit;
+
+  // In prebuilt-spreads mode there is no pairing concept — every page
+  // is simply "content" unless explicitly tagged otherwise in pageMap.
+  if (getPdfPageMode(profile) === "prebuilt-spreads") {
+    return pageNumber === 1 ? "cover" : "content";
+  }
+
+  if (pageNumber === 1) return "cover";
+  if (pageNumber <= frontMatterPages) return "front-matter";
+  return "content";
+}
+
 export interface SpreadPlan {
   mode: "single" | "double";
-  /** Page numbers participating in this view, in left-to-right reading order. */
   pageNumbers: number[];
 }
 
+/**
+ * Only used in "single-pages" mode. In "prebuilt-spreads" mode, every
+ * page is always single (the PDF page itself IS the full spread), so
+ * this function is never called for such books.
+ */
 export function planSpread(
   pageNumber: number,
   totalPages: number,
-  hasCover: boolean,
+  frontMatterPages: number,
   orientationOf: (pageNumber: number) => PageOrientation,
   readingDirection: ReadingDirection = "ltr"
 ): SpreadPlan {
-  const isCover = hasCover && pageNumber === 1;
-
-  if (isCover) {
-    return { mode: "single", pageNumbers: [1] };
+  if (pageNumber <= frontMatterPages) {
+    return { mode: "single", pageNumbers: [pageNumber] };
   }
 
   const orientation = orientationOf(pageNumber);
@@ -68,10 +119,7 @@ export function planSpread(
     return { mode: "single", pageNumbers: [pageNumber] };
   }
 
-  // Determine pairing parity. After a cover page, content pages start
-  // at 2. We pair (2,3), (4,5), (6,7)... so a page pairs with its
-  // sibling based on (pageNumber - firstContentPage) being even/odd.
-  const firstContentPage = hasCover ? 2 : 1;
+  const firstContentPage = frontMatterPages + 1;
   const offset = pageNumber - firstContentPage;
   const isLeftOfPair = offset % 2 === 0;
 
@@ -82,7 +130,6 @@ export function planSpread(
     return { mode: "single", pageNumbers: [pageNumber] };
   }
 
-  // Only pair if the partner is also portrait — otherwise show alone.
   const partnerOrientation = orientationOf(partner);
   if (partnerOrientation !== "portrait") {
     return { mode: "single", pageNumbers: [pageNumber] };
@@ -95,29 +142,13 @@ export function planSpread(
   return { mode: "double", pageNumbers: ordered };
 }
 
-/**
- * Given the current "logical" page position and a navigation step intent,
- * compute the next anchor page number to render.
- *
- * stepIntent: +1/-1 for single mode, +2/-2 for double mode — but the
- * caller does not need to know which mode is active; this function
- * re-derives it using planSpread so navigation always lands on a valid
- * spread boundary.
- */
-export function getNextAnchorPage(
-  currentPageNumbers: number[],
-  direction: "next" | "previous",
-  totalPages: number,
-  hasCover: boolean
-): number {
-  const last = currentPageNumbers[currentPageNumbers.length - 1];
-  const first = currentPageNumbers[0];
-
-  if (direction === "next") {
-    const next = last + 1;
-    return Math.min(next, totalPages);
-  }
-
-  const prev = first - 1;
-  return Math.max(prev, 1);
+export async function detectPrintedPageLabel(
+  pdf: PDFDocumentProxy,
+  pdfPage: number
+): Promise<string | null> {
+  // Phase 2: OCR-based detection of the printed page number circle.
+  // Not implemented for the current demo scope — pageMap metadata is
+  // used instead. Always returns null; callers must treat this as
+  // "unknown" and fall back to pageMap or the raw PDF page number.
+  return null;
 }

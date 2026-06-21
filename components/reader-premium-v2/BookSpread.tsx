@@ -2,19 +2,16 @@
 
 import { forwardRef, useEffect, useRef, useState } from "react";
 import type { PDFDocumentProxy } from "pdfjs-dist";
-import FlipEngine, { type FlipEngineHandle, type FlipMode } from "./FlipEngine";
+import FlipEngine, { type FlipEngineHandle } from "./FlipEngine";
 import { observeSize } from "@/lib/premium-reader/viewport";
 import type { RealPageDims } from "@/lib/premium-reader/pdfLayoutAnalyzer";
-import type { ReadingDirection } from "@/lib/premium-reader/bookProfile";
+import type { BookProfile } from "@/lib/premium-reader/bookProfile";
 
 interface BookSpreadProps {
   pdf: PDFDocumentProxy | null;
-  totalPages: number;
-  hasCover: boolean;
+  profile: BookProfile;
   pageDims: Map<number, RealPageDims>;
-  mode: FlipMode;
-  readingDirection: ReadingDirection;
-  onPageChange: (pageNumbers: number[]) => void;
+  onPageChange: (info: { pageNumbers: number[]; label: string }) => void;
 }
 
 export type BookSpreadHandle = FlipEngineHandle;
@@ -22,10 +19,7 @@ export type BookSpreadHandle = FlipEngineHandle;
 const FRAME_PADDING = 32;
 
 const BookSpread = forwardRef<BookSpreadHandle, BookSpreadProps>(
-  function BookSpread(
-    { pdf, totalPages, hasCover, pageDims, mode, readingDirection, onPageChange },
-    ref
-  ) {
+  function BookSpread({ pdf, profile, pageDims, onPageChange }, ref) {
     const containerRef = useRef<HTMLDivElement | null>(null);
     const [availSize, setAvailSize] = useState({ width: 0, height: 0 });
 
@@ -55,11 +49,8 @@ const BookSpread = forwardRef<BookSpreadHandle, BookSpreadProps>(
         <FlipEngine
           ref={ref}
           pdf={pdf}
-          totalPages={totalPages}
-          hasCover={hasCover}
+          profile={profile}
           pageDims={pageDims}
-          mode={mode}
-          readingDirection={readingDirection}
           stageWidth={innerW}
           stageHeight={innerH}
           onPageChange={onPageChange}
