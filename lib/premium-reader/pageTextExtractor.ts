@@ -21,6 +21,44 @@ function cacheKey(pdfPath: string, pageNumber: number): string {
 }
 
 /**
+ * Cleans raw OCR output before it is cached or spoken. OCR on scanned
+ * pages frequently produces noise: repeated whitespace, tiny random
+ * fragments (stray punctuation misread as "characters"), standalone
+ * symbols, and lines that are mostly non-letters (table borders,
+ * watermark artifacts, page furniture). This is a best-effort cleanup
+ * pass — it intentionally stays conservative so it never strips real
+ * sentences, only obvious junk.
+ */
+export function cleanOcrText(raw: string): string {
+  if (!raw) return "";
+
+  const lines = raw
+    .split(/\r?\n/)
+    .map((line) => line.replace(/\s+/g, " ").trim())
+    .filter((line) => line.length > 0);
+
+  const cleanedLines = lines.filter((line) => {
+    // Drop lines that are mostly non-letters (e.g. "—— || ___ ...").
+    const letterCount = (line.match(/[A-Za-z]/g) || []).length;
+    const letterRatio = letterCount / line.length;
+    if (letterRatio < 0.4) return false;
+
+    // Drop very short random fragments (1-2 characters) that aren't
+    // a real word on their own (e.g. stray OCR noise like "l", "—", "..").
+    const wordlike = /^[A-Za-z]{3,}$/.test(line);
+    if (line.length <= 2 && !wordlike) return false;
+
+    // Drop lines that are just a single standalone symbol/punctuation
+    // with no letters at all.
+    if (!/[A-Za-z0-9]/.test(line)) return false;
+
+    return true;
+  });
+
+  return cleanedLines.join(" ").replace(/\s+/g, " ").trim();
+}
+
+/**
  * Extracts selectable text directly from the PDF page via pdf.js's
  * own text layer (page.getTextContent()). Fast, no rendering required.
  * Returns an empty string if the page has no selectable text at all
@@ -55,9 +93,11 @@ export async function getSelectableText(
 
 /**
  * Renders the given PDF page to an offscreen canvas at a resolution
- * suited for OCR accuracy, then runs tesseract.js against it. Results
- * are cached per page; concurrent calls for the same page share a
- * single in-flight promise rather than starting OCR twice.
+ * suited for OCR accuracy, then runs tesseract.js against it. The
+ * raw OCR output is passed through cleanOcrText() before caching, so
+ * every consumer of the cache automatically gets the cleaned version.
+ * Results are cached per page; concurrent calls for the same page
+ * share a single in-flight promise rather than starting OCR twice.
  *
  * Scoped to ONE page at a time — callers must only invoke this for
  * the currently visible page(s), never for the whole book.
@@ -99,9 +139,9 @@ export async function getOcrText(
       const Tesseract = await import("tesseract.js");
       const result = await Tesseract.recognize(canvas, "eng");
 
-      const text = (result.data.text || "").replace(/\s+/g, " ").trim();
-      ocrTextCache.set(key, text);
-      return text;
+      const cleaned = cleanOcrText(result.data.text || "");
+      ocrTextCache.set(key, cleaned);
+      return cleaned;
     } catch (err) {
       console.error(`[pageTextExtractor] getOcrText failed on page ${pageNumber}:`, err);
       ocrTextCache.set(key, "");
@@ -118,11 +158,9 @@ export async function getOcrText(
 /**
  * Resolves the best available text for a page:
  *  1. Selectable PDF text, if non-empty.
- *  2. OCR text, only if selectable text was empty.
+ *  2. OCR text (already cleaned via cleanOcrText), only if selectable
+ *     text was empty.
  *  3. Empty string (caller decides the fallback message) if both are empty.
- *
- * This is the single entry point callers should use — it encapsulates
- * the "try selectable, fall back to OCR" policy in one place.
  */
 export async function resolvePageText(
   pdf: PDFDocumentProxy,

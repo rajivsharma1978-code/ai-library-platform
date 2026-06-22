@@ -1,6 +1,7 @@
 "use client";
 
 import ReaderToolbar from "./ReaderToolbar";
+import type { SpeechState } from "./ReaderToolbar";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import type { BookProfile } from "@/lib/premium-reader/bookProfile";
@@ -25,16 +26,22 @@ export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
   const [currentPageNumbers, setCurrentPageNumbers] = useState<number[]>([1]);
   const [currentLabel, setCurrentLabel] = useState<string>("1");
   const [currentPageText, setCurrentPageText] = useState("");
-  // Tracks where currentPageText came from ("selectable" | "ocr" | "none")
-  // and whether OCR is actively running, so the UI can show a
-  // "Reading scanned page…" indicator only while OCR is in progress.
   const [currentPageTextSource, setCurrentPageTextSource] = useState<PageTextSource>("none");
   const [isOcrRunning, setIsOcrRunning] = useState(false);
   const [isReady, setIsReady] = useState(false);
   const [zoom, setZoom] = useState(100);
-  
 
+  // ── Speech state machine ─────────────────────────────────────────────
+  // idle    → nothing playing, Read button starts reading current page
+  // loading → text/OCR still resolving, Read button disabled
+  // playing → speechSynthesis actively speaking, Read button = Pause
+  // paused  → speechSynthesis paused mid-utterance, Read button = Resume
+  const [speechState, setSpeechState] = useState<SpeechState>("idle");
 
+  // Holds the currently-speaking utterance so pause/resume/stop can
+  // act on the exact instance in progress, and so we can tell whether
+  // a cancel was user-initiated vs a natural end.
+  const activeUtteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
 
   const flipRef = useRef<BookSpreadHandle>(null);
 
@@ -67,8 +74,8 @@ export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
 
   useEffect(() => {
     if (!pdf) return;
-const safePdf = pdf;
-let cancelled = false;
+    const safePdf = pdf;
+    let cancelled = false;
 
     async function analyzeInitial() {
       const newDims = new Map<number, RealPageDims>();
@@ -104,11 +111,21 @@ let cancelled = false;
     []
   );
 
+  // ── Stop speech IMMEDIATELY whenever the visible page changes ───────
+  // This must run before the text-resolution effect below, so any
+  // utterance from the previous page is killed the instant navigation
+  // happens, regardless of how long OCR/extraction for the new page
+  // takes.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (window.speechSynthesis.speaking || window.speechSynthesis.paused) {
+      window.speechSynthesis.cancel();
+    }
+    activeUtteranceRef.current = null;
+    setSpeechState("idle");
+  }, [currentPageNumbers]);
+
   // ── Page text resolution: selectable text first, OCR fallback ───────
-  // Replaces the previous selectable-only extraction. Behaviour is
-  // identical when the page has selectable text (same fast path); only
-  // adds an OCR fallback + "Reading scanned page…" state when a page
-  // has no selectable text at all (scanned/image pages).
   useEffect(() => {
     if (!pdf || currentPageNumbers.length === 0) {
       setCurrentPageText("");
@@ -170,10 +187,10 @@ let cancelled = false;
 
   useEffect(() => {
     if (!pdf) return;
-const safePdf = pdf;
-let cancelled = false;
+    const safePdf = pdf;
+    let cancelled = false;
 
-async function fillMissing() {
+    async function fillMissing() {
       for (const p of currentPageNumbers) {
         if (pageDims.has(p)) continue;
         try {
@@ -207,53 +224,96 @@ async function fillMissing() {
   function zoomIn() {
     setZoom((current) => Math.min(current + 10, 160));
   }
-  
+
   function zoomOut() {
     setZoom((current) => Math.max(current - 10, 60));
   }
-  
+
   function fitToScreen() {
     setZoom(100);
   }
-  
-  function readAloud() {
-    if (typeof window === "undefined") return;
 
-    // Priority order, per spec:
-    // 1. selectable text if available
-    // 2. OCR text if selectable text is empty
-    // 3. fallback message if both fail
-    // currentPageText/currentPageTextSource already encode this
-    // priority (resolved in the useEffect above), so we just speak
-    // whatever resolved, or the fallback message if nothing did.
-    const text =
+  // ── Read Aloud: idle→start, playing→pause, paused→resume ───────────
+  function handleReadAloudToggle() {
+    if (typeof window === "undefined") return;
+    const synth = window.speechSynthesis;
+
+    if (speechState === "playing") {
+      synth.pause();
+      setSpeechState("paused");
+      return;
+    }
+
+    if (speechState === "paused") {
+      synth.resume();
+      setSpeechState("playing");
+      return;
+    }
+
+    // idle (or loading, though the button is disabled while loading)
+    // → start a brand new utterance for the CURRENT page/spread only.
+    synth.cancel();
+
+    const bodyText =
       currentPageText.trim().length > 0
         ? currentPageText
-        : `This page does not contain any readable text.`;
+        : "This page does not contain any readable text.";
 
-    window.speechSynthesis.cancel();
+    // Requirement: spoken text always begins with "Page {currentLabel}."
+    const textToSpeak = `Page ${currentLabel}. ${bodyText}`.slice(0, 4000);
 
-    const utterance = new SpeechSynthesisUtterance(text.slice(0, 4000));
+    const utterance = new SpeechSynthesisUtterance(textToSpeak);
     utterance.lang = "en-IN";
     utterance.rate = 0.95;
     utterance.pitch = 1;
 
-    window.speechSynthesis.speak(utterance);
+    utterance.onend = () => {
+      if (activeUtteranceRef.current === utterance) {
+        activeUtteranceRef.current = null;
+        setSpeechState("idle");
+      }
+    };
+    utterance.onerror = () => {
+      if (activeUtteranceRef.current === utterance) {
+        activeUtteranceRef.current = null;
+        setSpeechState("idle");
+      }
+    };
+
+    activeUtteranceRef.current = utterance;
+    setSpeechState("playing");
+    synth.speak(utterance);
   }
-  
+
+  function handleStopReadAloud() {
+    if (typeof window === "undefined") return;
+    window.speechSynthesis.cancel();
+    activeUtteranceRef.current = null;
+    setSpeechState("idle");
+  }
+
   function toggleTheme() {
     alert("Dark mode will be connected next.");
   }
-  
+
   function enterFullscreen() {
     if (typeof document === "undefined") return;
-  
+
     if (document.fullscreenElement) {
       document.exitFullscreen?.();
     } else {
       document.documentElement.requestFullscreen?.();
     }
   }
+
+  // Stop any in-progress speech if the component unmounts entirely.
+  useEffect(() => {
+    return () => {
+      if (typeof window !== "undefined" && window.speechSynthesis) {
+        window.speechSynthesis.cancel();
+      }
+    };
+  }, []);
 
   const isAtStart = currentPageNumbers[0] <= 1;
   const isAtEnd =
@@ -330,24 +390,26 @@ async function fillMissing() {
 
         {!loadError && (
           <>
-          <ReaderToolbar
-  zoom={zoom}
-  onZoomIn={zoomIn}
-  onZoomOut={zoomOut}
-  onFit={fitToScreen}
-  onReadAloud={readAloud}
-  onToggleTheme={toggleTheme}
-  onFullscreen={enterFullscreen}
-/>
+            <ReaderToolbar
+              zoom={zoom}
+              onZoomIn={zoomIn}
+              onZoomOut={zoomOut}
+              onFit={fitToScreen}
+              onReadAloud={handleReadAloudToggle}
+              onStopReadAloud={handleStopReadAloud}
+              onToggleTheme={toggleTheme}
+              onFullscreen={enterFullscreen}
+              speechState={isOcrRunning ? "loading" : speechState}
+            />
             <div style={{ flex: 1, width: "100%", minHeight: 0 }}>
-            <BookSpread
-  ref={flipRef}
-  pdf={pdf}
-  profile={profile}
-  pageDims={pageDims}
-  zoom={zoom}
-  onPageChange={handlePageChange}
-/>
+              <BookSpread
+                ref={flipRef}
+                pdf={pdf}
+                profile={profile}
+                pageDims={pageDims}
+                zoom={zoom}
+                onPageChange={handlePageChange}
+              />
             </div>
 
             <div
@@ -429,9 +491,6 @@ async function fillMissing() {
           Select text from the book or ask anything about page {currentLabel}.
         </p>
 
-        {/* OCR status indicator — additive only, shown above the
-            existing action buttons. Appears only while OCR is
-            actively running for a scanned page with no selectable text. */}
         {isOcrRunning && (
           <p
             style={{
