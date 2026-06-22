@@ -8,6 +8,10 @@ import {
   getRealPageDims,
   type RealPageDims,
 } from "@/lib/premium-reader/pdfLayoutAnalyzer";
+import {
+  resolvePageText,
+  type PageTextSource,
+} from "@/lib/premium-reader/pageTextExtractor";
 import BookSpread, { type BookSpreadHandle } from "./BookSpread";
 
 interface PremiumReaderV2Props {
@@ -20,8 +24,17 @@ export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
   const [pageDims, setPageDims] = useState<Map<number, RealPageDims>>(new Map());
   const [currentPageNumbers, setCurrentPageNumbers] = useState<number[]>([1]);
   const [currentLabel, setCurrentLabel] = useState<string>("1");
+  const [currentPageText, setCurrentPageText] = useState("");
+  // Tracks where currentPageText came from ("selectable" | "ocr" | "none")
+  // and whether OCR is actively running, so the UI can show a
+  // "Reading scanned page…" indicator only while OCR is in progress.
+  const [currentPageTextSource, setCurrentPageTextSource] = useState<PageTextSource>("none");
+  const [isOcrRunning, setIsOcrRunning] = useState(false);
   const [isReady, setIsReady] = useState(false);
   const [zoom, setZoom] = useState(100);
+  
+
+
 
   const flipRef = useRef<BookSpreadHandle>(null);
 
@@ -91,6 +104,70 @@ let cancelled = false;
     []
   );
 
+  // ── Page text resolution: selectable text first, OCR fallback ───────
+  // Replaces the previous selectable-only extraction. Behaviour is
+  // identical when the page has selectable text (same fast path); only
+  // adds an OCR fallback + "Reading scanned page…" state when a page
+  // has no selectable text at all (scanned/image pages).
+  useEffect(() => {
+    if (!pdf || currentPageNumbers.length === 0) {
+      setCurrentPageText("");
+      setCurrentPageTextSource("none");
+      return;
+    }
+
+    let cancelled = false;
+    setIsOcrRunning(false);
+
+    async function resolveCurrentPageText() {
+      try {
+        const results = await Promise.all(
+          currentPageNumbers.map((pageNumber) =>
+            resolvePageText(pdf!, profile.pdfPath, pageNumber, () => {
+              if (!cancelled) setIsOcrRunning(true);
+            })
+          )
+        );
+
+        if (cancelled) return;
+
+        setIsOcrRunning(false);
+
+        const combinedText = results
+          .map((r) => r.text)
+          .filter((t) => t.length > 0)
+          .join("\n\n");
+
+        const anySelectable = results.some((r) => r.source === "selectable");
+        const anyOcr = results.some((r) => r.source === "ocr");
+
+        setCurrentPageText(combinedText);
+        setCurrentPageTextSource(
+          combinedText.length === 0
+            ? "none"
+            : anySelectable
+            ? "selectable"
+            : anyOcr
+            ? "ocr"
+            : "none"
+        );
+      } catch (err) {
+        console.error("[PremiumReaderV2] Could not resolve page text:", err);
+        if (!cancelled) {
+          setCurrentPageText("");
+          setCurrentPageTextSource("none");
+          setIsOcrRunning(false);
+        }
+      }
+    }
+
+    resolveCurrentPageText();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [pdf, currentPageNumbers, profile.pdfPath]);
+
   useEffect(() => {
     if (!pdf) return;
 const safePdf = pdf;
@@ -140,7 +217,28 @@ async function fillMissing() {
   }
   
   function readAloud() {
-    alert("Read Aloud will be connected next.");
+    if (typeof window === "undefined") return;
+
+    // Priority order, per spec:
+    // 1. selectable text if available
+    // 2. OCR text if selectable text is empty
+    // 3. fallback message if both fail
+    // currentPageText/currentPageTextSource already encode this
+    // priority (resolved in the useEffect above), so we just speak
+    // whatever resolved, or the fallback message if nothing did.
+    const text =
+      currentPageText.trim().length > 0
+        ? currentPageText
+        : `This page does not contain any readable text.`;
+
+    window.speechSynthesis.cancel();
+
+    const utterance = new SpeechSynthesisUtterance(text.slice(0, 4000));
+    utterance.lang = "en-IN";
+    utterance.rate = 0.95;
+    utterance.pitch = 1;
+
+    window.speechSynthesis.speak(utterance);
   }
   
   function toggleTheme() {
@@ -148,7 +246,13 @@ async function fillMissing() {
   }
   
   function enterFullscreen() {
-    document.documentElement.requestFullscreen?.();
+    if (typeof document === "undefined") return;
+  
+    if (document.fullscreenElement) {
+      document.exitFullscreen?.();
+    } else {
+      document.documentElement.requestFullscreen?.();
+    }
   }
 
   const isAtStart = currentPageNumbers[0] <= 1;
@@ -210,7 +314,7 @@ async function fillMissing() {
         style={{
           display: "flex",
           flexDirection: "column",
-          alignItems: "center",
+          alignItems: "flex-start",
           justifyContent: "center",
           padding: 24,
           position: "relative",
@@ -236,13 +340,14 @@ async function fillMissing() {
   onFullscreen={enterFullscreen}
 />
             <div style={{ flex: 1, width: "100%", minHeight: 0 }}>
-              <BookSpread
-                ref={flipRef}
-                pdf={pdf}
-                profile={profile}
-                pageDims={pageDims}
-                onPageChange={handlePageChange}
-              />
+            <BookSpread
+  ref={flipRef}
+  pdf={pdf}
+  profile={profile}
+  pageDims={pageDims}
+  zoom={zoom}
+  onPageChange={handlePageChange}
+/>
             </div>
 
             <div
@@ -323,6 +428,43 @@ async function fillMissing() {
         <p style={{ fontSize: 13, color: "#8a7c5c", marginTop: 8, lineHeight: 1.6 }}>
           Select text from the book or ask anything about page {currentLabel}.
         </p>
+
+        {/* OCR status indicator — additive only, shown above the
+            existing action buttons. Appears only while OCR is
+            actively running for a scanned page with no selectable text. */}
+        {isOcrRunning && (
+          <p
+            style={{
+              fontSize: 12,
+              color: "#9a6b2f",
+              fontWeight: 600,
+              marginTop: 16,
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+            }}
+          >
+            <span
+              style={{
+                width: 12,
+                height: 12,
+                borderRadius: "50%",
+                border: "2px solid #e5d8c0",
+                borderTopColor: "#9a6b2f",
+                animation: "ndl-ocr-spin 0.8s linear infinite",
+                display: "inline-block",
+              }}
+            />
+            Reading scanned page…
+            <style>{`@keyframes ndl-ocr-spin { to { transform: rotate(360deg); } }`}</style>
+          </p>
+        )}
+
+        {!isOcrRunning && currentPageTextSource === "ocr" && (
+          <p style={{ fontSize: 11, color: "#9a8c6b", marginTop: 16 }}>
+            Text extracted from scanned image (OCR)
+          </p>
+        )}
 
         <div
           style={{

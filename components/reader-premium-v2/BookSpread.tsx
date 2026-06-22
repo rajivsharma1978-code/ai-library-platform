@@ -11,6 +11,7 @@ interface BookSpreadProps {
   pdf: PDFDocumentProxy | null;
   profile: BookProfile;
   pageDims: Map<number, RealPageDims>;
+  zoom: number;
   onPageChange: (info: { pageNumbers: number[]; label: string }) => void;
 }
 
@@ -19,7 +20,10 @@ export type BookSpreadHandle = FlipEngineHandle;
 const FRAME_PADDING = 32;
 
 const BookSpread = forwardRef<BookSpreadHandle, BookSpreadProps>(
-  function BookSpread({ pdf, profile, pageDims, onPageChange }, ref) {
+  function BookSpread(
+    { pdf, profile, pageDims, zoom, onPageChange },
+    ref
+  ) {
     const containerRef = useRef<HTMLDivElement | null>(null);
     const [availSize, setAvailSize] = useState({ width: 0, height: 0 });
 
@@ -44,17 +48,26 @@ const BookSpread = forwardRef<BookSpreadHandle, BookSpreadProps>(
           alignItems: "center",
           justifyContent: "center",
           position: "relative",
+          overflow: "hidden",
         }}
       >
-        <FlipEngine
-          ref={ref}
-          pdf={pdf}
-          profile={profile}
-          pageDims={pageDims}
-          stageWidth={innerW}
-          stageHeight={innerH}
-          onPageChange={onPageChange}
-        />
+        <div
+  style={{
+    transform: `scale(${zoom / 100})`,
+    transformOrigin: "center center",
+    transition: "transform 160ms ease",
+  }}
+>
+  <FlipEngine
+    ref={ref}
+    pdf={pdf}
+    profile={profile}
+    pageDims={pageDims}
+    stageWidth={innerW}
+    stageHeight={innerH}
+    onPageChange={onPageChange}
+  />
+</div>
       </div>
     );
   }
