@@ -11,12 +11,154 @@ import {
 } from "@/lib/premium-reader/pdfLayoutAnalyzer";
 import {
   resolvePageText,
+  sanitizeForSpeech,
   type PageTextSource,
 } from "@/lib/premium-reader/pageTextExtractor";
+import {
+  runAiAction,
+  getSpeechLanguage,
+  RESPONSE_LANGUAGES,
+  type AiActionKind,
+  type ResponseLanguage,
+} from "@/lib/premium-reader/aiActions";
 import BookSpread, { type BookSpreadHandle } from "./BookSpread";
 
 interface PremiumReaderV2Props {
   profile: BookProfile;
+}
+
+interface ResolvedPageEntry {
+  pageNumber: number;
+  text: string;
+  source: PageTextSource;
+}
+
+interface ReadAloudPayload {
+  text: string;
+  language: string;
+  source: "ai-output" | "page-text";
+}
+
+const ALWAYS_ALLOWED_LANGUAGES: ResponseLanguage[] = ["English", "Hindi"];
+
+const MIN_CHUNK_LENGTH = 20;
+const HINDI_MIN_CHUNK_CHARS = 8;
+const HINDI_TARGET_MIN = 60;
+const HINDI_TARGET_MAX = 180;
+
+export function cleanAiOutputForSpeech(text: string): string {
+  if (!text) return "";
+
+  let cleaned = text;
+
+  cleaned = cleaned.replace(/\[([^\]]+)\]\([^)]*\)/g, "$1");
+  cleaned = cleaned.replace(/```([\s\S]*?)```/g, "$1");
+  cleaned = cleaned.replace(/`([^`]+)`/g, "$1");
+  cleaned = cleaned.replace(/\*\*([^*]+)\*\*/g, "$1");
+  cleaned = cleaned.replace(/__([^_]+)__/g, "$1");
+  cleaned = cleaned.replace(/\*([^*]+)\*/g, "$1");
+  cleaned = cleaned.replace(/_([^_]+)_/g, "$1");
+  cleaned = cleaned.replace(/^#{1,6}\s*/gm, "");
+  cleaned = cleaned.replace(/^[\s]*[-*•–—]\s+/gm, "");
+  cleaned = cleaned.replace(/^[\s]*\(?\d+[.)]\s+/gm, "");
+  cleaned = cleaned.replace(/^[\s]*[-*_]{3,}[\s]*$/gm, "");
+  cleaned = cleaned.replace(/[#*_`]/g, "");
+
+  cleaned = cleaned
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line, idx, arr) => !(line === "" && arr[idx - 1] === ""))
+    .join("\n")
+    .trim();
+
+  return cleaned;
+}
+
+export function createSpeechChunks(text: string): string[] {
+  if (!text) return [];
+
+  const rawLines = text
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+
+  if (rawLines.length === 0) return [];
+
+  const sentenceLines = rawLines.map((line) => {
+    const endsWithPunctuation = /[.!?…।]$/.test(line);
+    return endsWithPunctuation ? line : `${line}.`;
+  });
+
+  const merged: string[] = [];
+  for (const line of sentenceLines) {
+    if (line.length < MIN_CHUNK_LENGTH && merged.length > 0) {
+      merged[merged.length - 1] = `${merged[merged.length - 1]} ${line}`;
+    } else {
+      merged.push(line);
+    }
+  }
+
+  if (merged.length > 1 && merged[0].length < MIN_CHUNK_LENGTH) {
+    merged[1] = `${merged[0]} ${merged[1]}`;
+    merged.shift();
+  }
+
+  return merged;
+}
+
+export function createHindiSpeechChunks(text: string): string[] {
+  const cleaned = cleanAiOutputForSpeech(text);
+  if (!cleaned) return [];
+
+  const rawPieces = cleaned
+    .split(/(?<=[।॥.!?\n])/)
+    .map((piece) => piece.replace(/\n/g, " ").trim())
+    .filter((piece) => piece.length > 0);
+
+  if (rawPieces.length === 0) return [];
+
+  const meaningfulPieces = rawPieces.filter((piece) => /[\p{L}\p{N}]/u.test(piece));
+  if (meaningfulPieces.length === 0) return [];
+
+  const grouped: string[] = [];
+  let current = "";
+
+  for (const piece of meaningfulPieces) {
+    const candidate = current.length > 0 ? `${current} ${piece}` : piece;
+
+    if (current.length === 0) {
+      current = piece;
+      continue;
+    }
+
+    if (candidate.length <= HINDI_TARGET_MAX) {
+      current = candidate;
+      if (current.length >= HINDI_TARGET_MIN) {
+        grouped.push(current);
+        current = "";
+      }
+    } else {
+      grouped.push(current);
+      current = piece;
+    }
+  }
+
+  if (current.length > 0) {
+    grouped.push(current);
+  }
+
+  const final: string[] = [];
+  for (const chunk of grouped) {
+    const meaningfulLength = (chunk.match(/[\p{L}\p{N}]/gu) || []).length;
+
+    if (meaningfulLength < HINDI_MIN_CHUNK_CHARS && final.length > 0) {
+      final[final.length - 1] = `${final[final.length - 1]} ${chunk}`;
+    } else {
+      final.push(chunk);
+    }
+  }
+
+  return final.filter((c) => c.trim().length > 0);
 }
 
 export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
@@ -25,25 +167,75 @@ export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
   const [pageDims, setPageDims] = useState<Map<number, RealPageDims>>(new Map());
   const [currentPageNumbers, setCurrentPageNumbers] = useState<number[]>([1]);
   const [currentLabel, setCurrentLabel] = useState<string>("1");
-  const [currentPageText, setCurrentPageText] = useState("");
+
+  const [resolvedPages, setResolvedPages] = useState<ResolvedPageEntry[]>([]);
   const [currentPageTextSource, setCurrentPageTextSource] = useState<PageTextSource>("none");
   const [isOcrRunning, setIsOcrRunning] = useState(false);
   const [isReady, setIsReady] = useState(false);
   const [zoom, setZoom] = useState(100);
 
-  // ── Speech state machine ─────────────────────────────────────────────
-  // idle    → nothing playing, Read button starts reading current page
-  // loading → text/OCR still resolving, Read button disabled
-  // playing → speechSynthesis actively speaking, Read button = Pause
-  // paused  → speechSynthesis paused mid-utterance, Read button = Resume
   const [speechState, setSpeechState] = useState<SpeechState>("idle");
 
-  // Holds the currently-speaking utterance so pause/resume/stop can
-  // act on the exact instance in progress, and so we can tell whether
-  // a cancel was user-initiated vs a natural end.
-  const activeUtteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
+  const speechQueueRef = useRef<string[]>([]);
+  const currentSpeechIndexRef = useRef(0);
+  const speechLocaleRef = useRef("en-IN");
+  const speechStateRef = useRef<SpeechState>("idle");
+
+  useEffect(() => {
+    speechStateRef.current = speechState;
+  }, [speechState]);
+
+  // ── AI Companion: single persistent language selection ──────────────
+  // selectedAiLanguage drives EVERY action — Explain, Summarize,
+  // Translate, Quiz me, and the free-text Ask AI input all answer in
+  // this language. It is independent of aiOutputLanguage (the
+  // language the MOST RECENT output actually came back in) — they
+  // are set together whenever a new action completes, but
+  // selectedAiLanguage itself persists across actions/pages until the
+  // user changes it.
+  const [selectedAiLanguage, setSelectedAiLanguage] = useState<ResponseLanguage>("English");
+
+  const [aiOutput, setAiOutput] = useState<string>("");
+  const [aiOutputKind, setAiOutputKind] = useState<AiActionKind | null>(null);
+  const [aiOutputLanguage, setAiOutputLanguage] = useState<ResponseLanguage | null>(null);
+
+  const [voiceUnavailableNotice, setVoiceUnavailableNotice] = useState<string>("");
+
+  const [isAiLoading, setIsAiLoading] = useState(false);
+  const [askInputValue, setAskInputValue] = useState("");
+
+  const aiRequestIdRef = useRef(0);
+  const voicesRef = useRef<SpeechSynthesisVoice[]>([]);
 
   const flipRef = useRef<BookSpreadHandle>(null);
+
+  function clearAiResult() {
+    setAiOutput("");
+    setAiOutputKind(null);
+    setAiOutputLanguage(null);
+    setVoiceUnavailableNotice("");
+  }
+
+  function setAiResult(text: string, kind: AiActionKind, language: ResponseLanguage) {
+    setAiOutput(text);
+    setAiOutputKind(kind);
+    setAiOutputLanguage(language);
+    setVoiceUnavailableNotice("");
+  }
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !window.speechSynthesis) return;
+
+    function loadVoices() {
+      voicesRef.current = window.speechSynthesis.getVoices();
+    }
+
+    loadVoices();
+    window.speechSynthesis.addEventListener("voiceschanged", loadVoices);
+    return () => {
+      window.speechSynthesis.removeEventListener("voiceschanged", loadVoices);
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -111,24 +303,23 @@ export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
     []
   );
 
-  // ── Stop speech IMMEDIATELY whenever the visible page changes ───────
-  // This must run before the text-resolution effect below, so any
-  // utterance from the previous page is killed the instant navigation
-  // happens, regardless of how long OCR/extraction for the new page
-  // takes.
   useEffect(() => {
     if (typeof window === "undefined") return;
     if (window.speechSynthesis.speaking || window.speechSynthesis.paused) {
       window.speechSynthesis.cancel();
     }
-    activeUtteranceRef.current = null;
+    speechQueueRef.current = [];
+    currentSpeechIndexRef.current = 0;
     setSpeechState("idle");
+
+    aiRequestIdRef.current += 1;
+    setIsAiLoading(false);
+    clearAiResult();
   }, [currentPageNumbers]);
 
-  // ── Page text resolution: selectable text first, OCR fallback ───────
   useEffect(() => {
     if (!pdf || currentPageNumbers.length === 0) {
-      setCurrentPageText("");
+      setResolvedPages([]);
       setCurrentPageTextSource("none");
       return;
     }
@@ -139,39 +330,30 @@ export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
     async function resolveCurrentPageText() {
       try {
         const results = await Promise.all(
-          currentPageNumbers.map((pageNumber) =>
-            resolvePageText(pdf!, profile.pdfPath, pageNumber, () => {
+          currentPageNumbers.map(async (pageNumber) => {
+            const result = await resolvePageText(pdf!, profile.pdfPath, pageNumber, () => {
               if (!cancelled) setIsOcrRunning(true);
-            })
-          )
+            });
+            return { pageNumber, text: result.text, source: result.source };
+          })
         );
 
         if (cancelled) return;
 
         setIsOcrRunning(false);
-
-        const combinedText = results
-          .map((r) => r.text)
-          .filter((t) => t.length > 0)
-          .join("\n\n");
+        setResolvedPages(results);
 
         const anySelectable = results.some((r) => r.source === "selectable");
         const anyOcr = results.some((r) => r.source === "ocr");
+        const anyText = results.some((r) => r.text.length > 0);
 
-        setCurrentPageText(combinedText);
         setCurrentPageTextSource(
-          combinedText.length === 0
-            ? "none"
-            : anySelectable
-            ? "selectable"
-            : anyOcr
-            ? "ocr"
-            : "none"
+          !anyText ? "none" : anySelectable ? "selectable" : anyOcr ? "ocr" : "none"
         );
       } catch (err) {
         console.error("[PremiumReaderV2] Could not resolve page text:", err);
         if (!cancelled) {
-          setCurrentPageText("");
+          setResolvedPages([]);
           setCurrentPageTextSource("none");
           setIsOcrRunning(false);
         }
@@ -233,7 +415,105 @@ export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
     setZoom(100);
   }
 
-  // ── Read Aloud: idle→start, playing→pause, paused→resume ───────────
+  function pickVoiceForLocale(locale: string): SpeechSynthesisVoice | null {
+    const voices = voicesRef.current;
+    if (!voices || voices.length === 0) return null;
+
+    const exact = voices.find((v) => v.lang === locale);
+    if (exact) return exact;
+
+    const languagePrefix = locale.split("-")[0];
+    const prefixMatch = voices.find((v) => v.lang.startsWith(languagePrefix));
+    return prefixMatch ?? null;
+  }
+
+  function hasSupportedVoice(languageCode: string): boolean {
+    if (typeof window === "undefined" || !window.speechSynthesis) return false;
+    const voices = voicesRef.current.length > 0
+      ? voicesRef.current
+      : window.speechSynthesis.getVoices();
+
+    if (voices.length === 0) return false;
+
+    const prefix = languageCode.split("-")[0];
+    return voices.some((v) => v.lang === languageCode || v.lang.startsWith(prefix));
+  }
+
+  // ── Read Aloud source priority ───────────────────────────────────────
+  // Per requirement #12: AI output (any kind, including translate) is
+  // always the active source when present — never fall back to page
+  // text while AI output is active. Only when there is NO AI output
+  // does Read Aloud fall back to the original visible page text.
+  function getReadAloudPayload(): ReadAloudPayload {
+    if (aiOutputKind && aiOutput.trim().length > 0 && aiOutputLanguage) {
+      return {
+        text: aiOutput,
+        language: getSpeechLanguage(aiOutputLanguage),
+        source: "ai-output",
+      };
+    }
+
+    const pageTexts = resolvedPages
+      .map((p) => p.text)
+      .filter((t) => t.trim().length > 0);
+
+    return {
+      text: pageTexts.join(" "),
+      language: getSpeechLanguage("English"),
+      source: "page-text",
+    };
+  }
+
+  function speakCurrentChunk() {
+    if (speechStateRef.current !== "playing") return;
+
+    const queue = speechQueueRef.current;
+    const index = currentSpeechIndexRef.current;
+
+    if (index >= queue.length) {
+      setSpeechState("idle");
+      return;
+    }
+
+    const chunkText = queue[index];
+    const utterance = new SpeechSynthesisUtterance(chunkText);
+    utterance.lang = speechLocaleRef.current;
+
+    const voice = pickVoiceForLocale(speechLocaleRef.current);
+    if (voice) utterance.voice = voice;
+
+    const isHindi = speechLocaleRef.current.startsWith("hi");
+    utterance.rate = isHindi ? 0.85 : 0.95;
+    utterance.pitch = 1;
+
+    utterance.onend = () => {
+      if (speechStateRef.current !== "playing") return;
+      if (currentSpeechIndexRef.current !== index) return;
+
+      currentSpeechIndexRef.current += 1;
+      speakCurrentChunk();
+    };
+
+    utterance.onerror = () => {
+      if (speechStateRef.current !== "playing") return;
+      if (currentSpeechIndexRef.current !== index) return;
+
+      currentSpeechIndexRef.current += 1;
+      speakCurrentChunk();
+    };
+
+    window.speechSynthesis.speak(utterance);
+  }
+
+  function startSpeechQueue(chunks: string[], locale: string) {
+    speechQueueRef.current = chunks;
+    currentSpeechIndexRef.current = 0;
+    speechLocaleRef.current = locale;
+    speechStateRef.current = "playing";
+    setSpeechState("playing");
+    speakCurrentChunk();
+  }
+
   function handleReadAloudToggle() {
     if (typeof window === "undefined") return;
     const synth = window.speechSynthesis;
@@ -250,45 +530,86 @@ export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
       return;
     }
 
-    // idle (or loading, though the button is disabled while loading)
-    // → start a brand new utterance for the CURRENT page/spread only.
     synth.cancel();
+    setVoiceUnavailableNotice("");
 
-    const bodyText =
-      currentPageText.trim().length > 0
-        ? currentPageText
-        : "This page does not contain any readable text.";
+    const payload = getReadAloudPayload();
 
-    // Requirement: spoken text always begins with "Page {currentLabel}."
-    const textToSpeak = `Page ${currentLabel}. ${bodyText}`.slice(0, 4000);
+    // Voice-support gate: applies whenever the active source is AI
+    // output (translate OR explain/summarize/quiz, in ANY selected
+    // language) and that language is not always-allowed.
+    if (payload.source === "ai-output" && aiOutputLanguage) {
+      const isAlwaysAllowed = ALWAYS_ALLOWED_LANGUAGES.includes(aiOutputLanguage);
 
-    const utterance = new SpeechSynthesisUtterance(textToSpeak);
-    utterance.lang = "en-IN";
-    utterance.rate = 0.95;
-    utterance.pitch = 1;
-
-    utterance.onend = () => {
-      if (activeUtteranceRef.current === utterance) {
-        activeUtteranceRef.current = null;
-        setSpeechState("idle");
+      if (!isAlwaysAllowed) {
+        const voiceOk = hasSupportedVoice(payload.language);
+        if (!voiceOk) {
+          setVoiceUnavailableNotice(
+            `Voice playback for ${aiOutputLanguage} is not available on this device/browser. Translation text is available to read.`
+          );
+          setSpeechState("idle");
+          return;
+        }
       }
-    };
-    utterance.onerror = () => {
-      if (activeUtteranceRef.current === utterance) {
-        activeUtteranceRef.current = null;
-        setSpeechState("idle");
-      }
-    };
+    }
 
-    activeUtteranceRef.current = utterance;
-    setSpeechState("playing");
-    synth.speak(utterance);
+    if (payload.text.trim().length < 20) {
+      setVoiceUnavailableNotice("No readable text is available.");
+      setSpeechState("idle");
+      return;
+    }
+
+    if (payload.source === "ai-output") {
+      const isHindiTarget = aiOutputLanguage === "Hindi";
+
+      const chunks = isHindiTarget
+        ? createHindiSpeechChunks(payload.text)
+        : (() => {
+            const cleaned = cleanAiOutputForSpeech(payload.text);
+            const sanitized = sanitizeForSpeech(cleaned);
+            return createSpeechChunks(sanitized);
+          })();
+
+      if (chunks.length === 0) {
+        setVoiceUnavailableNotice("No readable text is available.");
+        setSpeechState("idle");
+        return;
+      }
+
+      startSpeechQueue(chunks, payload.language);
+      return;
+    }
+
+    // source === "page-text": original page-by-page reading, English.
+    const pagesToSpeak =
+      resolvedPages.length > 0
+        ? resolvedPages
+        : currentPageNumbers.map((pageNumber) => ({
+            pageNumber,
+            text: "",
+            source: "none" as PageTextSource,
+          }));
+
+    const pageChunks: string[] = pagesToSpeak.map((page, index) => {
+      const rawBody =
+        page.text.trim().length > 0
+          ? page.text
+          : "This page does not contain any readable text.";
+
+      const sanitizedBody = sanitizeForSpeech(rawBody);
+      const prefix = index === 0 ? `Page ${currentLabel}. ` : "";
+      return `${prefix}${sanitizedBody}`.slice(0, 4000);
+    });
+
+    startSpeechQueue(pageChunks, payload.language);
   }
 
   function handleStopReadAloud() {
     if (typeof window === "undefined") return;
     window.speechSynthesis.cancel();
-    activeUtteranceRef.current = null;
+    speechQueueRef.current = [];
+    currentSpeechIndexRef.current = 0;
+    speechStateRef.current = "idle";
     setSpeechState("idle");
   }
 
@@ -306,7 +627,67 @@ export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
     }
   }
 
-  // Stop any in-progress speech if the component unmounts entirely.
+  // ── AI Companion action handler ──────────────────────────────────────
+  // Every kind — explain/summarize/translate/quiz/ask — now passes
+  // selectedAiLanguage through to runAiAction(). Translate is no
+  // longer a special case with its own language picker; it always
+  // targets whatever language is currently selected, per requirement #4.
+  async function handleAiAction(kind: AiActionKind, customQuestion?: string) {
+    if (!isReady) return;
+
+    if (typeof window !== "undefined") {
+      window.speechSynthesis.cancel();
+      speechQueueRef.current = [];
+      currentSpeechIndexRef.current = 0;
+      speechStateRef.current = "idle";
+      setSpeechState("idle");
+    }
+
+    const requestId = ++aiRequestIdRef.current;
+    setIsAiLoading(true);
+    clearAiResult();
+
+    const pagesForPrompt =
+      resolvedPages.length > 0
+        ? resolvedPages.map((p) => ({ pageNumber: p.pageNumber, text: p.text }))
+        : currentPageNumbers.map((pageNumber) => ({ pageNumber, text: "" }));
+
+    try {
+      const result = await runAiAction({
+        kind,
+        bookTitle: profile.title,
+        pageLabel: currentLabel,
+        pages: pagesForPrompt,
+        language: selectedAiLanguage,
+        customQuestion,
+      });
+
+      if (aiRequestIdRef.current !== requestId) return;
+
+      setAiResult(result.answer, kind, selectedAiLanguage);
+    } catch (err) {
+      console.error(`[PremiumReaderV2] AI action "${kind}" failed:`, err);
+      if (aiRequestIdRef.current === requestId) {
+        setAiResult(
+          "Something went wrong while contacting the AI. Please try again.",
+          kind,
+          selectedAiLanguage
+        );
+      }
+    } finally {
+      if (aiRequestIdRef.current === requestId) {
+        setIsAiLoading(false);
+      }
+    }
+  }
+
+  function handleAskSubmit() {
+    const trimmed = askInputValue.trim();
+    if (!trimmed) return;
+    handleAiAction("ask", trimmed);
+    setAskInputValue("");
+  }
+
   useEffect(() => {
     return () => {
       if (typeof window !== "undefined" && window.speechSynthesis) {
@@ -321,6 +702,13 @@ export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
 
   const currentViewLabel =
     currentPageNumbers.length === 2 ? "Two-Page Spread" : "Single Page";
+
+  const AI_ACTIONS: { kind: AiActionKind; label: string }[] = [
+    { kind: "explain", label: "Explain" },
+    { kind: "summarize", label: "Summarize" },
+    { kind: "translate", label: "Translate" },
+    { kind: "quiz", label: "Quiz me" },
+  ];
 
   return (
     <div
@@ -491,6 +879,44 @@ export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
           Select text from the book or ask anything about page {currentLabel}.
         </p>
 
+        {/* ── Persistent Response Language selector ───────────────────── */}
+        <div style={{ marginTop: 16 }}>
+          <label
+            style={{
+              display: "block",
+              fontSize: 11,
+              fontWeight: 700,
+              color: "#9a8c6b",
+              marginBottom: 4,
+              textTransform: "uppercase",
+              letterSpacing: 0.5,
+            }}
+          >
+            Response Language
+          </label>
+          <select
+            value={selectedAiLanguage}
+            onChange={(e) => setSelectedAiLanguage(e.target.value as ResponseLanguage)}
+            disabled={isAiLoading}
+            style={{
+              width: "100%",
+              padding: "8px 10px",
+              borderRadius: 10,
+              border: "1px solid #e3dcc9",
+              background: "#fff",
+              fontSize: 13,
+              color: "#2c2416",
+              cursor: isAiLoading ? "default" : "pointer",
+            }}
+          >
+            {RESPONSE_LANGUAGES.map((lang) => (
+              <option key={lang} value={lang}>
+                {lang}
+              </option>
+            ))}
+          </select>
+        </div>
+
         {isOcrRunning && (
           <p
             style={{
@@ -527,36 +953,129 @@ export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
 
         <div
           style={{
-            marginTop: 24,
+            marginTop: 16,
             display: "flex",
             flexDirection: "column",
             gap: 8,
           }}
         >
-          {["Explain", "Summarize", "Translate", "Quiz me"].map((action) => (
-            <button
-              key={action}
-              style={{
-                textAlign: "left",
-                padding: "10px 14px",
-                borderRadius: 10,
-                border: "1px solid #e3dcc9",
-                background: "#fff",
-                fontSize: 13,
-                fontWeight: 600,
-                color: "#2c2416",
-                cursor: "pointer",
-              }}
-            >
-              {action}
-            </button>
-          ))}
+          {AI_ACTIONS.map(({ kind, label }) => {
+            const isActive = aiOutputKind === kind && isAiLoading;
+            return (
+              <button
+                key={kind}
+                onClick={() => handleAiAction(kind)}
+                disabled={isAiLoading || !isReady}
+                style={{
+                  width: "100%",
+                  textAlign: "left",
+                  padding: "10px 14px",
+                  borderRadius: 10,
+                  border: isActive ? "1px solid #9a6b2f" : "1px solid #e3dcc9",
+                  background: isActive ? "#fff8ec" : "#fff",
+                  fontSize: 13,
+                  fontWeight: 600,
+                  color: "#2c2416",
+                  cursor: isAiLoading || !isReady ? "default" : "pointer",
+                  opacity: isAiLoading && !isActive ? 0.5 : 1,
+                }}
+              >
+                {label}
+              </button>
+            );
+          })}
         </div>
+
+        {isAiLoading && (
+          <p
+            style={{
+              fontSize: 12,
+              color: "#9a6b2f",
+              fontWeight: 600,
+              marginTop: 14,
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+            }}
+          >
+            <span
+              style={{
+                width: 12,
+                height: 12,
+                borderRadius: "50%",
+                border: "2px solid #e5d8c0",
+                borderTopColor: "#9a6b2f",
+                animation: "ndl-ai-spin 0.8s linear infinite",
+                display: "inline-block",
+              }}
+            />
+            AI is analysing this page…
+            <style>{`@keyframes ndl-ai-spin { to { transform: rotate(360deg); } }`}</style>
+          </p>
+        )}
+
+        {!isAiLoading && voiceUnavailableNotice.length > 0 && (
+          <p
+            style={{
+              fontSize: 12,
+              color: "#9a6b2f",
+              fontWeight: 600,
+              marginTop: 14,
+              padding: "10px 12px",
+              borderRadius: 10,
+              border: "1px solid #e3dcc9",
+              background: "#fff8ec",
+            }}
+          >
+            {voiceUnavailableNotice}
+          </p>
+        )}
+
+        {!isAiLoading && aiOutput.length > 0 && (
+          <div
+            style={{
+              marginTop: 14,
+              padding: "12px 14px",
+              borderRadius: 10,
+              border: "1px solid #e3dcc9",
+              background: "#fffaf0",
+              fontSize: 13,
+              color: "#2c2416",
+              lineHeight: 1.6,
+              whiteSpace: "pre-wrap",
+              maxHeight: 320,
+              overflowY: "auto",
+            }}
+          >
+            {aiOutputLanguage && (
+              <p
+                style={{
+                  fontSize: 10,
+                  textTransform: "uppercase",
+                  letterSpacing: 0.5,
+                  color: "#9a6b2f",
+                  marginBottom: 6,
+                  fontWeight: 700,
+                }}
+              >
+                {aiOutputKind === "translate" ? "Translated to" : "Response in"}{" "}
+                {aiOutputLanguage}
+              </p>
+            )}
+            {aiOutput}
+          </div>
+        )}
 
         <div style={{ marginTop: 24 }}>
           <input
             type="text"
-            placeholder="Ask AI about this book..."
+            value={askInputValue}
+            onChange={(e) => setAskInputValue(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") handleAskSubmit();
+            }}
+            placeholder={`Ask AI about this book in ${selectedAiLanguage}...`}
+            disabled={isAiLoading}
             style={{
               width: "100%",
               padding: "10px 14px",

@@ -181,3 +181,56 @@ export async function resolvePageText(
 
   return { text: "", source: "none" };
 }
+
+/**
+ * Prepares a copy of resolved page text SPECIFICALLY for speech
+ * synthesis. This is intentionally separate from cleanOcrText():
+ * cleanOcrText() removes structural OCR noise (garbled lines, table
+ * borders) and its output is cached/stored for future AI features.
+ * sanitizeForSpeech() goes further but is NEVER cached and NEVER
+ * stored — it only transforms a throwaway copy right before handing
+ * text to the browser's SpeechSynthesis API, so symbols/equations
+ * don't get mispronounced (e.g. "=" read aloud as "is equal to").
+ *
+ * Rules:
+ *  - Strip standalone math/operator symbols: = + - × ÷ < > | _ ~ ^
+ *    (only when they appear as isolated tokens or glued onto
+ *    otherwise-symbol-heavy fragments — normal words are untouched).
+ *  - Strip symbol-heavy fragments (tokens that are mostly punctuation
+ *    with little or no alphanumeric content).
+ *  - Preserve normal sentence punctuation: . , ? ! ; : ' " ( ) -
+ *    (the hyphen is preserved when it's part of a real word like
+ *    "well-known"; only DROPPED when used as a bare minus/operator,
+ *    which the symbol-token rule below already handles).
+ *  - Collapse whitespace.
+ */
+export function sanitizeForSpeech(raw: string): string {
+  if (!raw) return "";
+
+  const tokens = raw.split(/\s+/);
+
+  const MATH_OPERATOR_TOKEN = /^[=+\-×÷<>|_~^]+$/;
+
+  const kept = tokens.filter((token) => {
+    if (token.length === 0) return false;
+
+    // Drop tokens that are ENTIRELY made of math/operator symbols.
+    if (MATH_OPERATOR_TOKEN.test(token)) return false;
+
+    // Drop tokens that are mostly symbols with little real content —
+    // e.g. OCR garbage like "—=//" or "^^^_". A token is considered
+    // symbol-heavy if fewer than 40% of its characters are letters
+    // or digits AND it's short (long real words with one stray
+    // symbol, e.g. "co-operate", are left alone).
+    const alnumCount = (token.match(/[A-Za-z0-9]/g) || []).length;
+    const alnumRatio = alnumCount / token.length;
+    if (token.length <= 6 && alnumRatio < 0.4) return false;
+
+    return true;
+  });
+
+  return kept
+    .join(" ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
