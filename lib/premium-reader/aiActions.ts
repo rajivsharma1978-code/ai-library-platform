@@ -165,3 +165,110 @@ export async function runAiAction(params: {
   const data = await response.json();
   return { answer: data?.answer ?? "AI response was empty." };
 }
+
+// ── Selection-scoped AI actions ───────────────────────────────────────
+// Separate from runAiAction() above: these operate on a SMALL piece
+// of HIGHLIGHTED text (a sentence/paragraph the user selected), not
+// the whole visible page/spread. Kept as distinct functions so the
+// existing per-page action flow is never touched by this addition.
+
+export type SelectionActionKind = "explain" | "summarize" | "translate" | "flashcards" | "ask";
+
+export interface FlashcardResult {
+  front: string;
+  back: string;
+}
+
+function buildSelectionQuestion(
+  kind: SelectionActionKind,
+  language: ResponseLanguage,
+  customQuestion?: string
+): string {
+  const languageDirective = `Respond only in ${language}.`;
+
+  switch (kind) {
+    case "explain":
+      return `Explain the following selected text in simple terms suitable for a student. ${languageDirective}`;
+    case "summarize":
+      return `Summarize the following selected text in at most 5 concise bullet points. ${languageDirective}`;
+    case "translate":
+      return (
+        `Translate the following selected text into ${language}.\n` +
+        `Target language: ${language} (${LANGUAGE_CODES[language]})\n` +
+        `Return ONLY the translated text.\n` +
+        `Do not explain.\n` +
+        `Do not summarize.\n` +
+        `Do not answer questions.\n` +
+        `Do not add disclaimers.\n` +
+        `Do not refuse.\n` +
+        `Preserve formatting.\n` +
+        `Keep proper nouns as-is.`
+      );
+    case "flashcards":
+      return (
+        `Create exactly ONE flashcard from the following selected text. ` +
+        `Respond in EXACTLY this format, nothing else:\n` +
+        `FRONT: <a short concept or question derived from the text>\n` +
+        `BACK: <the explanation or answer, based only on the selected text>\n` +
+        `${languageDirective}`
+      );
+    case "ask":
+      return `${customQuestion ?? ""} Base your answer only on the following selected text. ${languageDirective}`;
+  }
+}
+
+/**
+ * Runs an AI action scoped to a small selected piece of text rather
+ * than the whole visible page. Reuses the same /api/ask-ai route —
+ * `content` is just the selection itself, `chapter` notes that this
+ * is a selection-scoped request for context.
+ */
+export async function runSelectionAiAction(params: {
+  kind: SelectionActionKind;
+  bookTitle: string;
+  pageLabel: string;
+  selectedText: string;
+  language: ResponseLanguage;
+  customQuestion?: string;
+}): Promise<AiActionResult> {
+  const { kind, bookTitle, pageLabel, selectedText, language, customQuestion } = params;
+
+  const question = buildSelectionQuestion(kind, language, customQuestion);
+
+  const response = await fetch("/api/ask-ai", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      question,
+      book: bookTitle,
+      chapter: `Page ${pageLabel} — Selected text`,
+      content: selectedText,
+    }),
+  });
+
+  const data = await response.json();
+  return { answer: data?.answer ?? "AI response was empty." };
+}
+
+/**
+ * Parses the FRONT:/BACK: formatted response from a flashcards
+ * action into a structured FlashcardResult. Falls back to putting the
+ * whole answer on the back with a generic front if the model didn't
+ * follow the exact format (keeps this robust rather than throwing).
+ */
+export function parseFlashcardResult(answer: string): FlashcardResult {
+  const frontMatch = answer.match(/FRONT:\s*(.+)/i);
+  const backMatch = answer.match(/BACK:\s*([\s\S]+)/i);
+
+  if (frontMatch && backMatch) {
+    return {
+      front: frontMatch[1].trim(),
+      back: backMatch[1].trim(),
+    };
+  }
+
+  return {
+    front: "Flashcard",
+    back: answer.trim(),
+  };
+}

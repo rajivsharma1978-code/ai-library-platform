@@ -16,12 +16,16 @@ import {
 } from "@/lib/premium-reader/pageTextExtractor";
 import {
   runAiAction,
+  runSelectionAiAction,
+  parseFlashcardResult,
   getSpeechLanguage,
   RESPONSE_LANGUAGES,
   type AiActionKind,
+  type SelectionActionKind,
   type ResponseLanguage,
 } from "@/lib/premium-reader/aiActions";
-import BookSpread, { type BookSpreadHandle } from "./BookSpread";
+import { saveNote } from "@/lib/premium-reader/notesStore";
+import BookSpread, { type BookSpreadHandle, type SelectionMode } from "./BookSpread";
 
 interface PremiumReaderV2Props {
   profile: BookProfile;
@@ -204,6 +208,25 @@ export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
   const [isAiLoading, setIsAiLoading] = useState(false);
   const [askInputValue, setAskInputValue] = useState("");
 
+  // ── Selected-text floating menu state ────────────────────────────────
+  // selectionMenu holds the currently highlighted text + its on-screen
+  // position (so the floating menu can render next to it). Cleared
+  // whenever the selection collapses, the page changes, or an action
+  // is taken on it. selectedFlashcard holds the most recently
+  // generated flashcard (front/back) for display in the AI panel.
+  const [selectionMenu, setSelectionMenu] = useState<{
+    text: string;
+    rect: DOMRect;
+    pageNumber: number;
+  } | null>(null);
+  const [selectedFlashcard, setSelectedFlashcard] = useState<{ front: string; back: string } | null>(null);
+
+  // Page Turn Mode (default) vs Text Selection Mode — toggled above
+  // the book. In Page Turn Mode, BookSpread's overlays are fully
+  // pointer-events:none so flip/drag is completely unaffected.
+  const [selectionMode, setSelectionMode] = useState<SelectionMode>("page-turn");
+  const selectionMenuRef = useRef<HTMLDivElement | null>(null);
+
   const aiRequestIdRef = useRef(0);
   const voicesRef = useRef<SpeechSynthesisVoice[]>([]);
 
@@ -315,6 +338,8 @@ export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
     aiRequestIdRef.current += 1;
     setIsAiLoading(false);
     clearAiResult();
+    setSelectionMenu(null);
+    setSelectedFlashcard(null);
   }, [currentPageNumbers]);
 
   useEffect(() => {
@@ -688,6 +713,132 @@ export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
     setAskInputValue("");
   }
 
+  // ── Selected-text floating menu handlers ─────────────────────────────
+  const handleSelectionChange = useCallback(
+    (info: { text: string; rect: DOMRect; pageNumber: number } | null) => {
+      setSelectionMenu(info);
+    },
+    []
+  );
+
+  // Requirement #8: clicking outside the floating menu clears it.
+  // (Mode-change and page-change clearing are handled separately
+  // below / in the existing page-change effect.)
+  useEffect(() => {
+    if (!selectionMenu) return;
+
+    function handleDocumentClick(e: MouseEvent) {
+      if (selectionMenuRef.current && !selectionMenuRef.current.contains(e.target as Node)) {
+        setSelectionMenu(null);
+      }
+    }
+
+    document.addEventListener("mousedown", handleDocumentClick);
+    return () => {
+      document.removeEventListener("mousedown", handleDocumentClick);
+    };
+  }, [selectionMenu]);
+
+  // Requirement #8: switching back to Page Turn Mode clears any
+  // active selection/menu immediately.
+  useEffect(() => {
+    if (selectionMode === "page-turn") {
+      setSelectionMenu(null);
+    }
+  }, [selectionMode]);
+
+  // Shared executor for Explain/Summarize/Translate/Flashcards on a
+  // selection. Always uses selectedAiLanguage (requirement #4/#5).
+  // Displays results in the SAME AI output panel used by the
+  // page-level actions, so the user sees one consistent place for
+  // all AI responses (requirement #8).
+  async function handleSelectionAction(kind: SelectionActionKind) {
+    if (!selectionMenu) return;
+    const text = selectionMenu.text;
+    const pageNumber = selectionMenu.pageNumber;
+    setSelectionMenu(null);
+
+    if (typeof window !== "undefined") {
+      window.speechSynthesis.cancel();
+      speechQueueRef.current = [];
+      currentSpeechIndexRef.current = 0;
+      speechStateRef.current = "idle";
+      setSpeechState("idle");
+    }
+
+    const requestId = ++aiRequestIdRef.current;
+    setIsAiLoading(true);
+    clearAiResult();
+    setSelectedFlashcard(null);
+
+    try {
+      const result = await runSelectionAiAction({
+        kind,
+        bookTitle: profile.title,
+        pageLabel: String(pageNumber),
+        selectedText: text,
+        language: selectedAiLanguage,
+      });
+
+      if (aiRequestIdRef.current !== requestId) return;
+
+      if (kind === "flashcards") {
+        const card = parseFlashcardResult(result.answer);
+        setSelectedFlashcard(card);
+        setAiResult(`Front: ${card.front}\n\nBack: ${card.back}`, "quiz", selectedAiLanguage);
+      } else {
+        // Map selection-only kinds onto the existing aiOutputKind
+        // values so the AI panel/Read Aloud logic treats them
+        // identically to page-level explain/summarize/translate.
+        const mappedKind: AiActionKind =
+          kind === "explain" ? "explain" : kind === "summarize" ? "summarize" : "translate";
+        setAiResult(result.answer, mappedKind, selectedAiLanguage);
+      }
+    } catch (err) {
+      console.error(`[PremiumReaderV2] Selection AI action "${kind}" failed:`, err);
+      if (aiRequestIdRef.current === requestId) {
+        setAiResult("Something went wrong while contacting the AI. Please try again.", "explain", selectedAiLanguage);
+      }
+    } finally {
+      if (aiRequestIdRef.current === requestId) {
+        setIsAiLoading(false);
+      }
+    }
+  }
+
+  // "Ask AI" from the selection menu pre-fills the existing Ask AI
+  // input with the selected text as quoted context, so the user can
+  // type their actual question and submit normally — reuses the
+  // existing Ask AI flow rather than duplicating it.
+  function handleSelectionAskPrompt() {
+    if (!selectionMenu) return;
+    const text = selectionMenu.text;
+    setSelectionMenu(null);
+    setAskInputValue(`Regarding "${text.slice(0, 120)}": `);
+  }
+
+  function handleSaveSelectionAsNote() {
+    if (!selectionMenu) return;
+    const text = selectionMenu.text;
+    const pageNumber = selectionMenu.pageNumber;
+    setSelectionMenu(null);
+
+    saveNote({
+      bookTitle: profile.title,
+      pageLabel: String(pageNumber),
+      text,
+    });
+
+    // Show a plain save confirmation in the AI panel. This is not an
+    // AI-generated or translated response, so aiOutputKind/Language
+    // are left as-is (cleared) rather than tagging it with a language
+    // badge or routing it through the language-specific Read Aloud path.
+    setAiOutput(`Saved to notes:\n\n"${text}"`);
+    setAiOutputKind(null);
+    setAiOutputLanguage(null);
+    setVoiceUnavailableNotice("");
+  }
+
   useEffect(() => {
     return () => {
       if (typeof window !== "undefined" && window.speechSynthesis) {
@@ -789,6 +940,45 @@ export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
               onFullscreen={enterFullscreen}
               speechState={isOcrRunning ? "loading" : speechState}
             />
+
+            {/* ── Selection Mode toggle ──────────────────────────────── */}
+            <div
+              style={{
+                display: "flex",
+                gap: 6,
+                marginBottom: 12,
+                background: "#fff",
+                border: "1px solid #e3dcc9",
+                borderRadius: 999,
+                padding: 4,
+                width: "fit-content",
+              }}
+            >
+              {(
+                [
+                  { mode: "page-turn" as SelectionMode, label: "Page Turn Mode" },
+                  { mode: "text-selection" as SelectionMode, label: "Text Selection Mode" },
+                ]
+              ).map(({ mode, label }) => (
+                <button
+                  key={mode}
+                  onClick={() => setSelectionMode(mode)}
+                  style={{
+                    padding: "6px 14px",
+                    borderRadius: 999,
+                    border: "none",
+                    background: selectionMode === mode ? "#9a6b2f" : "transparent",
+                    color: selectionMode === mode ? "#fff" : "#6b5d42",
+                    fontSize: 12,
+                    fontWeight: 700,
+                    cursor: "pointer",
+                  }}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+
             <div style={{ flex: 1, width: "100%", minHeight: 0 }}>
               <BookSpread
                 ref={flipRef}
@@ -797,8 +987,69 @@ export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
                 pageDims={pageDims}
                 zoom={zoom}
                 onPageChange={handlePageChange}
+                resolvedPages={resolvedPages}
+                onSelectionChange={handleSelectionChange}
+                selectionMode={selectionMode}
               />
             </div>
+            {selectionMenu && (
+              <div
+                ref={selectionMenuRef}
+                style={{
+                  position: "fixed",
+                  top: Math.max(8, selectionMenu.rect.top - 8),
+                  left: selectionMenu.rect.left,
+                  transform: "translateY(-100%)",
+                  background: "#2c2416",
+                  borderRadius: 10,
+                  boxShadow: "0 10px 24px rgba(44,36,22,0.35)",
+                  display: "flex",
+                  flexDirection: "column",
+                  overflow: "hidden",
+                  zIndex: 50,
+                  minWidth: 200,
+                }}
+              >
+                <p
+                  style={{
+                    margin: 0,
+                    padding: "8px 14px",
+                    fontSize: 11,
+                    fontWeight: 700,
+                    color: "#c9b896",
+                    borderBottom: "1px solid rgba(255,255,255,0.1)",
+                  }}
+                >
+                  Selected from Page {selectionMenu.pageNumber}
+                </p>
+                {[
+                  { label: "Explain Selection", action: () => handleSelectionAction("explain") },
+                  { label: "Summarize Selection", action: () => handleSelectionAction("summarize") },
+                  { label: "Translate Selection", action: () => handleSelectionAction("translate") },
+                  { label: "Ask AI", action: () => handleSelectionAskPrompt() },
+                  { label: "Create Flashcards", action: () => handleSelectionAction("flashcards") },
+                  { label: "Save as Note", action: () => handleSaveSelectionAsNote() },
+                ].map((item) => (
+                  <button
+                    key={item.label}
+                    onClick={item.action}
+                    style={{
+                      padding: "8px 14px",
+                      background: "transparent",
+                      border: "none",
+                      borderBottom: "1px solid rgba(255,255,255,0.08)",
+                      color: "#f4efe6",
+                      fontSize: 12,
+                      fontWeight: 600,
+                      textAlign: "left",
+                      cursor: "pointer",
+                    }}
+                  >
+                    {item.label}
+                  </button>
+                ))}
+              </div>
+            )}
 
             <div
               style={{
