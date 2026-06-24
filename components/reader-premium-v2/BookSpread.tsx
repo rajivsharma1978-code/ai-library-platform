@@ -3,6 +3,7 @@
 import { forwardRef, useCallback, useEffect, useRef, useState } from "react";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import FlipEngine, { type FlipEngineHandle } from "./FlipEngine";
+import SelectionLayer, { type SelectionLayerResult } from "./SelectionLayer";
 import { observeSize } from "@/lib/premium-reader/viewport";
 import type { RealPageDims } from "@/lib/premium-reader/pdfLayoutAnalyzer";
 import type { BookProfile } from "@/lib/premium-reader/bookProfile";
@@ -20,27 +21,8 @@ interface BookSpreadProps {
   pageDims: Map<number, RealPageDims>;
   zoom: number;
   onPageChange: (info: { pageNumbers: number[]; label: string }) => void;
-  /**
-   * Plain-text content of the currently visible page(s). Each entry
-   * gets its OWN separate overlay div (requirement #4) — never
-   * combined into one block — so a drag selection can never span two
-   * pages of a spread.
-   */
   resolvedPages?: ResolvedPageEntry[];
-  /**
-   * Fired whenever the user's selection inside ONE page's overlay
-   * changes to a non-empty string. pageNumber identifies exactly
-   * which page the selection came from (requirement #5/#6).
-   */
-  onSelectionChange?: (
-    info: { text: string; rect: DOMRect; pageNumber: number } | null
-  ) => void;
-  /**
-   * "page-turn" (default): overlay never captures pointer events —
-   * flip/click/drag behaves exactly as without any overlay at all.
-   * "text-selection": overlay captures pointer events for text
-   * selection only, within each page's own bounds.
-   */
+  onSelectionChange?: (info: SelectionLayerResult | null) => void;
   selectionMode: SelectionMode;
 }
 
@@ -63,11 +45,17 @@ const BookSpread = forwardRef<BookSpreadHandle, BookSpreadProps>(
     ref
   ) {
     const containerRef = useRef<HTMLDivElement | null>(null);
-    // One ref PER overlay div, keyed by page number, so selection
-    // handling can determine exactly which page's overlay a selection
-    // originated in.
-    const overlayRefs = useRef<Map<number, HTMLDivElement>>(new Map());
     const [availSize, setAvailSize] = useState({ width: 0, height: 0 });
+
+    // Lock to exactly the page the CURRENT gesture started in. A ref
+    // (not state) so it updates synchronously, with zero re-render
+    // delay, before any selectionchange handler runs.
+    const activeSelectionPageRef = useRef<number | null>(null);
+    const [activeSelectionPage, setActiveSelectionPage] = useState<number | null>(null);
+    // Tracks whether the active page has a genuine, non-empty
+    // REPORTED selection — distinct from merely having been
+    // "activated" by a pointerdown with no resulting selection.
+    const hasReportedSelectionRef = useRef(false);
 
     useEffect(() => {
       const el = containerRef.current;
@@ -79,72 +67,75 @@ const BookSpread = forwardRef<BookSpreadHandle, BookSpreadProps>(
     const innerW = Math.max(availSize.width - FRAME_PADDING * 2, 0);
     const innerH = Math.max(availSize.height - FRAME_PADDING * 2, 0);
 
-    // ── Page-scoped selection tracking ───────────────────────────────
-    // Determines which overlay (i.e. which page) the CURRENT browser
-    // selection's anchor node falls inside, and reports only that
-    // page's text + pageNumber. Because each page has its own
-    // separately-positioned, non-overlapping overlay div, a native
-    // drag selection can never have an anchor that "belongs" to two
-    // pages at once — this is what makes selection page-scoped rather
-    // than spread-scoped.
-    const handleSelectionChange = useCallback(() => {
-      if (!onSelectionChange) return;
-      if (selectionMode !== "text-selection") return;
-
-      const selection = window.getSelection();
-      if (!selection || selection.isCollapsed || selection.rangeCount === 0) {
-        onSelectionChange(null);
-        return;
+    const handleActivate = useCallback((pageNumber: number) => {
+      // Only clear native selection when starting a NEW gesture on a
+      // DIFFERENT page AFTER an existing (genuinely reported)
+      // selection already exists on the previous page. A plain
+      // pointerdown/click that never produced a selection must never
+      // trigger a clear on its own.
+      const previous = activeSelectionPageRef.current;
+      if (previous !== null && previous !== pageNumber && hasReportedSelectionRef.current) {
+        window.getSelection()?.removeAllRanges();
+        onSelectionChange?.(null);
+        hasReportedSelectionRef.current = false;
       }
+      activeSelectionPageRef.current = pageNumber;
+      setActiveSelectionPage(pageNumber);
+    }, [onSelectionChange]);
 
-      const text = selection.toString().trim();
-      if (text.length === 0) {
-        onSelectionChange(null);
-        return;
-      }
+    const handleLayerSelection = useCallback(
+      (result: SelectionLayerResult | null) => {
+        if (!onSelectionChange) return;
 
-      const anchorNode = selection.anchorNode;
-      if (!anchorNode) return;
-
-      let matchedPageNumber: number | null = null;
-      for (const [pageNumber, el] of overlayRefs.current.entries()) {
-        if (el.contains(anchorNode)) {
-          matchedPageNumber = pageNumber;
-          break;
+        if (result === null) {
+          hasReportedSelectionRef.current = false;
+          onSelectionChange(null);
+          return;
         }
-      }
 
-      // Selection didn't originate in any of our overlays (e.g. it's
-      // inside the AI Companion panel) — ignore it entirely.
-      if (matchedPageNumber === null) return;
+        // Final guard: only ever forward a result for the CURRENTLY
+        // locked active page, read synchronously from the ref.
+        if (activeSelectionPageRef.current !== result.pageNumber) return;
 
-      const range = selection.getRangeAt(0);
-      const rect = range.getBoundingClientRect();
-
-      onSelectionChange({ text, rect, pageNumber: matchedPageNumber });
-    }, [onSelectionChange, selectionMode]);
+        hasReportedSelectionRef.current = true;
+        onSelectionChange(result);
+      },
+      [onSelectionChange]
+    );
 
     useEffect(() => {
-      if (!onSelectionChange) return;
-      document.addEventListener("selectionchange", handleSelectionChange);
-      return () => {
-        document.removeEventListener("selectionchange", handleSelectionChange);
-      };
-    }, [handleSelectionChange, onSelectionChange]);
+      if (selectionMode !== "text-selection") return;
 
-    // Leaving text-selection mode (back to page-turn) must clear any
-    // in-progress browser selection immediately, so stale highlighted
-    // text doesn't visually linger (even though it's invisible, the
-    // native selection state itself should not persist).
+      function handlePointerUp() {
+        // Gesture ended — release the lock so the NEXT pointerdown
+        // (on any page) can freely re-activate. We deliberately do
+        // NOT clear the reported selection here: the user should
+        // still see the floating menu after releasing the mouse.
+        activeSelectionPageRef.current = null;
+      }
+
+      document.addEventListener("pointerup", handlePointerUp);
+      document.addEventListener("mouseup", handlePointerUp);
+      return () => {
+        document.removeEventListener("pointerup", handlePointerUp);
+        document.removeEventListener("mouseup", handlePointerUp);
+      };
+    }, [selectionMode]);
+
     useEffect(() => {
       if (selectionMode === "page-turn") {
         window.getSelection()?.removeAllRanges();
+        activeSelectionPageRef.current = null;
+        hasReportedSelectionRef.current = false;
+        setActiveSelectionPage(null);
         onSelectionChange?.(null);
       }
     }, [selectionMode, onSelectionChange]);
 
     const pages = resolvedPages ?? [];
-    const isSpread = pages.length === 2;
+    const pageTextByNumber = new Map<number, string>(
+      pages.map((p): [number, string] => [p.pageNumber, p.text])
+    );
 
     return (
       <div
@@ -157,11 +148,14 @@ const BookSpread = forwardRef<BookSpreadHandle, BookSpreadProps>(
           alignItems: "center",
           justifyContent: "center",
           position: "relative",
-          overflow: "hidden",
+          // Allow the scaled content to overflow this box safely (so
+          // zoom-in never gets hard-clipped at the container edge).
+          overflow: "visible",
         }}
       >
         <div
           style={{
+            display: "inline-flex",
             transform: `scale(${zoom / 100})`,
             transformOrigin: "center center",
             transition: "transform 160ms ease",
@@ -176,63 +170,28 @@ const BookSpread = forwardRef<BookSpreadHandle, BookSpreadProps>(
             stageWidth={innerW}
             stageHeight={innerH}
             onPageChange={onPageChange}
+            renderSelectionLayer={
+              selectionMode === "text-selection"
+                ? (pageNumber, leafBox) => {
+                    const text = pageTextByNumber.get(pageNumber);
+                    if (text === undefined) return null;
+
+                    return (
+                      <SelectionLayer
+                        key={pageNumber}
+                        pageNumber={pageNumber}
+                        text={text}
+                        width={leafBox.width}
+                        height={leafBox.height}
+                        onSelection={handleLayerSelection}
+                        onActivate={handleActivate}
+                        isActivePage={activeSelectionPage === pageNumber}
+                      />
+                    );
+                  }
+                : undefined
+            }
           />
-
-          {/* ── Per-page invisible selectable text overlays ───────────
-              Requirement #1/#2: in "page-turn" mode, pointerEvents is
-              "none" on every overlay — they are completely inert and
-              cannot interfere with FlipEngine's own click/drag flip
-              handling in any way, since the browser routes all pointer
-              events straight through to whatever is beneath them.
-
-              Requirement #4: each page gets its OWN separate div,
-              positioned over exactly its half of the spread (or the
-              full width in single-page mode) — never one combined
-              block — so a drag gesture starting in the left half
-              physically cannot extend its DOM selection into the
-              right half's separate element. */}
-          {pages.length > 0 && (
-            <div
-              style={{
-                position: "absolute",
-                inset: 0,
-                display: "flex",
-                pointerEvents: selectionMode === "text-selection" ? "auto" : "none",
-                zIndex: selectionMode === "text-selection" ? 5 : -1,
-              }}
-            >
-              {pages.map((page) => (
-                <div
-                  key={page.pageNumber}
-                  ref={(el) => {
-                    if (el) overlayRefs.current.set(page.pageNumber, el);
-                    else overlayRefs.current.delete(page.pageNumber);
-                  }}
-                  data-page-number={page.pageNumber}
-                  style={{
-                    flex: isSpread ? "0 0 50%" : "1 1 100%",
-                    width: isSpread ? "50%" : "100%",
-                    height: "100%",
-                    color: "transparent",
-                    userSelect:
-                      selectionMode === "text-selection" ? "text" : "none",
-                    WebkitUserSelect:
-                      selectionMode === "text-selection" ? "text" : "none",
-                    cursor: selectionMode === "text-selection" ? "text" : "default",
-                    fontSize: 11,
-                    lineHeight: 1.5,
-                    overflow: "hidden",
-                    padding: 12,
-                    whiteSpace: "pre-wrap",
-                    overflowWrap: "break-word",
-                    boxSizing: "border-box",
-                  }}
-                >
-                  {page.text}
-                </div>
-              ))}
-            </div>
-          )}
         </div>
       </div>
     );

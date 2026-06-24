@@ -7,6 +7,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type ReactNode,
 } from "react";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import PdfPageCanvas from "./PdfPageCanvas";
@@ -31,6 +32,21 @@ interface FlipEngineProps {
   stageHeight: number;
   /** Now reports a display LABEL (e.g. "02–03", "Cover") alongside raw page numbers. */
   onPageChange: (info: { pageNumbers: number[]; label: string }) => void;
+  /**
+   * Optional render-prop injection point. If provided, FlipEngine
+   * calls this for EVERY page leaf, immediately after rendering its
+   * <PdfPageCanvas>, passing the EXACT same leafBox dimensions used
+   * for that canvas. This lets a caller (BookSpread) render a
+   * perfectly-aligned overlay INSIDE each page's own leaf container —
+   * never an approximated split across the whole spread — without
+   * FlipEngine itself knowing anything about selection, OCR, or AI
+   * features. No flip/pairing/sequencing logic is affected by this
+   * prop in any way; it is purely an additive rendering hook.
+   */
+  renderSelectionLayer?: (
+    pageNumber: number,
+    leafBox: { width: number; height: number }
+  ) => ReactNode;
 }
 
 const FALLBACK_ASPECT = 0.72;
@@ -77,7 +93,7 @@ function resolveAspectPrebuiltSpreads(pageDims: Map<number, RealPageDims>): numb
 
 const FlipEngine = forwardRef<FlipEngineHandle, FlipEngineProps>(
   function FlipEngine(
-    { pdf, profile, pageDims, stageWidth, stageHeight, onPageChange },
+    { pdf, profile, pageDims, stageWidth, stageHeight, onPageChange, renderSelectionLayer },
     ref
   ) {
     const flipBookRef = useRef<any>(null);
@@ -298,6 +314,7 @@ const FlipEngine = forwardRef<FlipEngineHandle, FlipEngineProps>(
                   key={pageNumber}
                   className="ndl-flip-page"
                   data-density={role === "cover" && !isPrebuiltSpreads ? "hard" : "soft"}
+                  style={{ position: "relative" }}
                 >
                   <PdfPageCanvas
                     pdf={pdf}
@@ -305,6 +322,7 @@ const FlipEngine = forwardRef<FlipEngineHandle, FlipEngineProps>(
                     width={leafBox.width}
                     height={leafBox.height}
                   />
+                  {renderSelectionLayer?.(pageNumber, leafBox)}
                 </div>
               );
             })}

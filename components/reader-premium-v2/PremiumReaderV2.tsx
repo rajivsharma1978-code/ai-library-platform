@@ -26,6 +26,7 @@ import {
 } from "@/lib/premium-reader/aiActions";
 import { saveNote } from "@/lib/premium-reader/notesStore";
 import BookSpread, { type BookSpreadHandle, type SelectionMode } from "./BookSpread";
+import type { SelectionLayerResult } from "./SelectionLayer";
 
 interface PremiumReaderV2Props {
   profile: BookProfile;
@@ -210,10 +211,11 @@ export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
 
   // ── Selected-text floating menu state ────────────────────────────────
   // selectionMenu holds the currently highlighted text + its on-screen
-  // position (so the floating menu can render next to it). Cleared
-  // whenever the selection collapses, the page changes, or an action
-  // is taken on it. selectedFlashcard holds the most recently
-  // generated flashcard (front/back) for display in the AI panel.
+  // position (so the floating menu can render next to it). pageNumber
+  // here is a LOGICAL page number (may represent a left/right half of
+  // a spread-image PDF page), never a raw PDF page number — this is
+  // what keeps OCR/selection/Read Aloud all agreeing on the same
+  // granularity per the logical-page-model fix.
   const [selectionMenu, setSelectionMenu] = useState<{
     text: string;
     rect: DOMRect;
@@ -221,9 +223,11 @@ export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
   } | null>(null);
   const [selectedFlashcard, setSelectedFlashcard] = useState<{ front: string; back: string } | null>(null);
 
+  const [selectionSourcePage, setSelectionSourcePage] = useState<number | null>(null);
+
   // Page Turn Mode (default) vs Text Selection Mode — toggled above
-  // the book. In Page Turn Mode, BookSpread's overlays are fully
-  // pointer-events:none so flip/drag is completely unaffected.
+  // the book. In Page Turn Mode, BookSpread unmounts its selection
+  // layers entirely, so flip/drag is completely unaffected.
   const [selectionMode, setSelectionMode] = useState<SelectionMode>("page-turn");
   const selectionMenuRef = useRef<HTMLDivElement | null>(null);
 
@@ -339,6 +343,7 @@ export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
     setIsAiLoading(false);
     clearAiResult();
     setSelectionMenu(null);
+    setSelectionSourcePage(null);
     setSelectedFlashcard(null);
   }, [currentPageNumbers]);
 
@@ -440,6 +445,18 @@ export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
     setZoom(100);
   }
 
+  // Requirement D: zoom changes close the floating menu and clear the
+  // selection — the selection's screen-space rect is now stale the
+  // instant zoom changes, so the menu would otherwise render in the
+  // wrong place relative to the rescaled book.
+  useEffect(() => {
+    setSelectionMenu(null);
+    setSelectionSourcePage(null);
+    if (typeof window !== "undefined") {
+      window.getSelection()?.removeAllRanges();
+    }
+  }, [zoom]);
+
   function pickVoiceForLocale(locale: string): SpeechSynthesisVoice | null {
     const voices = voicesRef.current;
     if (!voices || voices.length === 0) return null;
@@ -469,6 +486,7 @@ export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
   // always the active source when present — never fall back to page
   // text while AI output is active. Only when there is NO AI output
   // does Read Aloud fall back to the original visible page text.
+  // Resolves the text for a given LOGICAL page number: looks up which
   function getReadAloudPayload(): ReadAloudPayload {
     if (aiOutputKind && aiOutput.trim().length > 0 && aiOutputLanguage) {
       return {
@@ -478,12 +496,24 @@ export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
       };
     }
 
-    const pageTexts = resolvedPages
-      .map((p) => p.text)
-      .filter((t) => t.trim().length > 0);
+    // Requirement B, exactly:
+    //   1. If a selection exists: read the selected text.
+    //   2. Otherwise: read only currentPageNumbers[0] — never join
+    //      resolvedPages together.
+    if (selectionMenu && selectionMenu.text.trim().length > 0) {
+      return {
+        text: selectionMenu.text,
+        language: getSpeechLanguage("English"),
+        source: "page-text",
+      };
+    }
+
+    const targetPageNumber = currentPageNumbers[0];
+    const targetPage = resolvedPages.find((p) => p.pageNumber === targetPageNumber);
+    const text = targetPage?.text?.trim() ?? "";
 
     return {
-      text: pageTexts.join(" "),
+      text,
       language: getSpeechLanguage("English"),
       source: "page-text",
     };
@@ -530,13 +560,62 @@ export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
     window.speechSynthesis.speak(utterance);
   }
 
+  // Resolves once voices are available for the given locale, OR after
+  // a maximum of 1500ms — whichever happens first. This is what fixes
+  // the multi-minute Hindi delay: some browsers populate non-default
+  // (e.g. Hindi) voices lazily, and calling speechSynthesis.speak()
+  // before any voice is ready can leave Chrome's speech queue stalled
+  // for a very long time. Waiting briefly for voiceschanged (capped
+  // hard at 1500ms) lets the voice resolve normally in the common
+  // case, while guaranteeing we never block more than 1.5s even if no
+  // matching voice ever loads.
+  function waitForVoice(locale: string): Promise<void> {
+    return new Promise((resolve) => {
+      const prefix = locale.split("-")[0];
+      const hasMatch = () =>
+        voicesRef.current.some((v) => v.lang === locale || v.lang.startsWith(prefix));
+
+      if (hasMatch() || typeof window === "undefined" || !window.speechSynthesis) {
+        resolve();
+        return;
+      }
+
+      let settled = false;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        window.speechSynthesis.removeEventListener("voiceschanged", onVoicesChanged);
+        clearTimeout(timeoutId);
+        resolve();
+      };
+
+      function onVoicesChanged() {
+        voicesRef.current = window.speechSynthesis.getVoices();
+        if (hasMatch()) finish();
+      }
+
+      window.speechSynthesis.addEventListener("voiceschanged", onVoicesChanged);
+      const timeoutId = setTimeout(finish, 1500);
+    });
+  }
+
   function startSpeechQueue(chunks: string[], locale: string) {
     speechQueueRef.current = chunks;
     currentSpeechIndexRef.current = 0;
     speechLocaleRef.current = locale;
     speechStateRef.current = "playing";
     setSpeechState("playing");
-    speakCurrentChunk();
+
+    // English (and any already-loaded locale) resolves hasMatch()
+    // immediately inside waitForVoice(), so this remains synchronous
+    // in practice for the common case — only a genuinely
+    // not-yet-loaded voice incurs any wait, capped at 1500ms.
+    waitForVoice(locale).then(() => {
+      // Re-check we're still meant to be playing (user may have hit
+      // Stop during the brief wait).
+      if (speechStateRef.current !== "playing") return;
+      speakCurrentChunk();
+    });
   }
 
   function handleReadAloudToggle() {
@@ -605,26 +684,30 @@ export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
       return;
     }
 
-    // source === "page-text": original page-by-page reading, English.
-    const pagesToSpeak =
-      resolvedPages.length > 0
-        ? resolvedPages
-        : currentPageNumbers.map((pageNumber) => ({
-            pageNumber,
-            text: "",
-            source: "none" as PageTextSource,
-          }));
+    // source === "page-text": speak ONLY the single target page
+    // Requirement B: never merge multiple pages into one reading.
+    // payload.text is already scoped to exactly one page (selected
+    // text, or currentPageNumbers[0]) from getReadAloudPayload(). Use
+    // the same page number here for the "Page X." prefix.
+    const targetPageNumber =
+      selectionMenu && selectionMenu.text.trim().length > 0
+        ? (selectionSourcePage ?? currentPageNumbers[0])
+        : currentPageNumbers[0];
 
-    const pageChunks: string[] = pagesToSpeak.map((page, index) => {
-      const rawBody =
-        page.text.trim().length > 0
-          ? page.text
-          : "This page does not contain any readable text.";
+    const rawBody =
+      payload.text.trim().length > 0
+        ? payload.text
+        : "This page does not contain any readable text.";
 
-      const sanitizedBody = sanitizeForSpeech(rawBody);
-      const prefix = index === 0 ? `Page ${currentLabel}. ` : "";
-      return `${prefix}${sanitizedBody}`.slice(0, 4000);
-    });
+    const sanitizedBody = sanitizeForSpeech(rawBody);
+    const chunks = createSpeechChunks(sanitizedBody);
+
+    const pageChunks: string[] =
+      chunks.length > 0
+        ? chunks.map((chunk, index) =>
+            (index === 0 ? `Page ${targetPageNumber}. ${chunk}` : chunk).slice(0, 4000)
+          )
+        : [`Page ${targetPageNumber}. ${sanitizedBody}`.slice(0, 4000)];
 
     startSpeechQueue(pageChunks, payload.language);
   }
@@ -715,8 +798,11 @@ export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
 
   // ── Selected-text floating menu handlers ─────────────────────────────
   const handleSelectionChange = useCallback(
-    (info: { text: string; rect: DOMRect; pageNumber: number } | null) => {
+    (info: SelectionLayerResult | null) => {
       setSelectionMenu(info);
+      if (info) {
+        setSelectionSourcePage(info.pageNumber);
+      }
     },
     []
   );
@@ -730,6 +816,7 @@ export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
     function handleDocumentClick(e: MouseEvent) {
       if (selectionMenuRef.current && !selectionMenuRef.current.contains(e.target as Node)) {
         setSelectionMenu(null);
+        setSelectionSourcePage(null);
       }
     }
 
@@ -744,6 +831,7 @@ export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
   useEffect(() => {
     if (selectionMode === "page-turn") {
       setSelectionMenu(null);
+      setSelectionSourcePage(null);
     }
   }, [selectionMode]);
 
@@ -755,7 +843,7 @@ export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
   async function handleSelectionAction(kind: SelectionActionKind) {
     if (!selectionMenu) return;
     const text = selectionMenu.text;
-    const pageNumber = selectionMenu.pageNumber;
+    const pageNumber = selectionSourcePage ?? selectionMenu.pageNumber;
     setSelectionMenu(null);
 
     if (typeof window !== "undefined") {
@@ -820,7 +908,7 @@ export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
   function handleSaveSelectionAsNote() {
     if (!selectionMenu) return;
     const text = selectionMenu.text;
-    const pageNumber = selectionMenu.pageNumber;
+    const pageNumber = selectionSourcePage ?? selectionMenu.pageNumber;
     setSelectionMenu(null);
 
     saveNote({
@@ -861,23 +949,36 @@ export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
     { kind: "quiz", label: "Quiz me" },
   ];
 
+  // Requirement E: collapse the left info panel automatically when
+  // zoom is above 100% or Text Selection Mode is active, giving the
+  // book more horizontal room. Restored automatically the moment zoom
+  // returns to 100% (e.g. via Fit) and selection mode goes back to
+  // page-turn. The AI Companion right panel is untouched per spec.
+  const isLeftPanelCollapsed = zoom > 100 || selectionMode === "text-selection";
+
   return (
     <div
       style={{
         display: "grid",
-        gridTemplateColumns: "280px 1fr 320px",
+        gridTemplateColumns: isLeftPanelCollapsed ? "0px 1fr 320px" : "280px 1fr 320px",
         height: "100vh",
         maxHeight: "100vh",
         overflow: "hidden",
         background: "#f4efe6",
+        transition: "grid-template-columns 200ms ease",
       }}
     >
       <aside
         style={{
-          borderRight: "1px solid #e3dcc9",
+          borderRight: isLeftPanelCollapsed ? "none" : "1px solid #e3dcc9",
           background: "#fbf9f4",
-          padding: 24,
+          padding: isLeftPanelCollapsed ? 0 : 24,
           overflowY: "auto",
+          overflowX: "hidden",
+          width: isLeftPanelCollapsed ? 0 : "auto",
+          opacity: isLeftPanelCollapsed ? 0 : 1,
+          transition: "opacity 150ms ease",
+          pointerEvents: isLeftPanelCollapsed ? "none" : "auto",
         }}
       >
         <p style={{ fontSize: 11, letterSpacing: 1, color: "#9a8c6b", fontWeight: 700 }}>
@@ -913,11 +1014,22 @@ export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
         style={{
           display: "flex",
           flexDirection: "column",
-          alignItems: "flex-start",
+          // The book column must be CENTERED, not left-anchored, so
+          // zoom always scales outward from the true visual center of
+          // the available reader space.
+          alignItems: "center",
           justifyContent: "center",
           padding: 24,
           position: "relative",
           minWidth: 0,
+          // Requirement D: allow scroll/pan while zoomed. At 100% zoom
+          // the book always fits, so "visible" avoids an unwanted
+          // permanent scrollbar; once zoomed in beyond the available
+          // space, "auto" lets the browser show scrollbars and lets
+          // the user pan around the now-larger book rather than
+          // having it silently overflow with no way to reach the
+          // clipped edges.
+          overflow: zoom > 100 ? "auto" : "visible",
         }}
       >
         {loadError && (
@@ -997,9 +1109,18 @@ export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
                 ref={selectionMenuRef}
                 style={{
                   position: "fixed",
-                  top: Math.max(8, selectionMenu.rect.top - 8),
-                  left: selectionMenu.rect.left,
-                  transform: "translateY(-100%)",
+                  // Requirement D: prefer positioning BELOW the
+                  // selection (closer to natural reading flow, doesn't
+                  // creep up toward the toolbar). Only flip above if
+                  // there genuinely isn't room below in the viewport.
+                  top:
+                    selectionMenu.rect.bottom + 220 < window.innerHeight
+                      ? selectionMenu.rect.bottom + 8
+                      : Math.max(72, selectionMenu.rect.top - 8 - 200),
+                  left: Math.min(
+                    Math.max(8, selectionMenu.rect.left),
+                    window.innerWidth - 216
+                  ),
                   background: "#2c2416",
                   borderRadius: 10,
                   boxShadow: "0 10px 24px rgba(44,36,22,0.35)",
@@ -1008,6 +1129,7 @@ export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
                   overflow: "hidden",
                   zIndex: 50,
                   minWidth: 200,
+                  maxWidth: 220,
                 }}
               >
                 <p
@@ -1020,7 +1142,7 @@ export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
                     borderBottom: "1px solid rgba(255,255,255,0.1)",
                   }}
                 >
-                  Selected from Page {selectionMenu.pageNumber}
+                  Selected from Page {selectionSourcePage ?? selectionMenu.pageNumber}
                 </p>
                 {[
                   { label: "Explain Selection", action: () => handleSelectionAction("explain") },
