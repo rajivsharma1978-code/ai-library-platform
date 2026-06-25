@@ -51,6 +51,11 @@ interface FlipEngineProps {
 
 const FALLBACK_ASPECT = 0.72;
 
+// Shared with the outer wrapper's width style below, so the spread
+// width used for layout (leafBox.width * 2 + GUTTER) and the
+// constraint leafBox is computed against always agree on the same gap.
+const GUTTER = 6;
+
 function detectOverallModeSinglePages(
   pageDims: Map<number, RealPageDims>,
   frontMatterPages: number
@@ -134,15 +139,33 @@ const FlipEngine = forwardRef<FlipEngineHandle, FlipEngineProps>(
       return resolveAspectSinglePages(pageDims, frontMatterPages);
     }, [isPrebuiltSpreads, pageDims, frontMatterPages]);
 
+    // Fit-contain sizing: the rendered leaf (or leaf pair, in double/
+    // spread mode) must NEVER exceed the available stage. The original
+    // math here was already correct in isolation (Math.floor only
+    // rounds down, so doubling a floored value can't exceed 2× the
+    // usable width) — this version makes the constraint explicit via
+    // named constants, adds a small defensive safety margin, and
+    // clamps the final result once more. The margin/clamp exist purely
+    // as a guard against any subpixel/border/shadow overhead
+    // react-pageflip itself may add internally (not visible from this
+    // file), which could otherwise eat into the last pixel or two now
+    // that ancestor containers use overflow:"hidden" instead of
+    // "visible".
     const leafBox = useMemo(() => {
       if (stageWidth <= 0 || stageHeight <= 0) {
         return { width: 0, height: 0 };
       }
 
+      const SAFETY_MARGIN = 2;
+
+      const maxSpreadWidth = Math.max(stageWidth - SAFETY_MARGIN, 0);
+      const maxSpreadHeight = Math.max(stageHeight - SAFETY_MARGIN, 0);
+
       // mode is always "single" in prebuilt-spreads mode, so the leaf
       // always gets the FULL stage width — never halved for pairing.
-      const usableWidth = mode === "double" ? (stageWidth - 6) / 2 : stageWidth;
-      const usableHeight = stageHeight;
+      const usableWidth =
+        mode === "double" ? (maxSpreadWidth - GUTTER) / 2 : maxSpreadWidth;
+      const usableHeight = maxSpreadHeight;
 
       const widthFromHeight = usableHeight * aspect;
 
@@ -157,10 +180,26 @@ const FlipEngine = forwardRef<FlipEngineHandle, FlipEngineProps>(
         leafHeight = usableWidth / aspect;
       }
 
-      return {
-        width: Math.max(Math.floor(leafWidth), 1),
-        height: Math.max(Math.floor(leafHeight), 1),
-      };
+      leafWidth = Math.max(Math.floor(leafWidth), 1);
+      leafHeight = Math.max(Math.floor(leafHeight), 1);
+
+      // Final defensive clamp: re-check the actual constraint this
+      // function exists to guarantee, and shrink (never grow) if it
+      // somehow doesn't hold — e.g. the full spread width (leaf width
+      // doubled, plus gutter) must never exceed maxSpreadWidth.
+      const spreadWidth = mode === "double" ? leafWidth * 2 + GUTTER : leafWidth;
+      if (spreadWidth > maxSpreadWidth) {
+        const overshoot = spreadWidth - maxSpreadWidth;
+        const perLeafReduction = mode === "double" ? Math.ceil(overshoot / 2) : overshoot;
+        leafWidth = Math.max(leafWidth - perLeafReduction, 1);
+        leafHeight = Math.max(Math.floor(leafWidth / aspect), 1);
+      }
+      if (leafHeight > maxSpreadHeight) {
+        leafHeight = Math.max(Math.floor(maxSpreadHeight), 1);
+        leafWidth = Math.max(Math.floor(leafHeight * aspect), 1);
+      }
+
+      return { width: leafWidth, height: leafHeight };
     }, [aspect, mode, stageWidth, stageHeight]);
 
     useImperativeHandle(ref, () => ({
@@ -271,7 +310,7 @@ const FlipEngine = forwardRef<FlipEngineHandle, FlipEngineProps>(
       <div
         className={`ndl-flip-stage ${bookOpened ? "ndl-flip-opened" : "ndl-flip-closed"}`}
         style={{
-          width: mode === "double" ? leafBox.width * 2 + 6 : leafBox.width,
+          width: mode === "double" ? leafBox.width * 2 + GUTTER : leafBox.width,
           height: leafBox.height,
           position: "relative",
           margin: "0 auto",

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, type PointerEvent, type MouseEvent } from "react";
+import { forwardRef, useCallback, useEffect, useRef } from "react";
 
 export interface SelectionLayerResult {
   text: string;
@@ -11,79 +11,57 @@ export interface SelectionLayerResult {
 interface SelectionLayerProps {
   pageNumber: number;
   text: string;
-  width: number;
-  height: number;
+  width: number | string;
+  height: number | string;
+  /** Horizontal offset of this half within its positioned ancestor. Defaults to 0 (left edge). */
+  left?: number | string;
   onSelection: (result: SelectionLayerResult | null) => void;
-  /** Fired the instant a pointerdown happens inside this layer. */
-  onActivate: (pageNumber: number) => void;
-  /** True only for the page the CURRENT gesture started in. */
-  isActivePage: boolean;
 }
 
+const NDL_SELECTION_CLASS = "premium-selection-layer";
+
 /**
- * One per-page selectable text overlay, rendered by FlipEngine itself
- * (via its renderSelectionLayer prop) directly inside that page's own
- * leaf container — sized to the EXACT same leafBox FlipEngine uses for
- * <PdfPageCanvas>.
+ * SELECTION OVERLAY — one instance per visible page-half.
  *
- * This layer NEVER performs any Range mutation: no setStart, setEnd,
- * cloneRange, or any other rewriting of the browser's native
- * selection. It allows completely native browser text selection and
- * only determines two things: (a) which page a selection gesture
- * started in, via onActivate() on pointerdown, and (b) whether a
- * given selectionchange event's anchor node belongs to THIS page's
- * DOM subtree before reporting it upward.
+ * Now a forwardRef component: BookSpread renders TWO of these side by
+ * side (one per visible page) and holds a direct ref to each one's
+ * root DOM node, so it can synchronously disable/enable each half on
+ * pointerdown (see BookSpread's overlay container handler) — this is
+ * what stops a single drag from spanning both pages, without
+ * reintroducing the earlier Map-based registration system.
  *
- * Page isolation relies on exactly one mechanism, which is both
- * correct and sufficient: the ACTIVE-PAGE GATE. On pointerdown, this
- * layer calls onActivate() and the parent (BookSpread) locks onto
- * this page for the duration of the gesture. Every selectionchange
- * event checks isActivePageRef FIRST — only the currently-active
- * page's layer ever reports a selection at all. Native browser text
- * selection itself is left completely untouched (no preventDefault,
- * no Range manipulation) so selecting text works exactly as it would
- * with no overlay logic at all.
+ * Text remains fully invisible (color + WebkitTextFillColor both
+ * "transparent") while staying selectable. A subtle, precise gold
+ * ::selection highlight is scoped via the premium-selection-layer
+ * class.
+ *
+ * Renders immediately regardless of whether `text` has resolved yet —
+ * an empty string just means an empty (but still correctly sized and
+ * positioned) selectable layer until OCR/text resolution fills it in.
+ *
+ * Does NOT call preventDefault() or removeAllRanges() anywhere.
  */
-export default function SelectionLayer({
-  pageNumber,
-  text,
-  width,
-  height,
-  onSelection,
-  onActivate,
-  isActivePage,
-}: SelectionLayerProps) {
+const SelectionLayer = forwardRef<HTMLDivElement, SelectionLayerProps>(function SelectionLayer(
+  { pageNumber, text, width, height, left = 0, onSelection },
+  forwardedRef
+) {
   const layerRef = useRef<HTMLDivElement | null>(null);
-  const isActivePageRef = useRef(isActivePage);
 
-  useEffect(() => {
-    isActivePageRef.current = isActivePage;
-  }, [isActivePage]);
-
-  // stopPropagation ONLY — this prevents the pointerdown from
-  // reaching FlipEngine's own click/drag flip listeners (which are
-  // attached higher up in the DOM by react-pageflip), so a text
-  // selection drag is never misread as a page-turn gesture. We
-  // deliberately do NOT call preventDefault() anywhere: doing so
-  // would block the browser's native text-selection behavior itself,
-  // which is exactly what broke selection in the previous version's
-  // related (but separate) over-clamping bug. Native selection must
-  // remain completely free to operate.
-  const handlePointerDown = useCallback(
-    (e: PointerEvent | MouseEvent) => {
-      e.stopPropagation();
-      onActivate(pageNumber);
+  // Keep our own internal ref (needed for selection-range containment
+  // checks below) in sync with whatever ref BookSpread passed in.
+  const setRefs = useCallback(
+    (el: HTMLDivElement | null) => {
+      layerRef.current = el;
+      if (typeof forwardedRef === "function") {
+        forwardedRef(el);
+      } else if (forwardedRef) {
+        (forwardedRef as React.MutableRefObject<HTMLDivElement | null>).current = el;
+      }
     },
-    [pageNumber, onActivate]
+    [forwardedRef]
   );
 
   const handleSelectionChange = useCallback(() => {
-    // Hard gate: only the page the CURRENT gesture started in is ever
-    // allowed to report a selection. Every other page's layer stays
-    // completely silent, regardless of what the native browser
-    // selection happens to contain.
-    if (!isActivePageRef.current) return;
-
     const selection = window.getSelection();
     const layer = layerRef.current;
     if (!layer) return;
@@ -99,8 +77,8 @@ export default function SelectionLayer({
       return;
     }
 
-    const text = selection.toString().trim();
-    if (text.length === 0) {
+    const selectedText = selection.toString().trim();
+    if (selectedText.length === 0) {
       onSelection(null);
       return;
     }
@@ -110,7 +88,7 @@ export default function SelectionLayer({
     const fallbackRect =
       rect.width === 0 && rect.height === 0 ? layer.getBoundingClientRect() : rect;
 
-    onSelection({ text, rect: fallbackRect, pageNumber });
+    onSelection({ text: selectedText, rect: fallbackRect, pageNumber });
   }, [onSelection, pageNumber]);
 
   useEffect(() => {
@@ -121,33 +99,43 @@ export default function SelectionLayer({
   }, [handleSelectionChange]);
 
   return (
-    <div
-      ref={layerRef}
-      data-page-number={pageNumber}
-      onPointerDown={handlePointerDown}
-      onMouseDown={handlePointerDown}
-      style={{
-        position: "absolute",
-        top: 0,
-        left: 0,
-        width,
-        height,
-        color: "transparent",
-        userSelect: "text",
-        WebkitUserSelect: "text",
-        cursor: "text",
-        fontSize: 11,
-        lineHeight: 1.5,
-        overflow: "hidden",
-        padding: 12,
-        whiteSpace: "pre-wrap",
-        overflowWrap: "break-word",
-        boxSizing: "border-box",
-        pointerEvents: "auto",
-        zIndex: 5,
-      }}
-    >
-      {text}
-    </div>
+    <>
+      <style>{`
+        .${NDL_SELECTION_CLASS}::selection {
+          background: rgba(176, 124, 45, 0.22);
+        }
+      `}</style>
+      <div
+        ref={setRefs}
+        data-page-number={pageNumber}
+        className={NDL_SELECTION_CLASS}
+        style={{
+          position: "absolute",
+          top: 0,
+          left,
+          width,
+          height,
+          color: "transparent",
+          WebkitTextFillColor: "transparent",
+          userSelect: "text",
+          WebkitUserSelect: "text",
+          cursor: "text",
+          fontSize: 13,
+          lineHeight: 1.35,
+          overflow: "hidden",
+          padding: 16,
+          whiteSpace: "pre-wrap",
+          overflowWrap: "break-word",
+          boxSizing: "border-box",
+          pointerEvents: "auto",
+          zIndex: 9999,
+          background: "transparent",
+        }}
+      >
+        {text}
+      </div>
+    </>
   );
-}
+});
+
+export default SelectionLayer;

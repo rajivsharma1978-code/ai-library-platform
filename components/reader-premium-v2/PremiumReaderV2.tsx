@@ -5,6 +5,8 @@ import type { SpeechState } from "./ReaderToolbar";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import type { BookProfile } from "@/lib/premium-reader/bookProfile";
+import { getDisplayLabel } from "@/lib/premium-reader/bookProfile";
+import FullscreenReaderView from "./FullscreenReaderView";
 import {
   getRealPageDims,
   type RealPageDims,
@@ -12,6 +14,7 @@ import {
 import {
   resolvePageText,
   sanitizeForSpeech,
+  cleanOcrTextForAi,
   type PageTextSource,
 } from "@/lib/premium-reader/pageTextExtractor";
 import {
@@ -179,6 +182,37 @@ export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
   const [isReady, setIsReady] = useState(false);
   const [zoom, setZoom] = useState(100);
 
+  // ── In-app "immersive mode" / fullscreen layout ──────────────────
+  // isImmersiveMode drives all the layout styles below (grid columns,
+  // panel visibility, main/book sizing). isFullscreen tracks the
+  // BROWSER'S actual native fullscreen state and is kept in lockstep
+  // with isImmersiveMode by both enterFullscreen() and the
+  // fullscreenchange listener below — so the two never drift apart,
+  // and ESC (which only the browser can intercept) reliably restores
+  // the layout via the listener, not via a manual keydown handler.
+  const [isImmersiveMode, setIsImmersiveMode] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+
+  // Bumped every time isFullscreen changes (enter AND exit). This is
+  // passed to BookSpread as a plain prop — NOT a key — so it never
+  // remounts BookSpread/FlipEngine (which would reset the current
+  // page). Instead BookSpread uses it purely as an effect dependency
+  // to force a fresh container re-measurement after the grid layout
+  // has actually changed size, since the layout change here happens
+  // a tick after isFullscreen flips and a passive ResizeObserver can
+  // occasionally miss/lag behind that specific transition.
+  const [layoutVersion, setLayoutVersion] = useState(0);
+
+  useEffect(() => {
+    setLayoutVersion((v) => v + 1);
+  }, [isFullscreen]);
+
+  // Ref to the outer reader workspace container — the element actually
+  // passed to requestFullscreen(). Fullscreening THIS element (not
+  // document.documentElement) means only the reader workspace goes
+  // fullscreen, not the whole browser tab/page.
+  const readerContainerRef = useRef<HTMLDivElement | null>(null);
+
   const [speechState, setSpeechState] = useState<SpeechState>("idle");
 
   const speechQueueRef = useRef<string[]>([]);
@@ -190,14 +224,6 @@ export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
     speechStateRef.current = speechState;
   }, [speechState]);
 
-  // ── AI Companion: single persistent language selection ──────────────
-  // selectedAiLanguage drives EVERY action — Explain, Summarize,
-  // Translate, Quiz me, and the free-text Ask AI input all answer in
-  // this language. It is independent of aiOutputLanguage (the
-  // language the MOST RECENT output actually came back in) — they
-  // are set together whenever a new action completes, but
-  // selectedAiLanguage itself persists across actions/pages until the
-  // user changes it.
   const [selectedAiLanguage, setSelectedAiLanguage] = useState<ResponseLanguage>("English");
 
   const [aiOutput, setAiOutput] = useState<string>("");
@@ -209,13 +235,6 @@ export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
   const [isAiLoading, setIsAiLoading] = useState(false);
   const [askInputValue, setAskInputValue] = useState("");
 
-  // ── Selected-text floating menu state ────────────────────────────────
-  // selectionMenu holds the currently highlighted text + its on-screen
-  // position (so the floating menu can render next to it). pageNumber
-  // here is a LOGICAL page number (may represent a left/right half of
-  // a spread-image PDF page), never a raw PDF page number — this is
-  // what keeps OCR/selection/Read Aloud all agreeing on the same
-  // granularity per the logical-page-model fix.
   const [selectionMenu, setSelectionMenu] = useState<{
     text: string;
     rect: DOMRect;
@@ -225,9 +244,6 @@ export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
 
   const [selectionSourcePage, setSelectionSourcePage] = useState<number | null>(null);
 
-  // Page Turn Mode (default) vs Text Selection Mode — toggled above
-  // the book. In Page Turn Mode, BookSpread unmounts its selection
-  // layers entirely, so flip/drag is completely unaffected.
   const [selectionMode, setSelectionMode] = useState<SelectionMode>("page-turn");
   const selectionMenuRef = useRef<HTMLDivElement | null>(null);
 
@@ -235,6 +251,7 @@ export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
   const voicesRef = useRef<SpeechSynthesisVoice[]>([]);
 
   const flipRef = useRef<BookSpreadHandle>(null);
+  const bookWrapperRef = useRef<HTMLDivElement | null>(null);
 
   function clearAiResult() {
     setAiOutput("");
@@ -261,6 +278,23 @@ export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
     window.speechSynthesis.addEventListener("voiceschanged", loadVoices);
     return () => {
       window.speechSynthesis.removeEventListener("voiceschanged", loadVoices);
+    };
+  }, []);
+
+  // Authoritative sync point: whenever the browser's actual fullscreen
+  // state changes — via the ⛶ button, ESC, or any other means — this
+  // fires and updates both isFullscreen and isImmersiveMode together.
+  // This is what makes ESC correctly restore the normal layout.
+  useEffect(() => {
+    function handleFullscreenChange() {
+      const active = Boolean(document.fullscreenElement);
+      setIsFullscreen(active);
+      setIsImmersiveMode(active);
+    }
+
+    document.addEventListener("fullscreenchange", handleFullscreenChange);
+    return () => {
+      document.removeEventListener("fullscreenchange", handleFullscreenChange);
     };
   }, []);
 
@@ -433,6 +467,54 @@ export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
     flipRef.current?.flipPrev();
   }, []);
 
+  // Fullscreen-specific navigation: FullscreenReaderView has no
+  // FlipEngine handle to call flipNext()/flipPrev() on, so these
+  // directly advance currentPageNumbers/currentLabel by the same
+  // number of pages currently visible (1 or 2), clamped to
+  // [1, totalPages]. This is a deliberately SIMPLIFIED approximation
+  // of FlipEngine's own pairing logic (front-matter/landscape-page
+  // detection in handleFlip) — appropriate for this minimal fullscreen
+  // view, not a full reimplementation of that logic.
+  const fullscreenGoNext = useCallback(() => {
+    setCurrentPageNumbers((prev) => {
+      const step = prev.length || 1;
+      const lastVisible = prev[prev.length - 1] ?? 1;
+      const nextStart = Math.min(lastVisible + 1, profile.totalPages);
+      const nextNumbers =
+        step === 2 && nextStart < profile.totalPages
+          ? [nextStart, nextStart + 1]
+          : [nextStart];
+
+      const label =
+        nextNumbers.length === 2
+          ? `${getDisplayLabel(profile, nextNumbers[0])}–${getDisplayLabel(profile, nextNumbers[1])}`
+          : getDisplayLabel(profile, nextNumbers[0]);
+      setCurrentLabel(label);
+
+      return nextNumbers;
+    });
+  }, [profile]);
+
+  const fullscreenGoPrev = useCallback(() => {
+    setCurrentPageNumbers((prev) => {
+      const step = prev.length || 1;
+      const firstVisible = prev[0] ?? 1;
+      const prevStart = Math.max(firstVisible - step, 1);
+      const prevNumbers =
+        step === 2 && prevStart + 1 < firstVisible
+          ? [prevStart, Math.min(prevStart + 1, profile.totalPages)]
+          : [prevStart];
+
+      const label =
+        prevNumbers.length === 2
+          ? `${getDisplayLabel(profile, prevNumbers[0])}–${getDisplayLabel(profile, prevNumbers[1])}`
+          : getDisplayLabel(profile, prevNumbers[0]);
+      setCurrentLabel(label);
+
+      return prevNumbers;
+    });
+  }, [profile]);
+
   function zoomIn() {
     setZoom((current) => Math.min(current + 10, 160));
   }
@@ -443,12 +525,21 @@ export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
 
   function fitToScreen() {
     setZoom(100);
+    // Fit also exits immersive mode/fullscreen, restoring the
+    // standard layout exactly as it was originally — the "clean
+    // reset" button. If real browser fullscreen is engaged, exit it
+    // for real too, so this can't leave isFullscreen/isImmersiveMode
+    // out of sync with the actual browser state.
+    setIsImmersiveMode(false);
+    if (document.fullscreenElement) {
+      document.exitFullscreen().catch((err) => {
+        console.error("[PremiumReaderV2] exitFullscreen() failed (from Fit):", err);
+      });
+    } else {
+      setIsFullscreen(false);
+    }
   }
 
-  // Requirement D: zoom changes close the floating menu and clear the
-  // selection — the selection's screen-space rect is now stale the
-  // instant zoom changes, so the menu would otherwise render in the
-  // wrong place relative to the rescaled book.
   useEffect(() => {
     setSelectionMenu(null);
     setSelectionSourcePage(null);
@@ -481,12 +572,6 @@ export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
     return voices.some((v) => v.lang === languageCode || v.lang.startsWith(prefix));
   }
 
-  // ── Read Aloud source priority ───────────────────────────────────────
-  // Per requirement #12: AI output (any kind, including translate) is
-  // always the active source when present — never fall back to page
-  // text while AI output is active. Only when there is NO AI output
-  // does Read Aloud fall back to the original visible page text.
-  // Resolves the text for a given LOGICAL page number: looks up which
   function getReadAloudPayload(): ReadAloudPayload {
     if (aiOutputKind && aiOutput.trim().length > 0 && aiOutputLanguage) {
       return {
@@ -496,13 +581,20 @@ export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
       };
     }
 
-    // Requirement B, exactly:
-    //   1. If a selection exists: read the selected text.
-    //   2. Otherwise: read only currentPageNumbers[0] — never join
-    //      resolvedPages together.
     if (selectionMenu && selectionMenu.text.trim().length > 0) {
+      // Only run the stronger OCR-noise cleanup if the page this
+      // selection came from was actually OCR'd — selectable PDF text
+      // is left exactly as the user highlighted it.
+      const selectionPageNumber = selectionSourcePage ?? selectionMenu.pageNumber;
+      const selectionPage = resolvedPages.find((p) => p.pageNumber === selectionPageNumber);
+      const rawSelectionText = selectionMenu.text;
+      const selectionText =
+        selectionPage?.source === "ocr"
+          ? cleanOcrTextForAi(rawSelectionText)
+          : rawSelectionText;
+
       return {
-        text: selectionMenu.text,
+        text: selectionText,
         language: getSpeechLanguage("English"),
         source: "page-text",
       };
@@ -510,7 +602,9 @@ export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
 
     const targetPageNumber = currentPageNumbers[0];
     const targetPage = resolvedPages.find((p) => p.pageNumber === targetPageNumber);
-    const text = targetPage?.text?.trim() ?? "";
+    const rawText = targetPage?.text?.trim() ?? "";
+    // Same OCR-only gating for whole-page Read Aloud.
+    const text = targetPage?.source === "ocr" ? cleanOcrTextForAi(rawText) : rawText;
 
     return {
       text,
@@ -560,15 +654,6 @@ export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
     window.speechSynthesis.speak(utterance);
   }
 
-  // Resolves once voices are available for the given locale, OR after
-  // a maximum of 1500ms — whichever happens first. This is what fixes
-  // the multi-minute Hindi delay: some browsers populate non-default
-  // (e.g. Hindi) voices lazily, and calling speechSynthesis.speak()
-  // before any voice is ready can leave Chrome's speech queue stalled
-  // for a very long time. Waiting briefly for voiceschanged (capped
-  // hard at 1500ms) lets the voice resolve normally in the common
-  // case, while guaranteeing we never block more than 1.5s even if no
-  // matching voice ever loads.
   function waitForVoice(locale: string): Promise<void> {
     return new Promise((resolve) => {
       const prefix = locale.split("-")[0];
@@ -606,13 +691,7 @@ export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
     speechStateRef.current = "playing";
     setSpeechState("playing");
 
-    // English (and any already-loaded locale) resolves hasMatch()
-    // immediately inside waitForVoice(), so this remains synchronous
-    // in practice for the common case — only a genuinely
-    // not-yet-loaded voice incurs any wait, capped at 1500ms.
     waitForVoice(locale).then(() => {
-      // Re-check we're still meant to be playing (user may have hit
-      // Stop during the brief wait).
       if (speechStateRef.current !== "playing") return;
       speakCurrentChunk();
     });
@@ -639,9 +718,6 @@ export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
 
     const payload = getReadAloudPayload();
 
-    // Voice-support gate: applies whenever the active source is AI
-    // output (translate OR explain/summarize/quiz, in ANY selected
-    // language) and that language is not always-allowed.
     if (payload.source === "ai-output" && aiOutputLanguage) {
       const isAlwaysAllowed = ALWAYS_ALLOWED_LANGUAGES.includes(aiOutputLanguage);
 
@@ -684,11 +760,6 @@ export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
       return;
     }
 
-    // source === "page-text": speak ONLY the single target page
-    // Requirement B: never merge multiple pages into one reading.
-    // payload.text is already scoped to exactly one page (selected
-    // text, or currentPageNumbers[0]) from getReadAloudPayload(). Use
-    // the same page number here for the "Page X." prefix.
     const targetPageNumber =
       selectionMenu && selectionMenu.text.trim().length > 0
         ? (selectionSourcePage ?? currentPageNumbers[0])
@@ -725,21 +796,32 @@ export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
     alert("Dark mode will be connected next.");
   }
 
-  function enterFullscreen() {
-    if (typeof document === "undefined") return;
+  // Requests/exits REAL browser fullscreen on the reader workspace
+  // container (readerContainerRef) — not document.documentElement, so
+  // only this component's own workspace goes fullscreen, not the
+  // whole tab. Sets isFullscreen/isImmersiveMode optimistically on
+  // success; the fullscreenchange listener above remains the
+  // authoritative sync point for whatever the browser's real state
+  // ends up being (including ESC).
+  async function enterFullscreen() {
+    const el = readerContainerRef.current;
+    if (!el) return;
 
-    if (document.fullscreenElement) {
-      document.exitFullscreen?.();
-    } else {
-      document.documentElement.requestFullscreen?.();
+    try {
+      if (!document.fullscreenElement) {
+        await el.requestFullscreen();
+        setIsFullscreen(true);
+        setIsImmersiveMode(true);
+      } else {
+        await document.exitFullscreen();
+        setIsFullscreen(false);
+        setIsImmersiveMode(false);
+      }
+    } catch (err) {
+      console.error("Fullscreen failed", err);
     }
   }
 
-  // ── AI Companion action handler ──────────────────────────────────────
-  // Every kind — explain/summarize/translate/quiz/ask — now passes
-  // selectedAiLanguage through to runAiAction(). Translate is no
-  // longer a special case with its own language picker; it always
-  // targets whatever language is currently selected, per requirement #4.
   async function handleAiAction(kind: AiActionKind, customQuestion?: string) {
     if (!isReady) return;
 
@@ -796,7 +878,6 @@ export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
     setAskInputValue("");
   }
 
-  // ── Selected-text floating menu handlers ─────────────────────────────
   const handleSelectionChange = useCallback(
     (info: SelectionLayerResult | null) => {
       setSelectionMenu(info);
@@ -807,9 +888,6 @@ export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
     []
   );
 
-  // Requirement #8: clicking outside the floating menu clears it.
-  // (Mode-change and page-change clearing are handled separately
-  // below / in the existing page-change effect.)
   useEffect(() => {
     if (!selectionMenu) return;
 
@@ -826,8 +904,6 @@ export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
     };
   }, [selectionMenu]);
 
-  // Requirement #8: switching back to Page Turn Mode clears any
-  // active selection/menu immediately.
   useEffect(() => {
     if (selectionMode === "page-turn") {
       setSelectionMenu(null);
@@ -835,11 +911,6 @@ export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
     }
   }, [selectionMode]);
 
-  // Shared executor for Explain/Summarize/Translate/Flashcards on a
-  // selection. Always uses selectedAiLanguage (requirement #4/#5).
-  // Displays results in the SAME AI output panel used by the
-  // page-level actions, so the user sees one consistent place for
-  // all AI responses (requirement #8).
   async function handleSelectionAction(kind: SelectionActionKind) {
     if (!selectionMenu) return;
     const text = selectionMenu.text;
@@ -875,9 +946,6 @@ export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
         setSelectedFlashcard(card);
         setAiResult(`Front: ${card.front}\n\nBack: ${card.back}`, "quiz", selectedAiLanguage);
       } else {
-        // Map selection-only kinds onto the existing aiOutputKind
-        // values so the AI panel/Read Aloud logic treats them
-        // identically to page-level explain/summarize/translate.
         const mappedKind: AiActionKind =
           kind === "explain" ? "explain" : kind === "summarize" ? "summarize" : "translate";
         setAiResult(result.answer, mappedKind, selectedAiLanguage);
@@ -894,10 +962,6 @@ export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
     }
   }
 
-  // "Ask AI" from the selection menu pre-fills the existing Ask AI
-  // input with the selected text as quoted context, so the user can
-  // type their actual question and submit normally — reuses the
-  // existing Ask AI flow rather than duplicating it.
   function handleSelectionAskPrompt() {
     if (!selectionMenu) return;
     const text = selectionMenu.text;
@@ -917,10 +981,6 @@ export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
       text,
     });
 
-    // Show a plain save confirmation in the AI panel. This is not an
-    // AI-generated or translated response, so aiOutputKind/Language
-    // are left as-is (cleared) rather than tagging it with a language
-    // badge or routing it through the language-specific Read Aloud path.
     setAiOutput(`Saved to notes:\n\n"${text}"`);
     setAiOutputKind(null);
     setAiOutputLanguage(null);
@@ -949,88 +1009,103 @@ export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
     { kind: "quiz", label: "Quiz me" },
   ];
 
-  // Requirement E: collapse the left info panel automatically when
-  // zoom is above 100% or Text Selection Mode is active, giving the
-  // book more horizontal room. Restored automatically the moment zoom
-  // returns to 100% (e.g. via Fit) and selection mode goes back to
-  // page-turn. The AI Companion right panel is untouched per spec.
-  const isLeftPanelCollapsed = zoom > 100 || selectionMode === "text-selection";
+  // Left panel collapses when zoomed in, in Text Selection Mode, OR in
+  // Immersive Mode/Fullscreen.
+  const isLeftPanelCollapsed = zoom > 100 || selectionMode === "text-selection" || isImmersiveMode;
+
+  // Right (AI Companion) panel NEVER collapses, including in
+  // Fullscreen — it must stay visible per spec. Fullscreen instead
+  // drops the left column out of the grid template entirely (2
+  // columns: "1fr 320px") rather than collapsing it to 0px within a
+  // 3-column template, which is what was causing the book area to not
+  // actually claim that freed space cleanly.
 
   return (
     <div
+      ref={readerContainerRef}
       style={{
         display: "grid",
-        gridTemplateColumns: isLeftPanelCollapsed ? "0px 1fr 320px" : "280px 1fr 320px",
+        gridTemplateColumns: isImmersiveMode
+          ? "minmax(0, 1fr) 320px"
+          : `${isLeftPanelCollapsed ? "0px" : "280px"} 1fr 320px`,
         height: "100vh",
+        width: isFullscreen ? "100vw" : undefined,
         maxHeight: "100vh",
         overflow: "hidden",
-        background: "#f4efe6",
+        background: isFullscreen ? "#f5efe5" : "#f4efe6",
         transition: "grid-template-columns 200ms ease",
       }}
     >
-      <aside
-        style={{
-          borderRight: isLeftPanelCollapsed ? "none" : "1px solid #e3dcc9",
-          background: "#fbf9f4",
-          padding: isLeftPanelCollapsed ? 0 : 24,
-          overflowY: "auto",
-          overflowX: "hidden",
-          width: isLeftPanelCollapsed ? 0 : "auto",
-          opacity: isLeftPanelCollapsed ? 0 : 1,
-          transition: "opacity 150ms ease",
-          pointerEvents: isLeftPanelCollapsed ? "none" : "auto",
-        }}
-      >
-        <p style={{ fontSize: 11, letterSpacing: 1, color: "#9a8c6b", fontWeight: 700 }}>
-          NDL · PREMIUM READER
-        </p>
-        <h2 style={{ fontSize: 20, fontWeight: 800, marginTop: 8, color: "#2c2416" }}>
-          {profile.title}
-        </h2>
-
-        <div style={{ marginTop: 24 }}>
-          <p style={{ fontSize: 12, color: "#9a8c6b", marginBottom: 4 }}>Total Pages</p>
-          <p style={{ fontSize: 15, fontWeight: 600, color: "#2c2416" }}>
-            {profile.totalPages}
+      {!isImmersiveMode && (
+        <aside
+          style={{
+            borderRight: isLeftPanelCollapsed ? "none" : "1px solid #e3dcc9",
+            background: "#fbf9f4",
+            padding: isLeftPanelCollapsed ? 0 : 24,
+            overflowY: "auto",
+            overflowX: "hidden",
+            width: isLeftPanelCollapsed ? 0 : "auto",
+            opacity: isLeftPanelCollapsed ? 0 : 1,
+            transition: "opacity 150ms ease",
+            pointerEvents: isLeftPanelCollapsed ? "none" : "auto",
+          }}
+        >
+          <p style={{ fontSize: 11, letterSpacing: 1, color: "#9a8c6b", fontWeight: 700 }}>
+            NDL · PREMIUM READER
           </p>
-        </div>
+          <h2 style={{ fontSize: 20, fontWeight: 800, marginTop: 8, color: "#2c2416" }}>
+            {profile.title}
+          </h2>
 
-        <div style={{ marginTop: 16 }}>
-          <p style={{ fontSize: 12, color: "#9a8c6b", marginBottom: 4 }}>Reading Direction</p>
-          <p style={{ fontSize: 15, fontWeight: 600, color: "#2c2416" }}>
-            {profile.readingDirection === "rtl" ? "Right to Left" : "Left to Right"}
-          </p>
-        </div>
+          <div style={{ marginTop: 24 }}>
+            <p style={{ fontSize: 12, color: "#9a8c6b", marginBottom: 4 }}>Total Pages</p>
+            <p style={{ fontSize: 15, fontWeight: 600, color: "#2c2416" }}>
+              {profile.totalPages}
+            </p>
+          </div>
 
-        <div style={{ marginTop: 16 }}>
-          <p style={{ fontSize: 12, color: "#9a8c6b", marginBottom: 4 }}>Current View</p>
-          <p style={{ fontSize: 15, fontWeight: 600, color: "#2c2416" }}>
-            {currentViewLabel}
-          </p>
-        </div>
-      </aside>
+          <div style={{ marginTop: 16 }}>
+            <p style={{ fontSize: 12, color: "#9a8c6b", marginBottom: 4 }}>Reading Direction</p>
+            <p style={{ fontSize: 15, fontWeight: 600, color: "#2c2416" }}>
+              {profile.readingDirection === "rtl" ? "Right to Left" : "Left to Right"}
+            </p>
+          </div>
+
+          <div style={{ marginTop: 16 }}>
+            <p style={{ fontSize: 12, color: "#9a8c6b", marginBottom: 4 }}>Current View</p>
+            <p style={{ fontSize: 15, fontWeight: 600, color: "#2c2416" }}>
+              {currentViewLabel}
+            </p>
+          </div>
+        </aside>
+      )}
 
       <main
-        style={{
-          display: "flex",
-          flexDirection: "column",
-          // The book column must be CENTERED, not left-anchored, so
-          // zoom always scales outward from the true visual center of
-          // the available reader space.
-          alignItems: "center",
-          justifyContent: "center",
-          padding: 24,
-          position: "relative",
-          minWidth: 0,
-          // Requirement D: allow scroll/pan while zoomed. At 100% zoom
-          // the book always fits, so "visible" avoids an unwanted
-          // permanent scrollbar; once zoomed in beyond the available
-          // space, "auto" lets the browser show scrollbars and lets
-          // the user pan around the now-larger book rather than
-          // having it silently overflow with no way to reach the
-          // clipped edges.
-          overflow: zoom > 100 ? "auto" : "visible",
-        }}
+        style={
+          isImmersiveMode
+            ? {
+                height: "100vh",
+                width: "100%",
+                overflow: "hidden",
+                display: "grid",
+                gridTemplateRows: "auto auto minmax(0, 1fr) auto",
+                alignItems: "center",
+                justifyItems: "center",
+                padding: "16px 24px",
+                position: "relative",
+                minWidth: 0,
+              }
+            : {
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "center",
+                justifyContent: "center",
+                padding: 24,
+                position: "relative",
+                minWidth: 0,
+                overflow: zoom > 100 ? "auto" : "visible",
+              }
+        }
       >
         {loadError && (
           <div style={{ textAlign: "center", color: "#8a6b3f" }}>
@@ -1041,19 +1116,33 @@ export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
 
         {!loadError && (
           <>
-            <ReaderToolbar
-              zoom={zoom}
-              onZoomIn={zoomIn}
-              onZoomOut={zoomOut}
-              onFit={fitToScreen}
-              onReadAloud={handleReadAloudToggle}
-              onStopReadAloud={handleStopReadAloud}
-              onToggleTheme={toggleTheme}
-              onFullscreen={enterFullscreen}
-              speechState={isOcrRunning ? "loading" : speechState}
-            />
+            <div style={{ width: "100%", display: "flex", flexDirection: "column", alignItems: "center" }}>
+              <ReaderToolbar
+                zoom={zoom}
+                onZoomIn={zoomIn}
+                onZoomOut={zoomOut}
+                onFit={fitToScreen}
+                onReadAloud={handleReadAloudToggle}
+                onStopReadAloud={handleStopReadAloud}
+                onToggleTheme={toggleTheme}
+                onFullscreen={enterFullscreen}
+                speechState={isOcrRunning ? "loading" : speechState}
+              />
+              {isImmersiveMode && (
+                <p
+                  style={{
+                    fontSize: 11,
+                    color: "#9a6b2f",
+                    fontWeight: 700,
+                    marginTop: -6,
+                    marginBottom: 10,
+                  }}
+                >
+                  Immersive mode on — press ⛶ again or Esc to restore the side panel.
+                </p>
+              )}
+            </div>
 
-            {/* ── Selection Mode toggle ──────────────────────────────── */}
             <div
               style={{
                 display: "flex",
@@ -1091,32 +1180,99 @@ export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
               ))}
             </div>
 
-            <div style={{ flex: 1, width: "100%", minHeight: 0 }}>
-              <BookSpread
-                ref={flipRef}
-                pdf={pdf}
-                profile={profile}
-                pageDims={pageDims}
-                zoom={zoom}
-                onPageChange={handlePageChange}
-                resolvedPages={resolvedPages}
-                onSelectionChange={handleSelectionChange}
-                selectionMode={selectionMode}
-              />
+            <div
+              ref={bookWrapperRef}
+              style={
+                isImmersiveMode
+                  ? {
+                      width: "100%",
+                      height: "min(720px, calc(100vh - 170px))",
+                      maxWidth: "100%",
+                      minHeight: 0,
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      overflow: "hidden",
+                      position: "relative",
+                    }
+                  : {
+                      flex: 1,
+                      width: "100%",
+                      minHeight: 0,
+                      overflow: "hidden",
+                      position: "relative",
+                    }
+              }
+            >
+              {/* FullscreenReaderView — visible ONLY in fullscreen.
+                  Renders the current page(s) directly via
+                  PdfPageCanvas, fit-contain, no FlipEngine, no
+                  page-turn animation, no transform:scale. */}
+              {isFullscreen && (
+                <div style={{ width: "100%", height: "100%" }}>
+                  <FullscreenReaderView
+                    pdf={pdf}
+                    profile={profile}
+                    pageDims={pageDims}
+                    currentPageNumbers={currentPageNumbers}
+                    currentLabel={currentLabel}
+                    zoom={zoom}
+                    onPrev={fullscreenGoPrev}
+                    onNext={fullscreenGoNext}
+                  />
+                </div>
+              )}
+
+              {/* BookSpread/FlipEngine stay PERMANENTLY MOUNTED, even
+                  in fullscreen — hidden via visibility:hidden +
+                  position:absolute, never display:none. Unmounting
+                  FlipEngine (e.g. via display:none collapsing this box
+                  to 0×0, which trips FlipEngine's own
+                  leafBox.width<=0 -> return null early-exit) would
+                  destroy react-pageflip's internal widget; remounting
+                  it on exit resets to page 1 via FlipEngine's own
+                  hardcoded turnToPage(0)-on-mount effect and
+                  react-pageflip's own startPage={0} default — both of
+                  which this batch is explicitly not allowed to touch.
+                  Keeping it mounted-but-invisible-and-non-interactive
+                  is what actually preserves the page across fullscreen
+                  toggles without touching FlipEngine.tsx at all. */}
+              <div
+                style={
+                  isFullscreen
+                    ? {
+                        position: "absolute",
+                        inset: 0,
+                        visibility: "hidden",
+                        pointerEvents: "none",
+                      }
+                    : { width: "100%", height: "100%" }
+                }
+              >
+                <BookSpread
+                  ref={flipRef}
+                  layoutVersion={layoutVersion}
+                  pdf={pdf}
+                  profile={profile}
+                  pageDims={pageDims}
+                  zoom={zoom}
+                  onPageChange={handlePageChange}
+                  currentPageNumbers={currentPageNumbers}
+                  resolvedPages={resolvedPages}
+                  onSelectionChange={handleSelectionChange}
+                  selectionMode={selectionMode}
+                />
+              </div>
             </div>
             {selectionMenu && (
               <div
                 ref={selectionMenuRef}
                 style={{
                   position: "fixed",
-                  // Requirement D: prefer positioning BELOW the
-                  // selection (closer to natural reading flow, doesn't
-                  // creep up toward the toolbar). Only flip above if
-                  // there genuinely isn't room below in the viewport.
                   top:
                     selectionMenu.rect.bottom + 220 < window.innerHeight
-                      ? selectionMenu.rect.bottom + 8
-                      : Math.max(72, selectionMenu.rect.top - 8 - 200),
+                      ? selectionMenu.rect.bottom + 24
+                      : Math.max(72, selectionMenu.rect.top - 24 - 200),
                   left: Math.min(
                     Math.max(8, selectionMenu.rect.left),
                     window.innerWidth - 216
@@ -1183,7 +1339,7 @@ export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
               }}
             >
               <button
-                onClick={goPrevious}
+                onClick={isFullscreen ? fullscreenGoPrev : goPrevious}
                 disabled={!isReady || isAtStart}
                 style={{
                   padding: "10px 20px",
@@ -1213,7 +1369,7 @@ export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
               </span>
 
               <button
-                onClick={goNext}
+                onClick={isFullscreen ? fullscreenGoNext : goNext}
                 disabled={!isReady || isAtEnd}
                 style={{
                   padding: "10px 20px",
@@ -1239,6 +1395,8 @@ export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
           borderLeft: "1px solid #e3dcc9",
           background: "#fbf9f4",
           padding: 24,
+          width: 320,
+          height: "100vh",
           overflowY: "auto",
         }}
       >
@@ -1252,7 +1410,6 @@ export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
           Select text from the book or ask anything about page {currentLabel}.
         </p>
 
-        {/* ── Persistent Response Language selector ───────────────────── */}
         <div style={{ marginTop: 16 }}>
           <label
             style={{
@@ -1460,6 +1617,17 @@ export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
           />
         </div>
       </aside>
+
+      {/* Custom selection highlight — keeps highlighted text clearly
+          visible (gold/amber) regardless of the default browser
+          highlight color, which can be subtle against the cream
+          background used throughout this reader. */}
+      <style>{`
+        .ndl-book-stage ::selection {
+          background: rgba(154, 107, 47, 0.45);
+          color: inherit;
+        }
+      `}</style>
     </div>
   );
 }

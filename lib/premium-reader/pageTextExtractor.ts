@@ -58,6 +58,167 @@ export function cleanOcrText(raw: string): string {
   return cleanedLines.join(" ").replace(/\s+/g, " ").trim();
 }
 
+// ── AI-prompt-specific OCR noise filtering ────────────────────────────
+// cleanOcrText() above is intentionally light-touch — it runs once at
+// OCR time and its output gets CACHED and used for display/selection,
+// so it has to stay conservative to avoid ever corrupting what the
+// reader displays/highlights. cleanOcrTextForAi() below is a second,
+// much stronger pass applied ONLY right before building an AI prompt
+// (never cached, never affects display) — exactly the same
+// separation-of-concerns pattern as sanitizeForSpeech() further down
+// this file. It targets garbled OCR runs like:
+//   "A HA BEER EEE issn ao. mEEES (EE SEER pan: ANEEE IEE EEE E--- J 11148 LJ]"
+// — fragments that pass the lighter cleanOcrText() filter (they're
+// mostly letters, so letterRatio is fine) but are still unreadable
+// noise that an AI model will otherwise dutifully try to translate or
+// "explain".
+
+const REPEATED_LETTER_RUN = /([A-Za-z])\1{2,}/; // e.g. "EEE", "AAA", "III"
+const SYMBOL_BRACKET_CHARS = /[(){}[\]_~^|<>=+#*]/g;
+
+// Short tokens that are legitimately common in real sentences and
+// must never count against a line just for being short.
+const SAFE_SHORT_TOKENS = new Set([
+  "a", "i", "an", "as", "at", "be", "by", "ce", "bc", "ad", "in", "is",
+  "it", "of", "on", "or", "to", "up", "we", "he", "she", "no", "so",
+]);
+
+/**
+ * Scores a single segment (line or sentence-ish chunk) as likely OCR
+ * noise. Deliberately layered so that:
+ *  - Symbol/bracket density and isolated-short-token ratio are
+ *    language-agnostic and apply to ANY script (catches junk like
+ *    "J 11148 LJ]" regardless of language).
+ *  - Repeated-letter-run and uppercase-ratio checks are ASCII/Latin-
+ *    specific and are SKIPPED entirely for segments that aren't
+ *    predominantly Latin-script — this is what keeps Hindi/Indic text
+ *    safe from false positives, since Devanagari etc. characters
+ *    don't match /[A-Za-z]/ at all and would otherwise skew every
+ *    ratio in this function toward "looks like noise".
+ */
+function isLikelyOcrNoiseSegment(segment: string): boolean {
+  const trimmed = segment.trim();
+  if (trimmed.length === 0) return false;
+
+  // Pure numbers/dates (page numbers, years, "450 CE", "2014") are
+  // never noise on their own.
+  if (/^[0-9\s.,:;()-]+$/.test(trimmed)) return false;
+
+  const symbolCount = (trimmed.match(SYMBOL_BRACKET_CHARS) || []).length;
+  const symbolRatio = symbolCount / trimmed.length;
+  if (symbolRatio > 0.12) return true;
+
+  const tokens = trimmed.split(/\s+/).filter(Boolean);
+  if (tokens.length >= 3) {
+    const junkShortTokens = tokens.filter((token) => {
+      const alnum = token.replace(/[^\p{L}\p{N}]/gu, "");
+      if (alnum.length === 0) return true; // pure punctuation token
+      if (/^\d+$/.test(alnum)) return false; // numbers are fine
+      if (alnum.length > 2) return false;
+      return !SAFE_SHORT_TOKENS.has(alnum.toLowerCase());
+    });
+    const junkRatio = junkShortTokens.length / tokens.length;
+    if (junkRatio > 0.4) return true;
+  }
+
+  const asciiLetters = (trimmed.match(/[A-Za-z]/g) || []).length;
+  const isPredominantlyLatin = asciiLetters / trimmed.length >= 0.3;
+  if (!isPredominantlyLatin) {
+    // Likely Hindi/Indic (or otherwise non-Latin) content — the
+    // checks above already ran and are language-agnostic; stop here
+    // rather than applying ASCII-specific heuristics that would
+    // misfire on non-Latin scripts.
+    return false;
+  }
+
+  if (REPEATED_LETTER_RUN.test(trimmed)) return true;
+
+  const upperCount = (trimmed.match(/[A-Z]/g) || []).length;
+  const upperRatio = asciiLetters > 0 ? upperCount / asciiLetters : 0;
+  if (upperRatio > 0.7 && trimmed.length > 25) return true;
+
+  return false;
+}
+
+/** Splits text into scoring units: real newlines plus sentence-ish boundaries. */
+function splitIntoSegments(text: string): string[] {
+  return text
+    .split(/(?<=[.!?।])\s+|\r?\n+/)
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+}
+
+/** Strict pass: drops every segment scored as likely noise. */
+function stripNoiseSegments(text: string): string {
+  const segments = splitIntoSegments(text);
+  const kept = segments.filter((segment) => !isLikelyOcrNoiseSegment(segment));
+  return kept.join(" ").replace(/\s+/g, " ").trim();
+}
+
+/**
+ * Much gentler pass used only as a fallback when the strict pass
+ * above removed too much: drops only the most unambiguous junk
+ * (very high symbol density, or a long repeated-letter run), so a
+ * page that's borderline-unreadable still yields SOMETHING rather
+ * than an empty prompt.
+ */
+function conservativeTrim(text: string): string {
+  const segments = text
+    .split(/\r?\n+/)
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+
+  const kept = segments.filter((segment) => {
+    const symbolCount = (segment.match(SYMBOL_BRACKET_CHARS) || []).length;
+    const symbolRatio = symbolCount / segment.length;
+    if (symbolRatio > 0.25) return false;
+    if (REPEATED_LETTER_RUN.test(segment) && segment.length < 15) return false;
+    return true;
+  });
+
+  return kept.join(" ").replace(/\s+/g, " ").trim();
+}
+
+/**
+ * Strong, AI-prompt-specific OCR noise cleanup. Call this on any text
+ * (page text or a user selection) immediately before it goes into an
+ * AI prompt — never cache its output, never use it for display, since
+ * it intentionally drops more than cleanOcrText() does.
+ *
+ * Keeps: normal English sentences, Hindi/Indic text, numbers/dates
+ * that are part of a normal sentence (e.g. "450 CE", "2014").
+ * Removes: repeated-letter-run fragments (EEE/AAA/III style), long
+ * mostly-uppercase junk lines, bracket/symbol-heavy fragments, lines
+ * dominated by isolated 1-2 character tokens.
+ *
+ * Fallback: if the strict pass removes a large share of the text
+ * (and the text was non-trivially long to begin with — short, fully
+ * legitimate selections are never penalized just for being short),
+ * falls back to a much more conservative trim of the ORIGINAL text
+ * rather than risk sending the AI an empty or near-empty prompt.
+ */
+export function cleanOcrTextForAi(text: string): string {
+  if (!text) return "";
+
+  const original = text.trim();
+  if (original.length === 0) return "";
+
+  const cleaned = stripNoiseSegments(original);
+
+  if (cleaned.length === 0) {
+    const fallback = conservativeTrim(original);
+    return fallback.length > 0 ? fallback : original;
+  }
+
+  const removedRatio = 1 - cleaned.length / original.length;
+  if (removedRatio > 0.7 && original.length > 40) {
+    const fallback = conservativeTrim(original);
+    return fallback.length > 0 ? fallback : original;
+  }
+
+  return cleaned;
+}
+
 /**
  * Extracts selectable text directly from the PDF page via pdf.js's
  * own text layer (page.getTextContent()). Fast, no rendering required.
