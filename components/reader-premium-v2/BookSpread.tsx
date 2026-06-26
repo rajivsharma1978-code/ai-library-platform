@@ -38,8 +38,6 @@ interface BookSpreadProps {
 
 export type BookSpreadHandle = FlipEngineHandle;
 
-const FRAME_PADDING = 32;
-
 /**
  * Two independent half-page selection overlays, rendered as plain
  * siblings of <FlipEngine> (not through its renderSelectionLayer
@@ -84,6 +82,12 @@ const BookSpread = forwardRef<BookSpreadHandle, BookSpreadProps>(
     const containerRef = useRef<HTMLDivElement | null>(null);
     const [availSize, setAvailSize] = useState({ width: 0, height: 0 });
 
+    // zoom is accepted for prop-interface compatibility with
+    // PremiumReaderV2's existing zoom controls, but is intentionally
+    // not applied here anymore (no CSS transform/scale) — per the
+    // fit-contain-only sizing approach now used throughout.
+    void zoom;
+
     const overlayContainerRef = useRef<HTMLDivElement | null>(null);
     const leftLayerRef = useRef<HTMLDivElement | null>(null);
     const rightLayerRef = useRef<HTMLDivElement | null>(null);
@@ -97,24 +101,52 @@ const BookSpread = forwardRef<BookSpreadHandle, BookSpreadProps>(
 
     // Forces a fresh re-measurement whenever fullscreen state changes
     // (layoutVersion bumps on every isFullscreen flip in
-    // PremiumReaderV2). This is purely a re-measure, NOT a remount —
+    // PremiumReaderV2). This is purely a re-measure, NEVER a remount —
     // containerRef/availSize/FlipEngine's own mounted instance are all
     // untouched; only the measured width/height get refreshed.
+    //
+    // Measures on a cascade (immediately, next animation frame, then
+    // at 50ms/150ms/300ms) rather than a single fixed delay, plus
+    // listens for the browser's own fullscreenchange and window resize
+    // events directly — covers cases where the CSS grid's column/row
+    // transition settles at a slightly different time than any single
+    // fixed timeout would predict (varies by browser/OS fullscreen
+    // transition timing). Uses getBoundingClientRect() rather than
+    // clientWidth/clientHeight for the measurement itself, which is
+    // what the diagnosis specifically called for.
     useEffect(() => {
       const el = containerRef.current;
       if (!el) return;
 
-      setAvailSize({ width: el.clientWidth, height: el.clientHeight });
+      function measure() {
+        const node = containerRef.current;
+        if (!node) return;
+        const rect = node.getBoundingClientRect();
+        setAvailSize({ width: rect.width, height: rect.height });
+      }
 
-      const timeoutId = window.setTimeout(() => {
-        setAvailSize({ width: el.clientWidth, height: el.clientHeight });
-      }, 240);
+      measure();
+      const rafId = requestAnimationFrame(measure);
+      const timeoutIds = [50, 150, 300].map((delay) => window.setTimeout(measure, delay));
 
-      return () => window.clearTimeout(timeoutId);
+      document.addEventListener("fullscreenchange", measure);
+      window.addEventListener("resize", measure);
+
+      return () => {
+        cancelAnimationFrame(rafId);
+        timeoutIds.forEach((id) => window.clearTimeout(id));
+        document.removeEventListener("fullscreenchange", measure);
+        window.removeEventListener("resize", measure);
+      };
     }, [layoutVersion]);
 
-    const innerW = Math.max(availSize.width - FRAME_PADDING * 2, 0);
-    const innerH = Math.max(availSize.height - FRAME_PADDING * 2, 0);
+    // Passes the actual measured container size directly to
+    // FlipEngine — no FRAME_PADDING subtraction, no fullscreen-
+    // specific adjustment. FlipEngine's own SAFETY_MARGIN (see
+    // FlipEngine.tsx) is now solely responsible for keeping the
+    // rendered spread comfortably inside this size.
+    const innerW = Math.max(Math.floor(availSize.width), 1);
+    const innerH = Math.max(Math.floor(availSize.height), 1);
 
     useEffect(() => {
       if (selectionMode === "page-turn") {
@@ -123,10 +155,23 @@ const BookSpread = forwardRef<BookSpreadHandle, BookSpreadProps>(
       }
     }, [selectionMode, onSelectionChange]);
 
+    // Explicitly clears any in-progress browser selection whenever
+    // selectionMode changes OR layoutVersion changes (i.e. on every
+    // fullscreen transition). A stale Range anchored to a
+    // SelectionLayer that has since been resized/repositioned (e.g.
+    // by a fullscreen toggle) is exactly what produced the long,
+    // misaligned horizontal highlight bars — clearing it here removes
+    // that stale Range outright rather than relying on it to resolve
+    // itself.
+    useEffect(() => {
+      document.getSelection()?.removeAllRanges();
+    }, [selectionMode, layoutVersion]);
+
     // Reset both halves to fully selectable whenever we enter Text
-    // Selection Mode or the visible page numbers change — guarantees
-    // the cursor is immediately selectable on both sides with no
-    // stale "disabled" state left over from a previous page/gesture.
+    // Selection Mode, the visible page numbers change, OR a fullscreen
+    // transition happens (layoutVersion) — guarantees the cursor is
+    // immediately selectable on both sides with no stale "disabled"
+    // state left over from a previous page/gesture/fullscreen toggle.
     useEffect(() => {
       if (selectionMode !== "text-selection") return;
       const left = leftLayerRef.current;
@@ -142,7 +187,7 @@ const BookSpread = forwardRef<BookSpreadHandle, BookSpreadProps>(
         right.style.pointerEvents = "auto";
       }
       // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [selectionMode, currentPageNumbers.join(",")]);
+    }, [selectionMode, currentPageNumbers.join(","), layoutVersion]);
 
     useEffect(() => {
       if (selectionMode !== "text-selection") return;
@@ -228,66 +273,79 @@ const BookSpread = forwardRef<BookSpreadHandle, BookSpreadProps>(
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
-            transform: `scale(${zoom / 100})`,
-            transformOrigin: "center center",
-            transition: "transform 160ms ease",
             position: "relative",
+            overflow: "hidden",
           }}
         >
-          <div
-            style={{
-              // FlipEngine must not receive pointer events at all while
-              // in Text Selection Mode, so a page-flip drag can never
-              // start while the user is trying to select text. The
-              // overlay container below is a SIBLING of this div, so
-              // it is unaffected.
-              pointerEvents: selectionMode === "text-selection" ? "none" : "auto",
-            }}
-          >
-            <FlipEngine
-              ref={ref}
-              pdf={pdf}
-              profile={profile}
-              pageDims={pageDims}
-              stageWidth={innerW}
-              stageHeight={innerH}
-              onPageChange={onPageChange}
-            />
-          </div>
-
-          {selectionMode === "text-selection" && leftPageNumber !== undefined && (
+          {/*
+            BOOK-SIZED WRAPPER — preserves the SelectionLayer overlay-
+            alignment fix (untouched per "do not touch selection
+            popup"): this wrapper uses width/height:"fit-content", so
+            it sizes itself to EXACTLY match FlipEngine's actual
+            rendered box (FlipEngine is its only sized child) — never
+            bigger than innerW/innerH, since FlipEngine's own leafBox
+            calculation is bounded by its own SAFETY_MARGIN to fit
+            within stageWidth/stageHeight. The overlay below is
+            100%/100% of THIS wrapper, so it stays clipped to the real
+            book area only, not the larger outer stage.
+          */}
+          <div style={{ width: "fit-content", height: "fit-content", position: "relative", zIndex: 10 }}>
             <div
-              ref={overlayContainerRef}
               style={{
-                position: "absolute",
-                top: 0,
-                left: 0,
-                width: "100%",
-                height: "100%",
+                // FlipEngine must not receive pointer events at all while
+                // in Text Selection Mode, so a page-flip drag can never
+                // start while the user is trying to select text. The
+                // overlay container below is a SIBLING of this div, so
+                // it is unaffected.
+                pointerEvents: selectionMode === "text-selection" ? "none" : "auto",
               }}
             >
-              <SelectionLayer
-                ref={leftLayerRef}
-                pageNumber={leftPageNumber}
-                text={leftText}
-                left={0}
-                width="50%"
-                height="100%"
-                onSelection={onSelectionChange ?? (() => {})}
+              <FlipEngine
+                ref={ref}
+                pdf={pdf}
+                profile={profile}
+                pageDims={pageDims}
+                stageWidth={innerW}
+                stageHeight={innerH}
+                onPageChange={onPageChange}
               />
-              {rightPageNumber !== undefined && (
+            </div>
+
+            {selectionMode === "text-selection" && leftPageNumber !== undefined && (
+              <div
+                ref={overlayContainerRef}
+                style={{
+                  position: "absolute",
+                  top: 0,
+                  left: 0,
+                  width: "100%",
+                  height: "100%",
+                  zIndex: 20,
+                }}
+              >
                 <SelectionLayer
-                  ref={rightLayerRef}
-                  pageNumber={rightPageNumber}
-                  text={rightText}
-                  left="50%"
+                  ref={leftLayerRef}
+                  pageNumber={leftPageNumber}
+                  text={leftText}
+                  left={0}
                   width="50%"
                   height="100%"
                   onSelection={onSelectionChange ?? (() => {})}
                 />
-              )}
-            </div>
-          )}
+                {rightPageNumber !== undefined && (
+                  <SelectionLayer
+                    ref={rightLayerRef}
+                    pageNumber={rightPageNumber}
+                    text={rightText}
+                    left="50%"
+                    width="50%"
+                    height="100%"
+                    onSelection={onSelectionChange ?? (() => {})}
+                  />
+                )}
+              </div>
+            )}
+          </div>
         </div>
       </div>
     );

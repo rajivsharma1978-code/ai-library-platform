@@ -80,11 +80,40 @@ export default function FullscreenReaderView({
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [containerSize, setContainerSize] = useState({ width: 0, height: 0 });
 
+  // Same robust re-measurement cascade as BookSpread.tsx's
+  // layoutVersion effect: a single ResizeObserver callback can lag
+  // behind the outer grid's column/row CSS transition settling,
+  // especially right after a fullscreen toggle. Measuring on a
+  // cascade (immediately, next animation frame, then at staggered
+  // delays) plus listening to fullscreenchange/resize directly closes
+  // that gap without ever remounting this component or its parent.
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
-    setContainerSize({ width: el.clientWidth, height: el.clientHeight });
-    return observeSize(el, setContainerSize);
+
+    function measure() {
+      const node = containerRef.current;
+      if (!node) return;
+      const rect = node.getBoundingClientRect();
+      setContainerSize({ width: rect.width, height: rect.height });
+    }
+
+    measure();
+    const rafId = requestAnimationFrame(measure);
+    const timeoutIds = [50, 150, 300].map((delay) => window.setTimeout(measure, delay));
+
+    document.addEventListener("fullscreenchange", measure);
+    window.addEventListener("resize", measure);
+
+    const cleanupObserver = observeSize(el, (size) => setContainerSize(size));
+
+    return () => {
+      cancelAnimationFrame(rafId);
+      timeoutIds.forEach((id) => window.clearTimeout(id));
+      document.removeEventListener("fullscreenchange", measure);
+      window.removeEventListener("resize", measure);
+      cleanupObserver?.();
+    };
   }, []);
 
   // onPrev/onNext are accepted per the component contract (so a future

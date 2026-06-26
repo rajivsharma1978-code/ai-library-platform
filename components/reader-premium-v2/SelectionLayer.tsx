@@ -66,14 +66,30 @@ const SelectionLayer = forwardRef<HTMLDivElement, SelectionLayerProps>(function 
     const layer = layerRef.current;
     if (!layer) return;
 
+    // Truly empty/collapsed selection — safe for either layer's
+    // handler to report this; both will agree, no race.
     if (!selection || selection.isCollapsed || selection.rangeCount === 0) {
       onSelection(null);
       return;
     }
 
     const anchorNode = selection.anchorNode;
+
+    // If the selection isn't anchored inside THIS layer, do NOTHING —
+    // do not call onSelection(null) here. `selectionchange` is a
+    // single document-level event, so BOTH the left and right
+    // SelectionLayer instances' handlers fire for every selection,
+    // regardless of which page it was actually made in. The previous
+    // version called onSelection(null) unconditionally whenever the
+    // anchor wasn't in ITS OWN layer — which meant whichever layer's
+    // handler happened to run SECOND would always null out whatever
+    // the correct layer had just reported the instant before. That
+    // was registration-order-dependent (right-page selection worked
+    // only because the right layer was registered after the left
+    // one), and is exactly what made left-page selections never show
+    // a popup. Returning early here instead lets whichever layer
+    // actually contains the selection be the one that reports it.
     if (!anchorNode || !layer.contains(anchorNode)) {
-      onSelection(null);
       return;
     }
 
@@ -128,7 +144,7 @@ const SelectionLayer = forwardRef<HTMLDivElement, SelectionLayerProps>(function 
           overflowWrap: "break-word",
           boxSizing: "border-box",
           pointerEvents: "auto",
-          zIndex: 9999,
+          zIndex: 20,
           background: "transparent",
         }}
       >

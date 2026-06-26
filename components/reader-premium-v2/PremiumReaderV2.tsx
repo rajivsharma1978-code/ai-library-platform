@@ -5,8 +5,6 @@ import type { SpeechState } from "./ReaderToolbar";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import type { BookProfile } from "@/lib/premium-reader/bookProfile";
-import { getDisplayLabel } from "@/lib/premium-reader/bookProfile";
-import FullscreenReaderView from "./FullscreenReaderView";
 import {
   getRealPageDims,
   type RealPageDims,
@@ -193,19 +191,13 @@ export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
   const [isImmersiveMode, setIsImmersiveMode] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
 
-  // Bumped every time isFullscreen changes (enter AND exit). This is
-  // passed to BookSpread as a plain prop — NOT a key — so it never
-  // remounts BookSpread/FlipEngine (which would reset the current
-  // page). Instead BookSpread uses it purely as an effect dependency
-  // to force a fresh container re-measurement after the grid layout
-  // has actually changed size, since the layout change here happens
-  // a tick after isFullscreen flips and a passive ResizeObserver can
-  // occasionally miss/lag behind that specific transition.
+  // Bumped on every real fullscreenchange event (see the listener
+  // below). Passed to BookSpread as a plain prop — NEVER a key — so it
+  // never remounts BookSpread/FlipEngine (which would reset the
+  // current page via FlipEngine's own hardcoded turnToPage(0)-on-mount
+  // effect). It exists purely so BookSpread can re-measure its
+  // container after the grid layout has actually changed size.
   const [layoutVersion, setLayoutVersion] = useState(0);
-
-  useEffect(() => {
-    setLayoutVersion((v) => v + 1);
-  }, [isFullscreen]);
 
   // Ref to the outer reader workspace container — the element actually
   // passed to requestFullscreen(). Fullscreening THIS element (not
@@ -219,6 +211,12 @@ export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
   const currentSpeechIndexRef = useRef(0);
   const speechLocaleRef = useRef("en-IN");
   const speechStateRef = useRef<SpeechState>("idle");
+  // Set when Read Aloud is clicked for a whole-page read but not every
+  // currently visible page's text has resolved yet (OCR/extraction
+  // still in flight). A separate effect watches resolvedPages and
+  // picks up the REAL chunked read the moment all visible pages are
+  // ready — the click itself never blocks on OCR.
+  const pendingPageReadRef = useRef<{ pageNumbers: number[]; language: string } | null>(null);
 
   useEffect(() => {
     speechStateRef.current = speechState;
@@ -252,6 +250,7 @@ export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
 
   const flipRef = useRef<BookSpreadHandle>(null);
   const bookWrapperRef = useRef<HTMLDivElement | null>(null);
+  const centerColumnRef = useRef<HTMLDivElement | null>(null);
 
   function clearAiResult() {
     setAiOutput("");
@@ -281,15 +280,39 @@ export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
     };
   }, []);
 
-  // Authoritative sync point: whenever the browser's actual fullscreen
-  // state changes — via the ⛶ button, ESC, or any other means — this
-  // fires and updates both isFullscreen and isImmersiveMode together.
-  // This is what makes ESC correctly restore the normal layout.
+  // SINGLE authoritative fullscreenchange listener in this file —
+  // whenever the browser's actual fullscreen state changes (via the
+  // ⛶ button, ESC, or any other means), this fires. On EXIT
+  // specifically: clears any in-progress browser selection, resets
+  // selectionMode to "page-turn", resets zoom to 100, and resets the
+  // root container's and center column's scroll position to 0,0.
+  // layoutVersion bumps at 0ms / next animation frame / +150ms so
+  // BookSpread re-measures its (now correctly sized) container. Never
+  // remounts BookSpread, never resets the current page.
   useEffect(() => {
     function handleFullscreenChange() {
       const active = Boolean(document.fullscreenElement);
       setIsFullscreen(active);
       setIsImmersiveMode(active);
+
+      if (!active) {
+        document.getSelection()?.removeAllRanges();
+        setSelectionMode("page-turn");
+        setZoom(100);
+
+        if (readerContainerRef.current) {
+          readerContainerRef.current.scrollTop = 0;
+          readerContainerRef.current.scrollLeft = 0;
+        }
+        if (centerColumnRef.current) {
+          centerColumnRef.current.scrollTop = 0;
+          centerColumnRef.current.scrollLeft = 0;
+        }
+      }
+
+      setLayoutVersion((v) => v + 1);
+      requestAnimationFrame(() => setLayoutVersion((v) => v + 1));
+      window.setTimeout(() => setLayoutVersion((v) => v + 1), 150);
     }
 
     document.addEventListener("fullscreenchange", handleFullscreenChange);
@@ -371,6 +394,7 @@ export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
     }
     speechQueueRef.current = [];
     currentSpeechIndexRef.current = 0;
+    pendingPageReadRef.current = null;
     setSpeechState("idle");
 
     aiRequestIdRef.current += 1;
@@ -467,54 +491,6 @@ export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
     flipRef.current?.flipPrev();
   }, []);
 
-  // Fullscreen-specific navigation: FullscreenReaderView has no
-  // FlipEngine handle to call flipNext()/flipPrev() on, so these
-  // directly advance currentPageNumbers/currentLabel by the same
-  // number of pages currently visible (1 or 2), clamped to
-  // [1, totalPages]. This is a deliberately SIMPLIFIED approximation
-  // of FlipEngine's own pairing logic (front-matter/landscape-page
-  // detection in handleFlip) — appropriate for this minimal fullscreen
-  // view, not a full reimplementation of that logic.
-  const fullscreenGoNext = useCallback(() => {
-    setCurrentPageNumbers((prev) => {
-      const step = prev.length || 1;
-      const lastVisible = prev[prev.length - 1] ?? 1;
-      const nextStart = Math.min(lastVisible + 1, profile.totalPages);
-      const nextNumbers =
-        step === 2 && nextStart < profile.totalPages
-          ? [nextStart, nextStart + 1]
-          : [nextStart];
-
-      const label =
-        nextNumbers.length === 2
-          ? `${getDisplayLabel(profile, nextNumbers[0])}–${getDisplayLabel(profile, nextNumbers[1])}`
-          : getDisplayLabel(profile, nextNumbers[0]);
-      setCurrentLabel(label);
-
-      return nextNumbers;
-    });
-  }, [profile]);
-
-  const fullscreenGoPrev = useCallback(() => {
-    setCurrentPageNumbers((prev) => {
-      const step = prev.length || 1;
-      const firstVisible = prev[0] ?? 1;
-      const prevStart = Math.max(firstVisible - step, 1);
-      const prevNumbers =
-        step === 2 && prevStart + 1 < firstVisible
-          ? [prevStart, Math.min(prevStart + 1, profile.totalPages)]
-          : [prevStart];
-
-      const label =
-        prevNumbers.length === 2
-          ? `${getDisplayLabel(profile, prevNumbers[0])}–${getDisplayLabel(profile, prevNumbers[1])}`
-          : getDisplayLabel(profile, prevNumbers[0]);
-      setCurrentLabel(label);
-
-      return prevNumbers;
-    });
-  }, [profile]);
-
   function zoomIn() {
     setZoom((current) => Math.min(current + 10, 160));
   }
@@ -600,11 +576,21 @@ export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
       };
     }
 
-    const targetPageNumber = currentPageNumbers[0];
-    const targetPage = resolvedPages.find((p) => p.pageNumber === targetPageNumber);
-    const rawText = targetPage?.text?.trim() ?? "";
-    // Same OCR-only gating for whole-page Read Aloud.
-    const text = targetPage?.source === "ocr" ? cleanOcrTextForAi(rawText) : rawText;
+    // Reads EVERY currently visible page, in strict order — left page
+    // text fully, then right page text fully. currentPageNumbers is
+    // already ordered left-to-right by FlipEngine's own pairing logic
+    // (handleFlip), so this just walks it directly; it does NOT merge
+    // text by any DOM/text-layer order, and does NOT read only the
+    // first visible page (which is what the previous version did).
+    const orderedPageTexts = currentPageNumbers
+      .map((pageNumber) => {
+        const page = resolvedPages.find((p) => p.pageNumber === pageNumber);
+        const rawText = page?.text?.trim() ?? "";
+        return page?.source === "ocr" ? cleanOcrTextForAi(rawText) : rawText;
+      })
+      .filter((text) => text.length > 0);
+
+    const text = orderedPageTexts.join(" ");
 
     return {
       text,
@@ -620,6 +606,12 @@ export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
     const index = currentSpeechIndexRef.current;
 
     if (index >= queue.length) {
+      // If a real page-text read is still pending (the short
+      // "Preparing page text..." utterance just finished, but
+      // resolvedPages hasn't caught up yet), stay in "playing" state
+      // silently rather than flipping to idle — the watcher effect
+      // below takes over the instant resolvedPages is ready.
+      if (pendingPageReadRef.current) return;
       setSpeechState("idle");
       return;
     }
@@ -697,6 +689,73 @@ export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
     });
   }
 
+  // Builds speech chunks for EVERY page in pageNumbers, in strict
+  // order — each page's text is sanitized and chunked COMPLETELY
+  // INDEPENDENTLY (never merged with another page's text before
+  // chunking), then each page's full chunk list is concatenated after
+  // the previous page's. This guarantees page 2's entire chunk list
+  // always finishes before page 3's first chunk begins — no
+  // line-by-line interleaving, no merged first lines, regardless of
+  // internal line breaks in either page's source text.
+  function buildOrderedPageChunks(pageNumbers: number[]): string[] {
+    const allChunks: string[] = [];
+
+    for (const pageNumber of pageNumbers) {
+      const page = resolvedPages.find((p) => p.pageNumber === pageNumber);
+      const rawText = page?.text?.trim() ?? "";
+      const cleanedText = page?.source === "ocr" ? cleanOcrTextForAi(rawText) : rawText;
+
+      if (cleanedText.length === 0) continue;
+
+      const sanitized = sanitizeForSpeech(cleanedText);
+      const chunks = createSpeechChunks(sanitized);
+
+      const pageSpecificChunks: string[] =
+        chunks.length > 0
+          ? chunks.map((chunk, index) =>
+              (index === 0 ? `Page ${pageNumber}. ${chunk}` : chunk).slice(0, 4000)
+            )
+          : [`Page ${pageNumber}. ${sanitized}`.slice(0, 4000)];
+
+      allChunks.push(...pageSpecificChunks);
+    }
+
+    return allChunks;
+  }
+
+  // Picks up a pending whole-page Read Aloud request the instant
+  // resolvedPages actually contains every page that was visible when
+  // Read was clicked. Guards against the user having navigated away
+  // or stopped reading in the meantime via the speechStateRef check —
+  // the existing page-change cleanup effect already flips speechState
+  // to "idle" on navigation, so this simply won't proceed in that case.
+  useEffect(() => {
+    const pending = pendingPageReadRef.current;
+    if (!pending) return;
+
+    const allReady = pending.pageNumbers.every((pn) =>
+      resolvedPages.some((p) => p.pageNumber === pn)
+    );
+    if (!allReady) return;
+
+    pendingPageReadRef.current = null;
+
+    if (speechStateRef.current !== "playing") return;
+
+    const pageChunks = buildOrderedPageChunks(pending.pageNumbers);
+
+    if (pageChunks.length === 0) {
+      window.speechSynthesis.cancel();
+      setVoiceUnavailableNotice("No readable text is available.");
+      setSpeechState("idle");
+      return;
+    }
+
+    window.speechSynthesis.cancel();
+    startSpeechQueue(pageChunks, pending.language);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resolvedPages]);
+
   function handleReadAloudToggle() {
     if (typeof window === "undefined") return;
     const synth = window.speechSynthesis;
@@ -714,7 +773,38 @@ export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
     }
 
     synth.cancel();
+    pendingPageReadRef.current = null;
     setVoiceUnavailableNotice("");
+
+    const hasAiOutputToRead = Boolean(
+      aiOutputKind && aiOutput.trim().length > 0 && aiOutputLanguage
+    );
+    const hasSelectionToRead = Boolean(selectionMenu && selectionMenu.text.trim().length > 0);
+
+    // Whole-visible-page read (no AI output, no active selection):
+    // check FIRST whether every currently visible page's text has
+    // actually resolved. If not, getReadAloudPayload()'s text could be
+    // silently STALE — leftover text from the PREVIOUS page, since
+    // resolvedPages hasn't been replaced yet — rather than just empty,
+    // which would otherwise start reading the wrong page's content.
+    // This speaks an immediate, non-blocking "Preparing page text..."
+    // utterance and returns right away; the watcher effect above picks
+    // up the real per-page chunks once resolvedPages actually catches
+    // up. The click itself never waits on OCR.
+    if (!hasAiOutputToRead && !hasSelectionToRead) {
+      const allPagesReady = currentPageNumbers.every((pn) =>
+        resolvedPages.some((p) => p.pageNumber === pn)
+      );
+
+      if (!allPagesReady) {
+        pendingPageReadRef.current = {
+          pageNumbers: currentPageNumbers,
+          language: getSpeechLanguage("English"),
+        };
+        startSpeechQueue(["Preparing page text..."], getSpeechLanguage("English"));
+        return;
+      }
+    }
 
     const payload = getReadAloudPayload();
 
@@ -760,25 +850,38 @@ export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
       return;
     }
 
-    const targetPageNumber =
-      selectionMenu && selectionMenu.text.trim().length > 0
-        ? (selectionSourcePage ?? currentPageNumbers[0])
-        : currentPageNumbers[0];
+    if (hasSelectionToRead) {
+      const targetPageNumber = selectionSourcePage ?? currentPageNumbers[0];
 
-    const rawBody =
-      payload.text.trim().length > 0
-        ? payload.text
-        : "This page does not contain any readable text.";
+      const rawBody =
+        payload.text.trim().length > 0
+          ? payload.text
+          : "This page does not contain any readable text.";
 
-    const sanitizedBody = sanitizeForSpeech(rawBody);
-    const chunks = createSpeechChunks(sanitizedBody);
+      const sanitizedBody = sanitizeForSpeech(rawBody);
+      const chunks = createSpeechChunks(sanitizedBody);
 
-    const pageChunks: string[] =
-      chunks.length > 0
-        ? chunks.map((chunk, index) =>
-            (index === 0 ? `Page ${targetPageNumber}. ${chunk}` : chunk).slice(0, 4000)
-          )
-        : [`Page ${targetPageNumber}. ${sanitizedBody}`.slice(0, 4000)];
+      const pageChunks: string[] =
+        chunks.length > 0
+          ? chunks.map((chunk, index) =>
+              (index === 0 ? `Page ${targetPageNumber}. ${chunk}` : chunk).slice(0, 4000)
+            )
+          : [`Page ${targetPageNumber}. ${sanitizedBody}`.slice(0, 4000)];
+
+      startSpeechQueue(pageChunks, payload.language);
+      return;
+    }
+
+    // Whole visible page(s): build chunks PER PAGE, fully
+    // independently, then concatenate in order — page 2's complete
+    // chunk list always finishes entirely before page 3's begins.
+    const pageChunks = buildOrderedPageChunks(currentPageNumbers);
+
+    if (pageChunks.length === 0) {
+      setVoiceUnavailableNotice("No readable text is available.");
+      setSpeechState("idle");
+      return;
+    }
 
     startSpeechQueue(pageChunks, payload.language);
   }
@@ -788,6 +891,7 @@ export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
     window.speechSynthesis.cancel();
     speechQueueRef.current = [];
     currentSpeechIndexRef.current = 0;
+    pendingPageReadRef.current = null;
     speechStateRef.current = "idle";
     setSpeechState("idle");
   }
@@ -802,7 +906,11 @@ export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
   // whole tab. Sets isFullscreen/isImmersiveMode optimistically on
   // success; the fullscreenchange listener above remains the
   // authoritative sync point for whatever the browser's real state
-  // ends up being (including ESC).
+  // ends up being (including ESC) — that listener handles the EXIT
+  // side fully. This handler additionally does the ENTER-side
+  // cleanup synchronously and immediately (zoom reset, clear
+  // selection, layoutVersion bump) rather than waiting on the async
+  // fullscreenchange event for that feedback.
   async function enterFullscreen() {
     const el = readerContainerRef.current;
     if (!el) return;
@@ -812,6 +920,9 @@ export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
         await el.requestFullscreen();
         setIsFullscreen(true);
         setIsImmersiveMode(true);
+        setZoom(100);
+        document.getSelection()?.removeAllRanges();
+        setLayoutVersion((v) => v + 1);
       } else {
         await document.exitFullscreen();
         setIsFullscreen(false);
@@ -888,6 +999,19 @@ export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
     []
   );
 
+  // Clears the popup, its source page, and any in-progress browser
+  // selection on EVERY fullscreen transition — including ENTER, not
+  // just exit. The authoritative fullscreenchange listener itself
+  // (below) only force-resets selectionMode on exit, per the exact
+  // spec for that handler — this is a separate, additive effect that
+  // covers the broader "clear on fullscreen enter or exit" requirement
+  // without changing that handler's own literal logic.
+  useEffect(() => {
+    setSelectionMenu(null);
+    setSelectionSourcePage(null);
+    document.getSelection()?.removeAllRanges();
+  }, [isFullscreen]);
+
   useEffect(() => {
     if (!selectionMenu) return;
 
@@ -904,11 +1028,14 @@ export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
     };
   }, [selectionMenu]);
 
+  // Clears the popup, its source page, and any in-progress browser
+  // selection on EVERY selectionMode change (not just when switching
+  // back to page-turn) — per the explicit "clear on selection mode
+  // change" requirement.
   useEffect(() => {
-    if (selectionMode === "page-turn") {
-      setSelectionMenu(null);
-      setSelectionSourcePage(null);
-    }
+    setSelectionMenu(null);
+    setSelectionSourcePage(null);
+    document.getSelection()?.removeAllRanges();
   }, [selectionMode]);
 
   async function handleSelectionAction(kind: SelectionActionKind) {
@@ -1011,7 +1138,7 @@ export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
 
   // Left panel collapses when zoomed in, in Text Selection Mode, OR in
   // Immersive Mode/Fullscreen.
-  const isLeftPanelCollapsed = zoom > 100 || selectionMode === "text-selection" || isImmersiveMode;
+  const isLeftPanelCollapsed = isImmersiveMode;
 
   // Right (AI Companion) panel NEVER collapses, including in
   // Fullscreen — it must stay visible per spec. Fullscreen instead
@@ -1024,16 +1151,14 @@ export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
     <div
       ref={readerContainerRef}
       style={{
+        height: "100vh",
+        width: "100%",
+        overflow: "hidden",
         display: "grid",
         gridTemplateColumns: isImmersiveMode
           ? "minmax(0, 1fr) 320px"
-          : `${isLeftPanelCollapsed ? "0px" : "280px"} 1fr 320px`,
-        height: "100vh",
-        width: isFullscreen ? "100vw" : undefined,
-        maxHeight: "100vh",
-        overflow: "hidden",
-        background: isFullscreen ? "#f5efe5" : "#f4efe6",
-        transition: "grid-template-columns 200ms ease",
+          : `280px minmax(0, 1fr) 320px`,
+        background: "#f4efe6",
       }}
     >
       {!isImmersiveMode && (
@@ -1081,31 +1206,16 @@ export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
       )}
 
       <main
-        style={
-          isImmersiveMode
-            ? {
-                height: "100vh",
-                width: "100%",
-                overflow: "hidden",
-                display: "grid",
-                gridTemplateRows: "auto auto minmax(0, 1fr) auto",
-                alignItems: "center",
-                justifyItems: "center",
-                padding: "16px 24px",
-                position: "relative",
-                minWidth: 0,
-              }
-            : {
-                display: "flex",
-                flexDirection: "column",
-                alignItems: "center",
-                justifyContent: "center",
-                padding: 24,
-                position: "relative",
-                minWidth: 0,
-                overflow: zoom > 100 ? "auto" : "visible",
-              }
-        }
+        ref={centerColumnRef}
+        style={{
+          height: "100%",
+          minWidth: 0,
+          minHeight: 0,
+          overflow: "hidden",
+          display: "flex",
+          flexDirection: "column",
+          position: "relative",
+        }}
       >
         {loadError && (
           <div style={{ textAlign: "center", color: "#8a6b3f" }}>
@@ -1116,7 +1226,25 @@ export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
 
         {!loadError && (
           <>
-            <div style={{ width: "100%", display: "flex", flexDirection: "column", alignItems: "center" }}>
+            {/* reader-top-controls: toolbar + immersive notice + mode
+                toggle, all grouped into ONE fixed-height row so the
+                book-viewport row below only ever has to share space
+                with this single block, not four separate competing
+                top-level children. */}
+            <div
+              style={{
+                flex: "0 0 auto",
+                height: "auto",
+                padding: "12px 0 8px",
+                position: "relative",
+                zIndex: 50,
+                pointerEvents: "auto",
+                width: "100%",
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "center",
+              }}
+            >
               <ReaderToolbar
                 zoom={zoom}
                 onZoomIn={zoomIn}
@@ -1141,128 +1269,87 @@ export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
                   Immersive mode on — press ⛶ again or Esc to restore the side panel.
                 </p>
               )}
+
+              <div
+                style={{
+                  display: "flex",
+                  gap: 6,
+                  marginBottom: 12,
+                  background: "#fff",
+                  border: "1px solid #e3dcc9",
+                  borderRadius: 999,
+                  padding: 4,
+                  width: "fit-content",
+                }}
+              >
+                {(
+                  [
+                    { mode: "page-turn" as SelectionMode, label: "Page Turn Mode" },
+                    { mode: "text-selection" as SelectionMode, label: "Text Selection Mode" },
+                  ]
+                ).map(({ mode, label }) => (
+                  <button
+                    key={mode}
+                    onClick={() => setSelectionMode(mode)}
+                    style={{
+                      padding: "6px 14px",
+                      borderRadius: 999,
+                      border: "none",
+                      background: selectionMode === mode ? "#9a6b2f" : "transparent",
+                      color: selectionMode === mode ? "#fff" : "#6b5d42",
+                      fontSize: 12,
+                      fontWeight: 700,
+                      cursor: "pointer",
+                    }}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
             </div>
 
-            <div
-              style={{
-                display: "flex",
-                gap: 6,
-                marginBottom: 12,
-                background: "#fff",
-                border: "1px solid #e3dcc9",
-                borderRadius: 999,
-                padding: 4,
-                width: "fit-content",
-              }}
-            >
-              {(
-                [
-                  { mode: "page-turn" as SelectionMode, label: "Page Turn Mode" },
-                  { mode: "text-selection" as SelectionMode, label: "Text Selection Mode" },
-                ]
-              ).map(({ mode, label }) => (
-                <button
-                  key={mode}
-                  onClick={() => setSelectionMode(mode)}
-                  style={{
-                    padding: "6px 14px",
-                    borderRadius: 999,
-                    border: "none",
-                    background: selectionMode === mode ? "#9a6b2f" : "transparent",
-                    color: selectionMode === mode ? "#fff" : "#6b5d42",
-                    fontSize: 12,
-                    fontWeight: 700,
-                    cursor: "pointer",
-                  }}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-
+            {/* reader-book-viewport: the ONLY row BookSpread ever
+                receives size from. Plain flex:1 1 auto with
+                min-height:0/min-width:0 inside a flex-column parent
+                that defaults to align-items:stretch — no calc(),
+                no measured-pixel-height subtraction, no fullscreen-
+                specific height/padding logic of any kind. */}
             <div
               ref={bookWrapperRef}
-              style={
-                isImmersiveMode
-                  ? {
-                      width: "100%",
-                      height: "min(720px, calc(100vh - 170px))",
-                      maxWidth: "100%",
-                      minHeight: 0,
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      overflow: "hidden",
-                      position: "relative",
-                    }
-                  : {
-                      flex: 1,
-                      width: "100%",
-                      minHeight: 0,
-                      overflow: "hidden",
-                      position: "relative",
-                    }
-              }
+              style={{
+                flex: "1 1 auto",
+                minHeight: 0,
+                minWidth: 0,
+                overflow: "hidden",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                position: "relative",
+                zIndex: 10,
+              }}
             >
-              {/* FullscreenReaderView — visible ONLY in fullscreen.
-                  Renders the current page(s) directly via
-                  PdfPageCanvas, fit-contain, no FlipEngine, no
-                  page-turn animation, no transform:scale. */}
-              {isFullscreen && (
-                <div style={{ width: "100%", height: "100%" }}>
-                  <FullscreenReaderView
-                    pdf={pdf}
-                    profile={profile}
-                    pageDims={pageDims}
-                    currentPageNumbers={currentPageNumbers}
-                    currentLabel={currentLabel}
-                    zoom={zoom}
-                    onPrev={fullscreenGoPrev}
-                    onNext={fullscreenGoNext}
-                  />
-                </div>
-              )}
-
-              {/* BookSpread/FlipEngine stay PERMANENTLY MOUNTED, even
-                  in fullscreen — hidden via visibility:hidden +
-                  position:absolute, never display:none. Unmounting
-                  FlipEngine (e.g. via display:none collapsing this box
-                  to 0×0, which trips FlipEngine's own
-                  leafBox.width<=0 -> return null early-exit) would
-                  destroy react-pageflip's internal widget; remounting
-                  it on exit resets to page 1 via FlipEngine's own
-                  hardcoded turnToPage(0)-on-mount effect and
-                  react-pageflip's own startPage={0} default — both of
-                  which this batch is explicitly not allowed to touch.
-                  Keeping it mounted-but-invisible-and-non-interactive
-                  is what actually preserves the page across fullscreen
-                  toggles without touching FlipEngine.tsx at all. */}
-              <div
-                style={
-                  isFullscreen
-                    ? {
-                        position: "absolute",
-                        inset: 0,
-                        visibility: "hidden",
-                        pointerEvents: "none",
-                      }
-                    : { width: "100%", height: "100%" }
-                }
-              >
-                <BookSpread
-                  ref={flipRef}
-                  layoutVersion={layoutVersion}
-                  pdf={pdf}
-                  profile={profile}
-                  pageDims={pageDims}
-                  zoom={zoom}
-                  onPageChange={handlePageChange}
-                  currentPageNumbers={currentPageNumbers}
-                  resolvedPages={resolvedPages}
-                  onSelectionChange={handleSelectionChange}
-                  selectionMode={selectionMode}
-                />
-              </div>
+              {/* BookSpread/FlipEngine is the ONE AND ONLY rendering
+                  path for the book, in both normal and fullscreen
+                  mode. Fullscreen changes ONLY the surrounding layout
+                  CSS (left panel removed from the grid, this viewport
+                  gets more space) — it is never a different
+                  component, never a remount, never a second
+                  measurement path. This is what keeps Text Selection,
+                  Read Aloud, and page sequencing identical in both
+                  modes: there is only one of each, always. */}
+              <BookSpread
+                ref={flipRef}
+                layoutVersion={layoutVersion}
+                pdf={pdf}
+                profile={profile}
+                pageDims={pageDims}
+                zoom={zoom}
+                onPageChange={handlePageChange}
+                currentPageNumbers={currentPageNumbers}
+                resolvedPages={resolvedPages}
+                onSelectionChange={handleSelectionChange}
+                selectionMode={selectionMode}
+              />
             </div>
             {selectionMenu && (
               <div
@@ -1329,17 +1416,24 @@ export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
               </div>
             )}
 
+            {/* reader-bottom-nav: Previous / page label / Next, in its
+                own fixed-height row, never overlapped by the book. */}
             <div
               style={{
+                flex: "0 0 auto",
+                height: 72,
+                position: "relative",
+                zIndex: 50,
+                pointerEvents: "auto",
                 display: "flex",
                 alignItems: "center",
+                justifyContent: "center",
                 gap: 16,
-                marginTop: 16,
-                flexShrink: 0,
+                boxSizing: "border-box",
               }}
             >
               <button
-                onClick={isFullscreen ? fullscreenGoPrev : goPrevious}
+                onClick={goPrevious}
                 disabled={!isReady || isAtStart}
                 style={{
                   padding: "10px 20px",
@@ -1369,7 +1463,7 @@ export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
               </span>
 
               <button
-                onClick={isFullscreen ? fullscreenGoNext : goNext}
+                onClick={goNext}
                 disabled={!isReady || isAtEnd}
                 style={{
                   padding: "10px 20px",

@@ -151,15 +151,22 @@ const FlipEngine = forwardRef<FlipEngineHandle, FlipEngineProps>(
     // file), which could otherwise eat into the last pixel or two now
     // that ancestor containers use overflow:"hidden" instead of
     // "visible".
+    //
+    // SAFETY_MARGIN is a real, visible margin (48px on each side,
+    // 96px total per axis) — this guarantees the rendered spread is
+    // comfortably smaller than the stage, which is what actually
+    // prevents toolbar/nav clipping and page-edge crop. At 100% zoom,
+    // "Fit" always means contain, never crop, even if the book ends
+    // up noticeably smaller than the available space.
     const leafBox = useMemo(() => {
       if (stageWidth <= 0 || stageHeight <= 0) {
         return { width: 0, height: 0 };
       }
 
-      const SAFETY_MARGIN = 2;
+      const SAFETY_MARGIN = 48;
 
-      const maxSpreadWidth = Math.max(stageWidth - SAFETY_MARGIN, 0);
-      const maxSpreadHeight = Math.max(stageHeight - SAFETY_MARGIN, 0);
+      const maxSpreadWidth = Math.max(stageWidth - SAFETY_MARGIN * 2, 1);
+      const maxSpreadHeight = Math.max(stageHeight - SAFETY_MARGIN * 2, 1);
 
       // mode is always "single" in prebuilt-spreads mode, so the leaf
       // always gets the FULL stage width — never halved for pairing.
