@@ -300,19 +300,18 @@ export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
         setSelectionMode("page-turn");
         setZoom(100);
 
-        if (readerContainerRef.current) {
-          readerContainerRef.current.scrollTop = 0;
-          readerContainerRef.current.scrollLeft = 0;
-        }
-        if (centerColumnRef.current) {
-          centerColumnRef.current.scrollTop = 0;
-          centerColumnRef.current.scrollLeft = 0;
-        }
+        requestAnimationFrame(() => {
+          readerContainerRef.current?.scrollTo({
+            top: 0,
+            left: 0,
+            behavior: "instant",
+          });
+        });
       }
 
       setLayoutVersion((v) => v + 1);
       requestAnimationFrame(() => setLayoutVersion((v) => v + 1));
-      window.setTimeout(() => setLayoutVersion((v) => v + 1), 150);
+      window.setTimeout(() => setLayoutVersion((v) => v + 1), 200);
     }
 
     document.addEventListener("fullscreenchange", handleFullscreenChange);

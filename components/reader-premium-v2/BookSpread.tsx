@@ -4,7 +4,6 @@ import { forwardRef, useEffect, useRef, useState } from "react";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import FlipEngine, { type FlipEngineHandle } from "./FlipEngine";
 import SelectionLayer, { type SelectionLayerResult } from "./SelectionLayer";
-import { observeSize } from "@/lib/premium-reader/viewport";
 import type { RealPageDims } from "@/lib/premium-reader/pdfLayoutAnalyzer";
 import type { BookProfile } from "@/lib/premium-reader/bookProfile";
 
@@ -92,51 +91,43 @@ const BookSpread = forwardRef<BookSpreadHandle, BookSpreadProps>(
     const leftLayerRef = useRef<HTMLDivElement | null>(null);
     const rightLayerRef = useRef<HTMLDivElement | null>(null);
 
-    useEffect(() => {
-      const el = containerRef.current;
-      if (!el) return;
-      setAvailSize({ width: el.clientWidth, height: el.clientHeight });
-      return observeSize(el, setAvailSize);
-    }, []);
-
-    // Forces a fresh re-measurement whenever fullscreen state changes
-    // (layoutVersion bumps on every isFullscreen flip in
-    // PremiumReaderV2). This is purely a re-measure, NEVER a remount —
-    // containerRef/availSize/FlipEngine's own mounted instance are all
-    // untouched; only the measured width/height get refreshed.
-    //
-    // Measures on a cascade (immediately, next animation frame, then
-    // at 50ms/150ms/300ms) rather than a single fixed delay, plus
-    // listens for the browser's own fullscreenchange and window resize
-    // events directly — covers cases where the CSS grid's column/row
-    // transition settles at a slightly different time than any single
-    // fixed timeout would predict (varies by browser/OS fullscreen
-    // transition timing). Uses getBoundingClientRect() rather than
-    // clientWidth/clientHeight for the measurement itself, which is
-    // what the diagnosis specifically called for.
+    // SINGLE consolidated measurement effect. One measure() function,
+    // triggered by: layoutVersion changing (this effect's dependency),
+    // the container's own ResizeObserver firing, and the browser's
+    // fullscreenchange event — plus an immediate + rAF + staggered
+    // timeout cascade every time the effect re-runs, since a single
+    // measurement can land before a CSS transition (grid columns
+    // changing, etc.) has actually settled. This component has NO
+    // awareness of isFullscreen/isImmersiveMode at all — it only
+    // reacts to the browser's fullscreenchange event as a generic
+    // "something about my container size may have changed" signal,
+    // exactly like it reacts to ResizeObserver firing for any other
+    // reason. All fullscreen-specific decisions live in
+    // PremiumReaderV2 only.
     useEffect(() => {
       const el = containerRef.current;
       if (!el) return;
 
-      function measure() {
-        const node = containerRef.current;
-        if (!node) return;
-        const rect = node.getBoundingClientRect();
+      const measure = () => {
+        if (!containerRef.current) return;
+        const rect = containerRef.current.getBoundingClientRect();
         setAvailSize({ width: rect.width, height: rect.height });
-      }
+      };
 
       measure();
       const rafId = requestAnimationFrame(measure);
       const timeoutIds = [50, 150, 300].map((delay) => window.setTimeout(measure, delay));
 
+      const resizeObserver = new ResizeObserver(measure);
+      resizeObserver.observe(el);
+
       document.addEventListener("fullscreenchange", measure);
-      window.addEventListener("resize", measure);
 
       return () => {
         cancelAnimationFrame(rafId);
         timeoutIds.forEach((id) => window.clearTimeout(id));
+        resizeObserver.disconnect();
         document.removeEventListener("fullscreenchange", measure);
-        window.removeEventListener("resize", measure);
       };
     }, [layoutVersion]);
 
