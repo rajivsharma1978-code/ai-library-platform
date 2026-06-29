@@ -28,7 +28,7 @@ function getModeInstruction(mode: string) {
 
 export async function POST(req: Request) {
   try {
-    const { question, book, chapter, content } = await req.json();
+    const { question, book, chapter, content, imageDataUrl } = await req.json();
 
     const studyMode = getStudyMode(question || "");
     const userQuestion = cleanQuestion(question || "");
@@ -40,6 +40,34 @@ export async function POST(req: Request) {
         answer: "OPENAI_API_KEY is missing. Please add it in .env.local.",
       });
     }
+
+    const userTextContent = `
+Book or PDF:
+${book || "Unknown"}
+
+Current context:
+${chapter || "General"}
+
+Available content:
+${trimmedContent}
+
+User question:
+${userQuestion}
+            `;
+
+    // NEW, purely additive: when imageDataUrl is provided (an image/
+    // diagram region the user selected from the page), the user
+    // message becomes a multimodal content array — the same text
+    // block as before, PLUS an image_url part — instead of a plain
+    // string. When imageDataUrl is absent, this is byte-for-byte the
+    // same request shape as before; no existing text-only behavior
+    // changes.
+    const userMessageContent = imageDataUrl
+      ? [
+          { type: "text", text: userTextContent },
+          { type: "image_url", image_url: { url: imageDataUrl } },
+        ]
+      : userTextContent;
 
     const response = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
@@ -58,6 +86,7 @@ You are NDL AI Tutor, an AI tutor inside a national digital learning platform.
 
 Core rules:
 - Use the provided book/PDF content as the primary source.
+${imageDataUrl ? "- An image of a selected diagram/figure/table region from the page is attached. Base your answer primarily on what is visible in that image, using the surrounding page text only as supporting context." : ""}
 - If the exact answer is not present, say: "This is not clearly available in the provided content", then give a helpful general explanation.
 - Do not hallucinate book-specific facts.
 - Keep answers structured, practical, and learner-friendly.
@@ -78,19 +107,7 @@ Formatting:
           },
           {
             role: "user",
-            content: `
-Book or PDF:
-${book || "Unknown"}
-
-Current context:
-${chapter || "General"}
-
-Available content:
-${trimmedContent}
-
-User question:
-${userQuestion}
-            `,
+            content: userMessageContent,
           },
         ],
       }),

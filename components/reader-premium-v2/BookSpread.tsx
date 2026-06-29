@@ -19,6 +19,13 @@ interface BookSpreadProps {
   profile: BookProfile;
   pageDims: Map<number, RealPageDims>;
   zoom: number;
+  /**
+   * Debounced/settled zoom (see FlipEngine.tsx) — drives actual
+   * canvas re-render resolution via FlipEngine. `zoom` above stays
+   * the instant value, used only for the CSS transform below; this
+   * one only changes ~250ms after the user stops clicking.
+   */
+  renderZoom?: number;
   onPageChange: (info: { pageNumbers: number[]; label: string }) => void;
   /** Page numbers currently visible — used to mount selection overlays
    *  IMMEDIATELY, independent of whether resolvedPages text has
@@ -33,6 +40,14 @@ interface BookSpreadProps {
    *  a React key, so it never remounts BookSpread/FlipEngine (which
    *  would reset the current page). */
   layoutVersion?: number;
+  /**
+   * Explicitly threaded through from PremiumReaderV2 so FlipEngine can
+   * use a smaller SAFETY_MARGIN in immersive mode (more visual size,
+   * still never cropped). This is a deliberate, explicit reversal of
+   * the earlier "BookSpread/FlipEngine must not know fullscreen
+   * exists" rule — requested directly for this specific purpose.
+   */
+  isImmersiveMode?: boolean;
 }
 
 export type BookSpreadHandle = FlipEngineHandle;
@@ -69,41 +84,43 @@ const BookSpread = forwardRef<BookSpreadHandle, BookSpreadProps>(
       profile,
       pageDims,
       zoom,
+      renderZoom = 100,
       onPageChange,
       currentPageNumbers,
       resolvedPages,
       onSelectionChange,
       selectionMode,
       layoutVersion,
+      isImmersiveMode,
     },
     ref
   ) {
     const containerRef = useRef<HTMLDivElement | null>(null);
     const [availSize, setAvailSize] = useState({ width: 0, height: 0 });
 
-    // zoom is accepted for prop-interface compatibility with
-    // PremiumReaderV2's existing zoom controls, but is intentionally
-    // not applied here anymore (no CSS transform/scale) — per the
-    // fit-contain-only sizing approach now used throughout.
-    void zoom;
+    // zoom is now forwarded directly to FlipEngine, which applies it
+    // as a multiplier on top of its own fit-contain leafBox
+    // calculation — no CSS transform/scale here in BookSpread itself,
+    // consistent with the fit-contain-only sizing approach already
+    // used throughout.
 
     const overlayContainerRef = useRef<HTMLDivElement | null>(null);
     const leftLayerRef = useRef<HTMLDivElement | null>(null);
     const rightLayerRef = useRef<HTMLDivElement | null>(null);
 
     // SINGLE consolidated measurement effect. One measure() function,
-    // triggered by: layoutVersion changing (this effect's dependency),
-    // the container's own ResizeObserver firing, and the browser's
-    // fullscreenchange event — plus an immediate + rAF + staggered
-    // timeout cascade every time the effect re-runs, since a single
-    // measurement can land before a CSS transition (grid columns
-    // changing, etc.) has actually settled. This component has NO
-    // awareness of isFullscreen/isImmersiveMode at all — it only
-    // reacts to the browser's fullscreenchange event as a generic
-    // "something about my container size may have changed" signal,
-    // exactly like it reacts to ResizeObserver firing for any other
-    // reason. All fullscreen-specific decisions live in
-    // PremiumReaderV2 only.
+    // triggered by: layoutVersion changing (this effect's dependency)
+    // and the container's own ResizeObserver firing — plus an
+    // immediate + rAF + staggered timeout cascade every time the
+    // effect re-runs, since a single measurement can land before a
+    // CSS transition (grid columns changing, etc.) has actually
+    // settled. This component has NO awareness of fullscreen as a
+    // concept at all — no isFullscreen/isImmersiveMode props, no
+    // fullscreenchange listener (the app no longer uses the browser
+    // Fullscreen API at all, so that event would never fire anyway).
+    // All fullscreen/immersive-mode decisions live in PremiumReaderV2
+    // only; this component just re-measures whenever its own
+    // container resizes or layoutVersion is bumped.
     useEffect(() => {
       const el = containerRef.current;
       if (!el) return;
@@ -116,18 +133,15 @@ const BookSpread = forwardRef<BookSpreadHandle, BookSpreadProps>(
 
       measure();
       const rafId = requestAnimationFrame(measure);
-      const timeoutIds = [50, 150, 300].map((delay) => window.setTimeout(measure, delay));
+      const timeoutId = window.setTimeout(measure, 150);
 
       const resizeObserver = new ResizeObserver(measure);
       resizeObserver.observe(el);
 
-      document.addEventListener("fullscreenchange", measure);
-
       return () => {
         cancelAnimationFrame(rafId);
-        timeoutIds.forEach((id) => window.clearTimeout(id));
+        window.clearTimeout(timeoutId);
         resizeObserver.disconnect();
-        document.removeEventListener("fullscreenchange", measure);
       };
     }, [layoutVersion]);
 
@@ -254,7 +268,7 @@ const BookSpread = forwardRef<BookSpreadHandle, BookSpreadProps>(
           alignItems: "center",
           justifyContent: "center",
           position: "relative",
-          overflow: "hidden",
+          overflow: zoom > 100 ? "auto" : "hidden",
         }}
       >
         <div
@@ -265,7 +279,15 @@ const BookSpread = forwardRef<BookSpreadHandle, BookSpreadProps>(
             alignItems: "center",
             justifyContent: "center",
             position: "relative",
-            overflow: "hidden",
+            // At zoom>100, the CSS transform:scale() on the inner
+            // fit-content wrapper below visually paints LARGER than
+            // innerW/innerH (leafBox itself never exceeds them —
+            // FlipEngine is zoom-independent now). This wrapper must
+            // let that visual overflow escape (visible) rather than
+            // clip it here, so the OUTER container's overflow:"auto"
+            // (set above) is what actually provides the scroll/pan,
+            // not a second clip layer upstream of it.
+            overflow: zoom > 100 ? "visible" : "hidden",
           }}
         >
           {/*
@@ -280,7 +302,31 @@ const BookSpread = forwardRef<BookSpreadHandle, BookSpreadProps>(
             100%/100% of THIS wrapper, so it stays clipped to the real
             book area only, not the larger outer stage.
           */}
-          <div style={{ width: "fit-content", height: "fit-content", position: "relative", zIndex: 10 }}>
+          <div
+            style={{
+              width: "fit-content",
+              height: "fit-content",
+              position: "relative",
+              zIndex: 10,
+              // TWO-PHASE ZOOM: PdfPageCanvas/FlipEngine render AT
+              // renderZoom's resolution (the DEBOUNCED, settled
+              // value), not at 100% and not at the instant `zoom`.
+              // The correct CSS scale factor to visually reach the
+              // user's CURRENT target zoom from whatever resolution
+              // is actually rendered is therefore zoom/renderZoom —
+              // NOT zoom/100. At rest, once the debounce has settled
+              // and renderZoom === zoom, this ratio is exactly 1: the
+              // canvas is shown at its own native rendered resolution
+              // with zero CSS scaling, i.e. sharp text. Only during
+              // the brief window between a click and the ~250ms
+              // debounce settling does this ratio differ from 1,
+              // giving instant visual feedback (briefly softer, since
+              // it's a CSS scale of the previous resolution) until
+              // PdfPageCanvas catches up and repaints natively sharp.
+              transform: `scale(${zoom / renderZoom})`,
+              transformOrigin: "center center",
+            }}
+          >
             <div
               style={{
                 // FlipEngine must not receive pointer events at all while
@@ -299,6 +345,8 @@ const BookSpread = forwardRef<BookSpreadHandle, BookSpreadProps>(
                 stageWidth={innerW}
                 stageHeight={innerH}
                 onPageChange={onPageChange}
+                isImmersiveMode={isImmersiveMode}
+                renderZoom={renderZoom}
               />
             </div>
 

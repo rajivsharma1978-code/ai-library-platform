@@ -10,6 +10,15 @@ interface PdfPageCanvasProps {
   height: number;
   className?: string;
   onRendered?: (dims: { width: number; height: number }) => void;
+  /**
+   * NEW, purely additive: fires with the live <canvas> element
+   * whenever it mounts/changes, and with null on unmount. Lets a
+   * parent (e.g. an image-region-selection overlay) capture a crop
+   * of the actual rendered PDF page via getImageData/toDataURL,
+   * without this component needing to know anything about selection,
+   * AI, or any other feature. Does not affect rendering in any way.
+   */
+  onCanvasReady?: (canvas: HTMLCanvasElement | null) => void;
 }
 
 export default function PdfPageCanvas({
@@ -19,12 +28,23 @@ export default function PdfPageCanvas({
   height,
   className,
   onRendered,
+  onCanvasReady,
 }: PdfPageCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const renderIdRef = useRef(0);
   const renderTaskRef = useRef<RenderTask | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [renderedSize, setRenderedSize] = useState({ width: 0, height: 0 });
+
+  // Reports the live canvas element to the parent whenever it's
+  // available, and reports null on unmount/page change cleanup.
+  useEffect(() => {
+    onCanvasReady?.(canvasRef.current);
+    return () => {
+      onCanvasReady?.(null);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pageNumber]);
 
   useEffect(() => {
     if (!pdf || width <= 0 || height <= 0) return;
@@ -92,6 +112,13 @@ const currentRenderId = ++renderIdRef.current;
 
         onRendered?.({ width: nativeWidth, height: nativeHeight });
 
+        // Re-report the canvas now that it actually has pixels in it
+        // — the mount-time report above fires before the PDF page has
+        // rendered, so a region-capture attempted immediately after
+        // mount (before this point) would otherwise crop a blank
+        // canvas.
+        onCanvasReady?.(canvas);
+
         setIsLoading(false);
       } catch (err: any) {
         if (err?.name === "RenderingCancelledException") return;
@@ -112,7 +139,7 @@ const currentRenderId = ++renderIdRef.current;
         renderTaskRef.current = null;
       }
     };
-  }, [pdf, pageNumber, width, height, onRendered]);
+  }, [pdf, pageNumber, width, height, onRendered, onCanvasReady]);
 
   return (
     <div
@@ -154,6 +181,7 @@ const currentRenderId = ++renderIdRef.current;
       )}
       <canvas
         ref={canvasRef}
+        data-pdf-canvas={pageNumber}
         style={{
           width: renderedSize.width || undefined,
           height: renderedSize.height || undefined,

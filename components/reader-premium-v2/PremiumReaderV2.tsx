@@ -179,31 +179,78 @@ export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
   const [isOcrRunning, setIsOcrRunning] = useState(false);
   const [isReady, setIsReady] = useState(false);
   const [zoom, setZoom] = useState(100);
+  // Two-phase zoom: `zoom` is the INSTANT value (drives the CSS
+  // transform in BookSpread for immediate visual feedback).
+  // `renderZoom` is the DEBOUNCED/settled value — only updates ~250ms
+  // after the user stops clicking +/- — and is what actually reaches
+  // FlipEngine/PdfPageCanvas for a real (sharp) re-render. This is
+  // what avoids re-rendering the PDF on every single click while
+  // still producing sharp text once zooming settles.
+  const [renderZoom, setRenderZoom] = useState(100);
 
-  // ── In-app "immersive mode" / fullscreen layout ──────────────────
-  // isImmersiveMode drives all the layout styles below (grid columns,
-  // panel visibility, main/book sizing). isFullscreen tracks the
-  // BROWSER'S actual native fullscreen state and is kept in lockstep
-  // with isImmersiveMode by both enterFullscreen() and the
-  // fullscreenchange listener below — so the two never drift apart,
-  // and ESC (which only the browser can intercept) reliably restores
-  // the layout via the listener, not via a manual keydown handler.
+  useEffect(() => {
+    const id = window.setTimeout(() => {
+      setRenderZoom(zoom);
+    }, 250);
+    return () => window.clearTimeout(id);
+  }, [zoom]);
+
+  // ── In-app "immersive mode" / real browser fullscreen ────────────
+  // isFullscreen tracks the BROWSER's actual fullscreen state;
+  // isImmersiveMode drives the layout (grid columns, panel
+  // visibility) and is kept in lockstep with isFullscreen by the
+  // single authoritative fullscreenchange listener below — that
+  // listener is the ONLY place either of these two gets set, for
+  // both the ⛶ button (which only calls requestFullscreen/
+  // exitFullscreen, see enterFullscreen below) and Esc.
   const [isImmersiveMode, setIsImmersiveMode] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
 
-  // Bumped on every real fullscreenchange event (see the listener
-  // below). Passed to BookSpread as a plain prop — NEVER a key — so it
-  // never remounts BookSpread/FlipEngine (which would reset the
-  // current page via FlipEngine's own hardcoded turnToPage(0)-on-mount
-  // effect). It exists purely so BookSpread can re-measure its
-  // container after the grid layout has actually changed size.
+  // Bumped whenever the immersive-mode toggle fires. Passed to
+  // BookSpread as a plain prop — NEVER a key — so it never remounts
+  // BookSpread/FlipEngine (which would reset the current page via
+  // FlipEngine's own hardcoded turnToPage(0)-on-mount effect). It
+  // exists purely so BookSpread can re-measure its container after
+  // the grid layout has actually changed size.
   const [layoutVersion, setLayoutVersion] = useState(0);
 
-  // Ref to the outer reader workspace container — the element actually
-  // passed to requestFullscreen(). Fullscreening THIS element (not
-  // document.documentElement) means only the reader workspace goes
-  // fullscreen, not the whole browser tab/page.
+  // Ref to the outer reader workspace container — the actual element
+  // passed to requestFullscreen()/exitFullscreen(). Fullscreening
+  // THIS element (not document.documentElement) means only the
+  // reader workspace goes fullscreen, not the whole browser tab.
   const readerContainerRef = useRef<HTMLDivElement | null>(null);
+
+  // SINGLE authoritative fullscreenchange listener in this file.
+  // Fires whenever the browser's actual fullscreen state changes —
+  // via the ⛶ button, Esc, or any other means — and is the ONLY place
+  // that sets isFullscreen/isImmersiveMode. On EVERY change (not just
+  // exit): resets zoom to 100, clears any in-progress browser
+  // selection, resets selectionMode to "page-turn", and bumps
+  // layoutVersion on a cascade (immediately, next animation frame,
+  // +150ms, +350ms) so BookSpread reliably re-measures its container
+  // after the grid has actually finished resizing. Never remounts
+  // BookSpread, never resets the current page.
+  useEffect(() => {
+    function handleFullscreenChange() {
+      const active = Boolean(document.fullscreenElement);
+      setIsFullscreen(active);
+      setIsImmersiveMode(active);
+      setZoom(100);
+      setRenderZoom(100);
+      document.getSelection()?.removeAllRanges();
+      setSelectionMode("page-turn");
+
+      setLayoutVersion((v) => v + 1);
+      requestAnimationFrame(() => setLayoutVersion((v) => v + 1));
+      window.setTimeout(() => setLayoutVersion((v) => v + 1), 150);
+      window.setTimeout(() => setLayoutVersion((v) => v + 1), 350);
+    }
+
+    document.addEventListener("fullscreenchange", handleFullscreenChange);
+    return () => {
+      document.removeEventListener("fullscreenchange", handleFullscreenChange);
+    };
+  }, []);
 
   const [speechState, setSpeechState] = useState<SpeechState>("idle");
 
@@ -277,46 +324,6 @@ export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
     window.speechSynthesis.addEventListener("voiceschanged", loadVoices);
     return () => {
       window.speechSynthesis.removeEventListener("voiceschanged", loadVoices);
-    };
-  }, []);
-
-  // SINGLE authoritative fullscreenchange listener in this file —
-  // whenever the browser's actual fullscreen state changes (via the
-  // ⛶ button, ESC, or any other means), this fires. On EXIT
-  // specifically: clears any in-progress browser selection, resets
-  // selectionMode to "page-turn", resets zoom to 100, and resets the
-  // root container's and center column's scroll position to 0,0.
-  // layoutVersion bumps at 0ms / next animation frame / +150ms so
-  // BookSpread re-measures its (now correctly sized) container. Never
-  // remounts BookSpread, never resets the current page.
-  useEffect(() => {
-    function handleFullscreenChange() {
-      const active = Boolean(document.fullscreenElement);
-      setIsFullscreen(active);
-      setIsImmersiveMode(active);
-
-      if (!active) {
-        document.getSelection()?.removeAllRanges();
-        setSelectionMode("page-turn");
-        setZoom(100);
-
-        requestAnimationFrame(() => {
-          readerContainerRef.current?.scrollTo({
-            top: 0,
-            left: 0,
-            behavior: "instant",
-          });
-        });
-      }
-
-      setLayoutVersion((v) => v + 1);
-      requestAnimationFrame(() => setLayoutVersion((v) => v + 1));
-      window.setTimeout(() => setLayoutVersion((v) => v + 1), 200);
-    }
-
-    document.addEventListener("fullscreenchange", handleFullscreenChange);
-    return () => {
-      document.removeEventListener("fullscreenchange", handleFullscreenChange);
     };
   }, []);
 
@@ -500,19 +507,12 @@ export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
 
   function fitToScreen() {
     setZoom(100);
-    // Fit also exits immersive mode/fullscreen, restoring the
-    // standard layout exactly as it was originally — the "clean
-    // reset" button. If real browser fullscreen is engaged, exit it
-    // for real too, so this can't leave isFullscreen/isImmersiveMode
-    // out of sync with the actual browser state.
+    setRenderZoom(100);
+    // Fit also exits immersive mode, restoring the standard layout
+    // exactly as it was originally — the "clean reset" button. Pure
+    // app-state change; no browser Fullscreen API involved.
     setIsImmersiveMode(false);
-    if (document.fullscreenElement) {
-      document.exitFullscreen().catch((err) => {
-        console.error("[PremiumReaderV2] exitFullscreen() failed (from Fit):", err);
-      });
-    } else {
-      setIsFullscreen(false);
-    }
+    setIsFullscreen(false);
   }
 
   useEffect(() => {
@@ -899,17 +899,13 @@ export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
     alert("Dark mode will be connected next.");
   }
 
-  // Requests/exits REAL browser fullscreen on the reader workspace
-  // container (readerContainerRef) — not document.documentElement, so
-  // only this component's own workspace goes fullscreen, not the
-  // whole tab. Sets isFullscreen/isImmersiveMode optimistically on
-  // success; the fullscreenchange listener above remains the
-  // authoritative sync point for whatever the browser's real state
-  // ends up being (including ESC) — that listener handles the EXIT
-  // side fully. This handler additionally does the ENTER-side
-  // cleanup synchronously and immediately (zoom reset, clear
-  // selection, layoutVersion bump) rather than waiting on the async
-  // fullscreenchange event for that feedback.
+  // Calls the REAL browser Fullscreen API on the reader's own
+  // container (not document.documentElement, so only the reader
+  // workspace goes fullscreen, not the whole tab). Does NOT set any
+  // state itself — the single authoritative fullscreenchange listener
+  // below is what updates isFullscreen/isImmersiveMode/zoom/selection/
+  // layoutVersion, for both this button AND Esc, so there is exactly
+  // one source of truth regardless of how fullscreen was entered/exited.
   async function enterFullscreen() {
     const el = readerContainerRef.current;
     if (!el) return;
@@ -917,18 +913,11 @@ export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
     try {
       if (!document.fullscreenElement) {
         await el.requestFullscreen();
-        setIsFullscreen(true);
-        setIsImmersiveMode(true);
-        setZoom(100);
-        document.getSelection()?.removeAllRanges();
-        setLayoutVersion((v) => v + 1);
       } else {
         await document.exitFullscreen();
-        setIsFullscreen(false);
-        setIsImmersiveMode(false);
       }
     } catch (err) {
-      console.error("Fullscreen failed", err);
+      console.error("[PremiumReaderV2] Fullscreen request failed:", err);
     }
   }
 
@@ -999,12 +988,11 @@ export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
   );
 
   // Clears the popup, its source page, and any in-progress browser
-  // selection on EVERY fullscreen transition — including ENTER, not
-  // just exit. The authoritative fullscreenchange listener itself
-  // (below) only force-resets selectionMode on exit, per the exact
-  // spec for that handler — this is a separate, additive effect that
-  // covers the broader "clear on fullscreen enter or exit" requirement
-  // without changing that handler's own literal logic.
+  // selection on EVERY immersive-mode toggle — including entering,
+  // not just exiting. enterFullscreen() (the single click handler)
+  // already does its own selection-clearing too; this is an
+  // additional, general safety net tied directly to the isFullscreen
+  // state itself, regardless of which code path changed it.
   useEffect(() => {
     setSelectionMenu(null);
     setSelectionSourcePage(null);
@@ -1151,7 +1139,9 @@ export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
       ref={readerContainerRef}
       style={{
         height: "100vh",
-        width: "100%",
+        width: isFullscreen ? "100vw" : "100%",
+        maxHeight: "100vh",
+        maxWidth: isFullscreen ? "100vw" : undefined,
         overflow: "hidden",
         display: "grid",
         gridTemplateColumns: isImmersiveMode
@@ -1207,6 +1197,7 @@ export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
       <main
         ref={centerColumnRef}
         style={{
+          width: "100%",
           height: "100%",
           minWidth: 0,
           minHeight: 0,
@@ -1234,7 +1225,7 @@ export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
               style={{
                 flex: "0 0 auto",
                 height: "auto",
-                padding: "12px 0 8px",
+                padding: isImmersiveMode ? "0px" : "12px 0 8px",
                 position: "relative",
                 zIndex: 50,
                 pointerEvents: "auto",
@@ -1244,36 +1235,33 @@ export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
                 alignItems: "center",
               }}
             >
-              <ReaderToolbar
-                zoom={zoom}
-                onZoomIn={zoomIn}
-                onZoomOut={zoomOut}
-                onFit={fitToScreen}
-                onReadAloud={handleReadAloudToggle}
-                onStopReadAloud={handleStopReadAloud}
-                onToggleTheme={toggleTheme}
-                onFullscreen={enterFullscreen}
-                speechState={isOcrRunning ? "loading" : speechState}
-              />
-              {isImmersiveMode && (
-                <p
-                  style={{
-                    fontSize: 11,
-                    color: "#9a6b2f",
-                    fontWeight: 700,
-                    marginTop: -6,
-                    marginBottom: 10,
-                  }}
-                >
-                  Immersive mode on — press ⛶ again or Esc to restore the side panel.
-                </p>
-              )}
+              {/* ReaderToolbar carries its own internal bottom margin
+                  (not exposed as a prop from this file, and not
+                  re-verified against its current source this batch)
+                  — wrapping it with a negative margin in immersive
+                  mode visually compresses that built-in gap down
+                  toward the requested ~4px, without touching
+                  ReaderToolbar.tsx itself or clipping any of its
+                  buttons. */}
+              <div style={{ marginBottom: isImmersiveMode ? -12 : 0 }}>
+                <ReaderToolbar
+                  zoom={zoom}
+                  onZoomIn={zoomIn}
+                  onZoomOut={zoomOut}
+                  onFit={fitToScreen}
+                  onReadAloud={handleReadAloudToggle}
+                  onStopReadAloud={handleStopReadAloud}
+                  onToggleTheme={toggleTheme}
+                  onFullscreen={enterFullscreen}
+                  speechState={isOcrRunning ? "loading" : speechState}
+                />
+              </div>
 
               <div
                 style={{
                   display: "flex",
                   gap: 6,
-                  marginBottom: 12,
+                  marginBottom: isImmersiveMode ? 2 : 12,
                   background: "#fff",
                   border: "1px solid #e3dcc9",
                   borderRadius: 999,
@@ -1316,10 +1304,11 @@ export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
             <div
               ref={bookWrapperRef}
               style={{
-                flex: "1 1 auto",
+                flex: 1,
                 minHeight: 0,
                 minWidth: 0,
-                overflow: "hidden",
+                width: "100%",
+                overflow: zoom > 100 ? "auto" : "hidden",
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
@@ -1339,10 +1328,12 @@ export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
               <BookSpread
                 ref={flipRef}
                 layoutVersion={layoutVersion}
+                isImmersiveMode={isImmersiveMode}
                 pdf={pdf}
                 profile={profile}
                 pageDims={pageDims}
                 zoom={zoom}
+                renderZoom={renderZoom}
                 onPageChange={handlePageChange}
                 currentPageNumbers={currentPageNumbers}
                 resolvedPages={resolvedPages}
@@ -1420,7 +1411,7 @@ export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
             <div
               style={{
                 flex: "0 0 auto",
-                height: 72,
+                height: isImmersiveMode ? 48 : 72,
                 position: "relative",
                 zIndex: 50,
                 pointerEvents: "auto",

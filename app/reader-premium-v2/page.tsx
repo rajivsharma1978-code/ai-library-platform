@@ -1,7 +1,7 @@
 import PremiumReaderV2 from "@/components/reader-premium-v2/PremiumReaderV2";
 import { BookProfile } from "@/lib/premium-reader/bookProfile";
 
-const demoProfile: BookProfile = {
+const nalandaProfile: BookProfile = {
   bookId: "nalanda-demo",
   title: "Nalanda: The Untold Story",
   pdfPath: "/director-books/nalanda.pdf",
@@ -58,6 +58,56 @@ const demoProfile: BookProfile = {
   ],
 };
 
-export default function ReaderPremiumV2Page() {
-  return <PremiumReaderV2 profile={demoProfile} />;
+// New: a normal, sequential single-page PDF — NOT prebuilt-spreads.
+// No pageMap is needed here; that field only exists to override
+// printed-page-label metadata for Nalanda's specific print layout,
+// and a plain textbook just uses its raw PDF page numbers as-is.
+//
+// pdfPageMode/preferredView are now set EXPLICITLY (confirmed values)
+// rather than omitted — omitting pdfPageMode previously left it
+// undefined, and getPdfPageMode() apparently treats an undefined/
+// missing value as "prebuilt-spreads" by default, which is what was
+// silently forcing this book into Nalanda's single-wide-page
+// treatment (no middle-spine flip, wrong fullscreen sizing, etc.)
+// despite FlipEngine.tsx's actual double-spread/pairing logic being
+// completely unaffected and already correct for this case.
+const quantumProfile: BookProfile = {
+  bookId: "quantum-computing-demo",
+  title: "Introduction to Classical and Quantum Computing",
+  pdfPath: "/director-books/quantum-computing.pdf",
+
+  pdfPageMode: "single-pages",
+  preferredView: "double",
+  totalPages: 400,
+
+  readingDirection: "ltr",
+  hasCover: true,
+  version: "premium-reader-v2",
+  createdAt: new Date().toISOString(),
+};
+
+const BOOK_PROFILES: Record<string, BookProfile> = {
+  nalanda: nalandaProfile,
+  quantum: quantumProfile,
+};
+
+export default async function ReaderPremiumV2Page({
+  searchParams,
+}: {
+  // Next.js App Router passes searchParams as a Promise in newer
+  // versions and a plain object in older ones — awaiting either works
+  // (awaiting a non-Promise value just resolves immediately).
+  searchParams: Promise<{ book?: string }> | { book?: string };
+}) {
+  const resolvedSearchParams = await searchParams;
+  const requestedBook = resolvedSearchParams?.book;
+
+  // Defaults to Nalanda for no query param, an unrecognized value, or
+  // anything other than exactly "quantum" — matching "If no query
+  // param, keep Nalanda default" literally rather than just "if
+  // missing".
+  const profile =
+    requestedBook === "quantum" ? BOOK_PROFILES.quantum : BOOK_PROFILES.nalanda;
+
+  return <PremiumReaderV2 profile={profile} />;
 }

@@ -17,9 +17,6 @@ const RESPONSE_LANGUAGES = [
 
 export type ResponseLanguage = (typeof RESPONSE_LANGUAGES)[number];
 
-// Kept as an alias so any existing import of TranslateLanguage still
-// type-checks correctly — language is no longer a translate-only
-// concept, it now applies to every AI action uniformly.
 export type TranslateLanguage = ResponseLanguage;
 
 export { RESPONSE_LANGUAGES, RESPONSE_LANGUAGES as TRANSLATE_LANGUAGES };
@@ -46,28 +43,12 @@ export function getSpeechLanguage(languageName: ResponseLanguage | string): stri
   return SPEECH_LANGUAGE_MAP[languageName as ResponseLanguage] ?? "en-IN";
 }
 
-// ── OCR-noise prompt instructions ─────────────────────────────────────
-// Belt-and-suspenders alongside the actual text cleanup in
-// pageTextExtractor.ts's cleanOcrTextForAi(): even after cleanup,
-// telling the model explicitly to ignore whatever noise slips through
-// (and, critically, NOT to try to translate/explain it as if it were
-// real content) measurably reduces garbage appearing in responses.
-
 const OCR_NOISE_INSTRUCTION =
   "Ignore OCR artifacts, broken random uppercase fragments, repeated letters, page labels, and unreadable text. Do not translate or explain OCR noise.";
 
 const TRANSLATE_OCR_NOISE_INSTRUCTION =
   "Translate only meaningful readable content. Omit OCR garbage, random letters, broken fragments, and non-sentence artifacts.";
 
-/**
- * Builds the per-page content block sent to the AI. Each page's text
- * is run through cleanOcrTextForAi() first — a stronger, AI-prompt-
- * specific noise filter than the lighter cleanup already applied at
- * OCR-cache time (see pageTextExtractor.ts for why these are kept as
- * two separate passes). Safe to run on selectable (non-OCR) text too:
- * normal sentences essentially never trigger the noise heuristics, so
- * this doesn't need to know which pages were OCR'd vs selectable.
- */
 function buildContentBlock(
   pages: { pageNumber: number; text: string }[]
 ): string {
@@ -79,15 +60,6 @@ function buildContentBlock(
     .join("\n\n");
 }
 
-/**
- * Builds the explain/summarize/quiz/ask prompt. Every one of these
- * now ends with an explicit "Respond only in {language}." directive,
- * per requirement #10 — this is what makes Explain/Summarize/Quiz/Ask
- * actually respect the selected language instead of silently always
- * answering in English regardless of selection. Also carries the
- * OCR_NOISE_INSTRUCTION so the model doesn't try to make sense of
- * whatever noise survives cleanup.
- */
 function buildTutoringQuestion(
   kind: "explain" | "summarize" | "quiz" | "ask",
   language: ResponseLanguage,
@@ -121,16 +93,6 @@ function buildTutoringQuestion(
   }
 }
 
-/**
- * Builds the translation prompt. Per requirement #9, the instruction
- * is exactly "Translate the current page content into {language}.",
- * followed by the same neutral, refusal-resistant directives proven
- * to work across all six languages (no study-mode prefix — that
- * prefix is what caused non-Hindi languages to refuse previously).
- * Also carries the stronger TRANSLATE_OCR_NOISE_INSTRUCTION, since a
- * translation model asked to translate "everything" is more likely
- * to dutifully attempt OCR garbage than a tutoring/explain model is.
- */
 function buildTranslateQuestion(
   language: ResponseLanguage,
   content: string
@@ -153,14 +115,6 @@ function buildTranslateQuestion(
   );
 }
 
-/**
- * Calls the existing /api/ask-ai route. `language` now applies to
- * EVERY action kind — explain/summarize/quiz/ask all get a "Respond
- * only in {language}." directive baked into their question string,
- * and translate uses the dedicated neutral prompt above. No new API
- * route is needed; same {question, book, chapter, content} → {answer}
- * contract as before.
- */
 export async function runAiAction(params: {
   kind: AiActionKind;
   bookTitle: string;
@@ -199,12 +153,7 @@ export async function runAiAction(params: {
   return { answer: data?.answer ?? "AI response was empty." };
 }
 
-// ── Selection-scoped AI actions ───────────────────────────────────────
-// Separate from runAiAction() above: these operate on a SMALL piece
-// of HIGHLIGHTED text (a sentence/paragraph the user selected), not
-// the whole visible page/spread. Kept as distinct functions so the
-// existing per-page action flow is never touched by this addition.
-
+// ── Selection-scoped AI actions (text) ─────────────────────────────────
 export type SelectionActionKind = "explain" | "summarize" | "translate" | "flashcards" | "ask";
 
 export interface FlashcardResult {
@@ -251,13 +200,6 @@ function buildSelectionQuestion(
   }
 }
 
-/**
- * Runs an AI action scoped to a small selected piece of text rather
- * than the whole visible page. Reuses the same /api/ask-ai route —
- * `content` is just the selection itself (cleaned of OCR noise via
- * cleanOcrTextForAi() before being sent), `chapter` notes that this
- * is a selection-scoped request for context.
- */
 export async function runSelectionAiAction(params: {
   kind: SelectionActionKind;
   bookTitle: string;
@@ -286,12 +228,6 @@ export async function runSelectionAiAction(params: {
   return { answer: data?.answer ?? "AI response was empty." };
 }
 
-/**
- * Parses the FRONT:/BACK: formatted response from a flashcards
- * action into a structured FlashcardResult. Falls back to putting the
- * whole answer on the back with a generic front if the model didn't
- * follow the exact format (keeps this robust rather than throwing).
- */
 export function parseFlashcardResult(answer: string): FlashcardResult {
   const frontMatch = answer.match(/FRONT:\s*(.+)/i);
   const backMatch = answer.match(/BACK:\s*([\s\S]+)/i);
@@ -307,4 +243,83 @@ export function parseFlashcardResult(answer: string): FlashcardResult {
     front: "Flashcard",
     back: answer.trim(),
   };
+}
+
+// ── Image-selection AI actions ────────────────────────────────────────
+// New, additive: operates on a CAPTURED IMAGE REGION (a diagram/
+// figure/table the user rectangle-selected from the page canvas via
+// ImageSelectionLayer), not text. Posts to the SAME /api/ask-ai route,
+// now extended with an optional `imageDataUrl` field — every text-only
+// request above is completely unaffected by this addition, since
+// imageDataUrl is simply omitted in those calls.
+
+export type ImageSelectionActionKind =
+  | "explain-image"
+  | "summarize-diagram"
+  | "translate-visible-text"
+  | "ask";
+
+function buildImageSelectionQuestion(
+  kind: ImageSelectionActionKind,
+  language: ResponseLanguage,
+  customQuestion?: string
+): string {
+  const languageDirective = `Respond only in ${language}.`;
+
+  switch (kind) {
+    case "explain-image":
+      return `Explain what is shown in the attached image (diagram, figure, illustration, or photo) in simple terms suitable for a student. ${languageDirective}`;
+    case "summarize-diagram":
+      return `Summarize the diagram, chart, or table shown in the attached image in at most 5 concise bullet points, describing its key parts and what it represents. ${languageDirective}`;
+    case "translate-visible-text":
+      return (
+        `Translate ONLY the text that is visibly written inside the attached image into ${language}.\n` +
+        `Target language: ${language} (${LANGUAGE_CODES[language]})\n` +
+        `Return ONLY the translated text, preserving its original layout/order as closely as possible.\n` +
+        `Do not explain.\n` +
+        `Do not describe the image itself.\n` +
+        `Do not add disclaimers.\n` +
+        `Do not refuse.\n` +
+        `If there is no visible text in the image, say so briefly instead.`
+      );
+    case "ask":
+      return `${customQuestion ?? ""} Base your answer primarily on the attached image. ${languageDirective}`;
+  }
+}
+
+/**
+ * Runs an AI action scoped to a captured image region. `imageDataUrl`
+ * is a PNG data URL cropped directly from the live PDF canvas by
+ * ImageSelectionLayer. `pageText` (if available) is sent purely as
+ * supporting context — the prompts above explicitly tell the model
+ * to prioritize the image itself, not the surrounding text.
+ */
+export async function runImageSelectionAiAction(params: {
+  kind: ImageSelectionActionKind;
+  bookTitle: string;
+  pageLabel: string;
+  imageDataUrl: string;
+  pageText?: string;
+  language: ResponseLanguage;
+  customQuestion?: string;
+}): Promise<AiActionResult> {
+  const { kind, bookTitle, pageLabel, imageDataUrl, pageText, language, customQuestion } = params;
+
+  const question = buildImageSelectionQuestion(kind, language, customQuestion);
+  const content = pageText ? cleanOcrTextForAi(pageText) : "(no surrounding page text provided)";
+
+  const response = await fetch("/api/ask-ai", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      question,
+      book: bookTitle,
+      chapter: `Page ${pageLabel} — Selected image region`,
+      content,
+      imageDataUrl,
+    }),
+  });
+
+  const data = await response.json();
+  return { answer: data?.answer ?? "AI response was empty." };
 }
