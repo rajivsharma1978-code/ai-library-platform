@@ -69,7 +69,12 @@ const currentRenderId = ++renderIdRef.current;
         const nativeWidth = nativeViewport.width;
         const nativeHeight = nativeViewport.height;
 
-        const dpr = Math.min(window.devicePixelRatio || 1, 2);
+        // Render at 1.5× devicePixelRatio (capped at 3) so the
+        // canvas has permanent sharpness headroom — CSS transform
+        // zoom scales already-rendered pixels, so higher initial
+        // resolution means less blurring at zoom > 100% without any
+        // re-render needed.
+        const dpr = Math.min((window.devicePixelRatio || 1) * 1.5, 3);
         const fitScale = Math.min(width / nativeWidth, height / nativeHeight);
         const renderScale = fitScale * dpr;
 

@@ -20,6 +20,10 @@ export interface FlipEngineHandle {
   flipNext: () => void;
   flipPrev: () => void;
   flipToPage: (pageIndex: number) => void;
+  /** Jumps to a given PDF page number without flip animation. Used by
+   *  PremiumReaderV2 to restore the current page after fullscreen
+   *  layout settles — no remount, no animation, no page reset. */
+  turnToPageSilent: (pageNumber: number) => void;
 }
 
 export type FlipMode = "single" | "double";
@@ -57,18 +61,12 @@ interface FlipEngineProps {
    */
   isImmersiveMode?: boolean;
   /**
-   * The DEBOUNCED/settled zoom percentage (100 = fit-contain) — NEVER
-   * the instant click-by-click zoom value. PremiumReaderV2 only
-   * updates this ~250ms after the user stops clicking +/-, which is
-   * what makes this safe to use for actual sizing here: applied as a
-   * multiplier on top of the existing fit-contain leafBox calculation
-   * below, it triggers a real PdfPageCanvas re-render (for sharp text
-   * at the new resolution) at most once per "settle", not once per
-   * click. Instant visual feedback during the click itself comes from
-   * a separate CSS transform in BookSpread, which this component has
-   * no involvement in at all.
+   * When true, the book spread is hidden with opacity:0 so the user
+   * never sees a half-resized or incorrectly-sized intermediate state
+   * during fullscreen enter/exit. Set/cleared by PremiumReaderV2's
+   * fullscreenchange handler. Does not unmount anything.
    */
-  renderZoom?: number;
+  isResizingReader?: boolean;
 }
 
 const FALLBACK_ASPECT = 0.72;
@@ -120,24 +118,13 @@ function resolveAspectPrebuiltSpreads(pageDims: Map<number, RealPageDims>): numb
 
 const FlipEngine = forwardRef<FlipEngineHandle, FlipEngineProps>(
   function FlipEngine(
-    { pdf, profile, pageDims, stageWidth, stageHeight, onPageChange, renderSelectionLayer, isImmersiveMode, renderZoom = 100 },
+    { pdf, profile, pageDims, stageWidth, stageHeight, onPageChange, renderSelectionLayer, isImmersiveMode, isResizingReader = false },
     ref
   ) {
     const flipBookRef = useRef<any>(null);
     const flipStageRef = useRef<HTMLDivElement | null>(null);
     const [bookOpened, setBookOpened] = useState(false);
     const [HTMLFlipBook, setHTMLFlipBook] = useState<any>(null);
-    // Tracks the actually-displayed leaf's page number, updated from
-    // handleFlip on every page turn. This is what lets `aspect` below
-    // be recomputed PER CURRENTLY-VISIBLE PAGE instead of being fixed
-    // once from a single reference page (page 1) for the entire book —
-    // that fixed-aspect approach was the actual root cause of the
-    // right-side crop: if a given page's real aspect ratio differs
-    // from whatever page the global aspect was derived from (or if
-    // page 1's dims simply hadn't loaded yet when that one-time
-    // calculation ran), the leafBox would be sized to the WRONG
-    // aspect, and the actual rendered page image — wider than that
-    // box — would get clipped.
     const [currentPageNumber, setCurrentPageNumber] = useState(1);
 
     // ── Custom prebuilt-spreads flip state ──────────────────────────
@@ -233,12 +220,7 @@ const FlipEngine = forwardRef<FlipEngineHandle, FlipEngineProps>(
         return { width: 0, height: 0 };
       }
 
-      // Smaller safety margin in immersive mode — more visual size for
-      // the book, since the safety net only needs to guard against
-      // react-pageflip's own internal overhead, not also reserve room
-      // for a left info panel that's already removed from the grid
-      // entirely in this mode.
-      const SAFETY_MARGIN = isImmersiveMode ? 8 : 48;
+      const SAFETY_MARGIN = 12;
 
       const maxSpreadWidth = Math.max(stageWidth - SAFETY_MARGIN * 2, 1);
       const maxSpreadHeight = Math.max(stageHeight - SAFETY_MARGIN * 2, 1);
@@ -281,22 +263,8 @@ const FlipEngine = forwardRef<FlipEngineHandle, FlipEngineProps>(
         leafWidth = Math.max(Math.floor(leafHeight * aspect), 1);
       }
 
-      // Apply the DEBOUNCED renderZoom on top of the base (100%)
-      // fit-contain size computed above. At renderZoom===100 (the
-      // default, and what Fit/fullscreen reset snap back to
-      // immediately rather than waiting for the debounce) this is a
-      // pure no-op — leafBox is then governed by fit-contain alone,
-      // per "at 100/Fit, do not apply zoom scale; calculate using
-      // fit-contain only". Because renderZoom only ever changes after
-      // PremiumReaderV2's debounce settles, this useMemo — and the
-      // PdfPageCanvas re-render its output feeds — only re-runs once
-      // per zoom "settle", not once per click.
-      const renderZoomFactor = renderZoom / 100;
-      leafWidth = Math.max(Math.floor(leafWidth * renderZoomFactor), 1);
-      leafHeight = Math.max(Math.floor(leafHeight * renderZoomFactor), 1);
-
       return { width: leafWidth, height: leafHeight };
-    }, [aspect, mode, stageWidth, stageHeight, isImmersiveMode, renderZoom]);
+    }, [aspect, mode, stageWidth, stageHeight, isImmersiveMode]);
 
     // Per-page fit-contain: leafBox above is the SHARED, CONSTANT
     // frame size react-pageflip's HTMLFlipBook/.stf__item is given —
@@ -394,6 +362,13 @@ const FlipEngine = forwardRef<FlipEngineHandle, FlipEngineProps>(
       flipNext: () => {
         if (isPrebuiltSpreads) {
           customFlipNext();
+        } else if (hasCover && currentPageNumber === 1) {
+          // Direct state transition: cover branch collapses, HTMLFlipBook
+          // mounts fresh with startPage={1} (currentPageNumber 2 → leaf 1)
+          // so it shows pages 2–3 immediately with no flash.
+          const nextPage = 2;
+          setCurrentPageNumber(nextPage);
+          onPageChange({ pageNumbers: [nextPage, nextPage + 1], label: `${getDisplayLabel(profile, nextPage)}–${getDisplayLabel(profile, nextPage + 1)}` });
         } else {
           flipBookRef.current?.pageFlip?.()?.flipNext();
         }
@@ -401,6 +376,10 @@ const FlipEngine = forwardRef<FlipEngineHandle, FlipEngineProps>(
       flipPrev: () => {
         if (isPrebuiltSpreads) {
           customFlipPrev();
+        } else if (hasCover && currentPageNumber <= 2) {
+          // Navigate back to cover
+          setCurrentPageNumber(1);
+          onPageChange({ pageNumbers: [1], label: getDisplayLabel(profile, 1) });
         } else {
           flipBookRef.current?.pageFlip?.()?.flipPrev();
         }
@@ -412,6 +391,18 @@ const FlipEngine = forwardRef<FlipEngineHandle, FlipEngineProps>(
           flipBookRef.current?.pageFlip?.()?.flip(pageIndex);
         }
       },
+      turnToPageSilent: (pageNumber: number) => {
+        if (isPrebuiltSpreads) {
+          // For prebuilt-spreads, page number IS the state directly
+          setCurrentPageNumber(Math.max(1, Math.min(pageNumber, profile.totalPages)));
+          return;
+        }
+        // leaf index = pageNumber - 1 (react-pageflip is 0-based,
+        // page numbers are 1-based, and showCover doesn't shift this
+        // mapping for turnToPage which takes a leaf/page index).
+        const leafIndex = Math.max(0, pageNumber - 1);
+        flipBookRef.current?.pageFlip?.()?.turnToPage(leafIndex);
+      },
     }));
 
     useEffect(() => {
@@ -420,13 +411,28 @@ const FlipEngine = forwardRef<FlipEngineHandle, FlipEngineProps>(
       return () => clearTimeout(timeout);
     }, [pdf]);
 
+    // When the stage resizes (fullscreen enter/exit, window resize),
+    // tell react-pageflip to recalculate its internal layout for the
+    // new dimensions. This is the ONLY thing needed for fullscreen
+    // to work correctly — no remount, no page reset, no key change.
+    // react-pageflip's own PageFlip.update() method re-reads width/
+    // height from its current props and rebuilds the internal render
+    // geometry without touching the current page index.
     useEffect(() => {
-      if (!pdf || !HTMLFlipBook || isPrebuiltSpreads) return;
+      if (!HTMLFlipBook || isPrebuiltSpreads) return;
       const timeout = setTimeout(() => {
-        flipBookRef.current?.pageFlip?.()?.turnToPage(0);
-      }, 150);
+        // Try update() first (exists in some pageflip versions),
+        // fall back to recalculate if it exists. Neither call changes
+        // the current page.
+        const pf = flipBookRef.current?.pageFlip?.();
+        if (typeof pf?.update === "function") {
+          pf.update();
+        } else if (typeof pf?.updateFromHtml === "function") {
+          pf.updateFromHtml(null);
+        }
+      }, 50);
       return () => clearTimeout(timeout);
-    }, [pdf, HTMLFlipBook, isPrebuiltSpreads]);
+    }, [HTMLFlipBook, isPrebuiltSpreads, stageWidth, stageHeight]);
 
     // Prebuilt-spreads books don't need react-pageflip loaded at all
     // (see the branched return below), so they can render immediately
@@ -664,15 +670,82 @@ const FlipEngine = forwardRef<FlipEngineHandle, FlipEngineProps>(
       );
     }
 
+    // ── DEDICATED COVER BRANCH (non-prebuilt-spreads only) ──────────
+    // Renders page 1 directly via PdfPageCanvas, sized to the cover
+    // page's own aspect ratio (not the full spread width), centered.
+    // Navigation from the cover is handled by direct state transitions
+    // — no hidden HTMLFlipBook involved at all, which eliminates the
+    // blank+cover flicker that occurred because react-pageflip was
+    // firing intermediate onFlip events during its animation while
+    // the book was visually hidden.
+    // react-pageflip IS mounted once we move to page 2+, but it
+    // starts at the correct leaf index via turnToPage(1) (leaf 1 =
+    // page 2 in showCover mode) so page 2–3 opens cleanly.
+    if (!isPrebuiltSpreads && hasCover && currentPageNumber === 1) {
+      const coverBox = getPageContainBox(1);
+      // Add a small padding ring so the shadow doesn't clip the page edge
+      const PAD = isImmersiveMode ? 6 : 12;
+      const frameW = coverBox.width + PAD * 2;
+      const frameH = coverBox.height + PAD * 2;
+
+      return (
+        <div
+          ref={flipStageRef}
+          className={`ndl-flip-stage ${bookOpened ? "ndl-flip-opened" : "ndl-flip-closed"}`}
+          style={{ position: "relative", margin: "0 auto", width: frameW, height: frameH, opacity: isResizingReader ? 0 : 1 }}
+        >
+          <div className="ndl-flip-shadow-wrap">
+            <div className="ndl-book-ambient-shadow" aria-hidden />
+            <div
+              style={{
+                width: frameW,
+                height: frameH,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                background: "#fdfcf9",
+                overflow: "hidden",
+              }}
+            >
+              <div style={{ width: coverBox.width, height: coverBox.height, position: "relative", flexShrink: 0 }}>
+                <PdfPageCanvas pdf={pdf} pageNumber={1} width={coverBox.width} height={coverBox.height} />
+                {renderSelectionLayer?.(1, coverBox)}
+              </div>
+            </div>
+          </div>
+          <style>{`
+            .ndl-flip-stage { transition: opacity 0.6s cubic-bezier(0.22,1,0.36,1); }
+            .ndl-flip-closed { opacity: 0; }
+            .ndl-flip-opened { opacity: 1; }
+            .ndl-flip-shadow-wrap { position:relative; filter:drop-shadow(0 20px 40px rgba(40,28,8,0.30)) drop-shadow(0 4px 10px rgba(40,28,8,0.18)); }
+            .ndl-book-ambient-shadow { position:absolute; left:6%; right:6%; bottom:-24px; height:30px; border-radius:50%; background:radial-gradient(ellipse at center,rgba(40,28,8,0.24) 0%,rgba(40,28,8,0.10) 45%,transparent 75%); filter:blur(7px); pointer-events:none; z-index:-1; }
+          `}</style>
+        </div>
+      );
+    }
+
     return (
       <div
         ref={flipStageRef}
         className={`ndl-flip-stage ${bookOpened ? "ndl-flip-opened" : "ndl-flip-closed"}`}
         style={{
-          width: mode === "double" ? leafBox.width * 2 + GUTTER : leafBox.width,
+          // Cover page (page 1 in a hasCover book) is rendered alone by
+          // react-pageflip's showCover behavior — it sits on only the
+          // RIGHT half of the normal double-page stage. To let it fill
+          // the available viewport instead of looking awkward in half
+          // the space, we switch the stage to single-page width while
+          // page 1 is showing, then back to double-page width from page
+          // 2 onward. currentPageNumber is already tracked from
+          // handleFlip, so this is a pure style conditional with no
+          // impact on page sequencing or flip behavior.
+          width:
+            mode === "double" && !(hasCover && currentPageNumber === 1)
+              ? leafBox.width * 2 + GUTTER
+              : leafBox.width,
           height: leafBox.height,
           position: "relative",
           margin: "0 auto",
+          opacity: isResizingReader ? 0 : 1,
         }}
       >
         <div className="ndl-flip-shadow-wrap">
@@ -689,7 +762,7 @@ const FlipEngine = forwardRef<FlipEngineHandle, FlipEngineProps>(
             maxHeight={leafBox.height}
             showCover={isPrebuiltSpreads ? false : hasCover}
             usePortrait={isPrebuiltSpreads ? true : mode === "single"}
-            startPage={0}
+            startPage={Math.max(0, currentPageNumber - 1)}
             drawShadow
             maxShadowOpacity={0.3}
             flippingTime={700}

@@ -179,21 +179,17 @@ export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
   const [isOcrRunning, setIsOcrRunning] = useState(false);
   const [isReady, setIsReady] = useState(false);
   const [zoom, setZoom] = useState(100);
-  // Two-phase zoom: `zoom` is the INSTANT value (drives the CSS
-  // transform in BookSpread for immediate visual feedback).
-  // `renderZoom` is the DEBOUNCED/settled value — only updates ~250ms
-  // after the user stops clicking +/- — and is what actually reaches
-  // FlipEngine/PdfPageCanvas for a real (sharp) re-render. This is
-  // what avoids re-rendering the PDF on every single click while
-  // still producing sharp text once zooming settles.
-  const [renderZoom, setRenderZoom] = useState(100);
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [isDragging, setIsDragging] = useState(false);
+  const dragStartRef = useRef({ x: 0, y: 0 });
 
-  useEffect(() => {
-    const id = window.setTimeout(() => {
-      setRenderZoom(zoom);
-    }, 250);
-    return () => window.clearTimeout(id);
-  }, [zoom]);
+  // Resets pan to center whenever zoom returns to 100%, Fit is
+  // pressed, page changes, or fullscreen exits. Kept as a standalone
+  // function so every reset callsite stays a single line.
+  function resetPan() {
+    setPan({ x: 0, y: 0 });
+    setIsDragging(false);
+  }
 
   // ── In-app "immersive mode" / real browser fullscreen ────────────
   // isFullscreen tracks the BROWSER's actual fullscreen state;
@@ -213,6 +209,15 @@ export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
   // exists purely so BookSpread can re-measure its container after
   // the grid layout has actually changed size.
   const [layoutVersion, setLayoutVersion] = useState(0);
+  // Tracks the current visible page (first of currentPageNumbers) so
+  // PremiumReaderV2 can call flipRef.current?.turnToPageSilent() after
+  // fullscreen layout settles — without remounting or resetting pages.
+  const currentPageRef = useRef(1);
+  // Set true for ~400ms during fullscreen enter/exit transitions so
+  // the book spread is hidden (opacity:0) while leafBox is recalculated
+  // for the new viewport — prevents the user seeing a half-sized or
+  // crop-flash intermediate state.
+  const [isResizingReader, setIsResizingReader] = useState(false);
 
   // Ref to the outer reader workspace container — the actual element
   // passed to requestFullscreen()/exitFullscreen(). Fullscreening
@@ -233,17 +238,41 @@ export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
   useEffect(() => {
     function handleFullscreenChange() {
       const active = Boolean(document.fullscreenElement);
+      // Capture the current page BEFORE any state changes
+      const pageToRestore = currentPageRef.current;
+
+      // Hide the book spread for the duration of the transition so the
+      // user never sees an intermediate wrong-size or cropped state.
+      // Cleared after layout has settled and the page has been restored.
+      setIsResizingReader(true);
+
       setIsFullscreen(active);
       setIsImmersiveMode(active);
       setZoom(100);
-      setRenderZoom(100);
+      resetPan();
       document.getSelection()?.removeAllRanges();
       setSelectionMode("page-turn");
 
       setLayoutVersion((v) => v + 1);
-      requestAnimationFrame(() => setLayoutVersion((v) => v + 1));
-      window.setTimeout(() => setLayoutVersion((v) => v + 1), 150);
-      window.setTimeout(() => setLayoutVersion((v) => v + 1), 350);
+      requestAnimationFrame(() => {
+        setLayoutVersion((v) => v + 1);
+        window.dispatchEvent(new Event("resize"));
+        window.setTimeout(() => {
+          window.dispatchEvent(new Event("resize"));
+          setLayoutVersion((v) => v + 1);
+        }, 150);
+        window.setTimeout(() => {
+          window.dispatchEvent(new Event("resize"));
+          setLayoutVersion((v) => v + 1);
+          // Layout has settled — restore the page silently and reveal.
+          if (pageToRestore > 1) {
+            flipRef.current?.turnToPageSilent(pageToRestore);
+          }
+          // Small extra delay so turnToPageSilent has taken effect
+          // before we reveal the spread.
+          window.setTimeout(() => setIsResizingReader(false), 80);
+        }, 350);
+      });
     }
 
     document.addEventListener("fullscreenchange", handleFullscreenChange);
@@ -389,7 +418,10 @@ export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
     (info: { pageNumbers: number[]; label: string }) => {
       setCurrentPageNumbers(info.pageNumbers);
       setCurrentLabel(info.label);
+      currentPageRef.current = info.pageNumbers[0] ?? 1;
+      resetPan();
     },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     []
   );
 
@@ -502,15 +534,16 @@ export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
   }
 
   function zoomOut() {
-    setZoom((current) => Math.max(current - 10, 60));
+    setZoom((current) => {
+      const next = Math.max(current - 10, 60);
+      if (next <= 100) resetPan();
+      return next;
+    });
   }
 
   function fitToScreen() {
     setZoom(100);
-    setRenderZoom(100);
-    // Fit also exits immersive mode, restoring the standard layout
-    // exactly as it was originally — the "clean reset" button. Pure
-    // app-state change; no browser Fullscreen API involved.
+    resetPan();
     setIsImmersiveMode(false);
     setIsFullscreen(false);
   }
@@ -1261,7 +1294,7 @@ export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
                 style={{
                   display: "flex",
                   gap: 6,
-                  marginBottom: isImmersiveMode ? 2 : 12,
+                  marginBottom: isImmersiveMode ? 0 : 12,
                   background: "#fff",
                   border: "1px solid #e3dcc9",
                   borderRadius: 999,
@@ -1308,23 +1341,42 @@ export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
                 minHeight: 0,
                 minWidth: 0,
                 width: "100%",
-                overflow: zoom > 100 ? "auto" : "hidden",
+                // overflow is always hidden — panning replaces the
+                // overflow:auto scroll approach entirely. The CSS
+                // translate+scale in BookSpread moves the content
+                // within this clipped container, so nothing ever
+                // scrolls; panning just shifts the transform origin.
+                overflow: "hidden",
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
                 position: "relative",
                 zIndex: 10,
+                cursor: zoom > 100 ? (isDragging ? "grabbing" : "grab") : "default",
+                userSelect: isDragging ? "none" : undefined,
               }}
+              onMouseDown={(e) => {
+                if (zoom <= 100) return;
+                // Only primary button
+                if (e.button !== 0) return;
+                setIsDragging(true);
+                dragStartRef.current = {
+                  x: e.clientX - pan.x,
+                  y: e.clientY - pan.y,
+                };
+              }}
+              onMouseMove={(e) => {
+                if (!isDragging) return;
+                setPan({
+                  x: e.clientX - dragStartRef.current.x,
+                  y: e.clientY - dragStartRef.current.y,
+                });
+              }}
+              onMouseUp={() => setIsDragging(false)}
+              onMouseLeave={() => setIsDragging(false)}
             >
-              {/* BookSpread/FlipEngine is the ONE AND ONLY rendering
-                  path for the book, in both normal and fullscreen
-                  mode. Fullscreen changes ONLY the surrounding layout
-                  CSS (left panel removed from the grid, this viewport
-                  gets more space) — it is never a different
-                  component, never a remount, never a second
-                  measurement path. This is what keeps Text Selection,
-                  Read Aloud, and page sequencing identical in both
-                  modes: there is only one of each, always. */}
+              {/* BookSpread is the single rendering path — same
+                  instance for both normal and fullscreen. */}
               <BookSpread
                 ref={flipRef}
                 layoutVersion={layoutVersion}
@@ -1333,7 +1385,8 @@ export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
                 profile={profile}
                 pageDims={pageDims}
                 zoom={zoom}
-                renderZoom={renderZoom}
+                pan={pan}
+                isResizingReader={isResizingReader}
                 onPageChange={handlePageChange}
                 currentPageNumbers={currentPageNumbers}
                 resolvedPages={resolvedPages}
@@ -1411,7 +1464,7 @@ export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
             <div
               style={{
                 flex: "0 0 auto",
-                height: isImmersiveMode ? 48 : 72,
+                height: isImmersiveMode ? 40 : 72,
                 position: "relative",
                 zIndex: 50,
                 pointerEvents: "auto",
@@ -1708,7 +1761,7 @@ export default function PremiumReaderV2({ profile }: PremiumReaderV2Props) {
           background used throughout this reader. */}
       <style>{`
         .ndl-book-stage ::selection {
-          background: rgba(154, 107, 47, 0.45);
+          background: rgba(66, 133, 244, 0.25);
           color: inherit;
         }
       `}</style>

@@ -19,13 +19,8 @@ interface BookSpreadProps {
   profile: BookProfile;
   pageDims: Map<number, RealPageDims>;
   zoom: number;
-  /**
-   * Debounced/settled zoom (see FlipEngine.tsx) — drives actual
-   * canvas re-render resolution via FlipEngine. `zoom` above stays
-   * the instant value, used only for the CSS transform below; this
-   * one only changes ~250ms after the user stops clicking.
-   */
-  renderZoom?: number;
+  pan?: { x: number; y: number };
+  isResizingReader?: boolean;
   onPageChange: (info: { pageNumbers: number[]; label: string }) => void;
   /** Page numbers currently visible — used to mount selection overlays
    *  IMMEDIATELY, independent of whether resolvedPages text has
@@ -84,7 +79,8 @@ const BookSpread = forwardRef<BookSpreadHandle, BookSpreadProps>(
       profile,
       pageDims,
       zoom,
-      renderZoom = 100,
+      pan = { x: 0, y: 0 },
+      isResizingReader,
       onPageChange,
       currentPageNumbers,
       resolvedPages,
@@ -138,10 +134,18 @@ const BookSpread = forwardRef<BookSpreadHandle, BookSpreadProps>(
       const resizeObserver = new ResizeObserver(measure);
       resizeObserver.observe(el);
 
+      // Also listen for synthetic window resize events dispatched by
+      // PremiumReaderV2's fullscreenchange handler — these fire after
+      // the browser layout has actually settled post-fullscreen, which
+      // is sometimes later than the ResizeObserver or the
+      // layoutVersion cascade alone.
+      window.addEventListener("resize", measure);
+
       return () => {
         cancelAnimationFrame(rafId);
         window.clearTimeout(timeoutId);
         resizeObserver.disconnect();
+        window.removeEventListener("resize", measure);
       };
     }, [layoutVersion]);
 
@@ -268,7 +272,10 @@ const BookSpread = forwardRef<BookSpreadHandle, BookSpreadProps>(
           alignItems: "center",
           justifyContent: "center",
           position: "relative",
-          overflow: zoom > 100 ? "auto" : "hidden",
+          // BookSpread itself is always overflow:hidden — panning is
+          // handled by translate() in the CSS transform of the
+          // fit-content wrapper below, not by scrolling this container.
+          overflow: "hidden",
         }}
       >
         <div
@@ -279,61 +286,30 @@ const BookSpread = forwardRef<BookSpreadHandle, BookSpreadProps>(
             alignItems: "center",
             justifyContent: "center",
             position: "relative",
-            // At zoom>100, the CSS transform:scale() on the inner
-            // fit-content wrapper below visually paints LARGER than
-            // innerW/innerH (leafBox itself never exceeds them —
-            // FlipEngine is zoom-independent now). This wrapper must
-            // let that visual overflow escape (visible) rather than
-            // clip it here, so the OUTER container's overflow:"auto"
-            // (set above) is what actually provides the scroll/pan,
-            // not a second clip layer upstream of it.
-            overflow: zoom > 100 ? "visible" : "hidden",
+            // overflow always hidden — pan is handled via translate()
+            // in the transform below, not by overflow scrolling.
+            overflow: "hidden",
           }}
         >
-          {/*
-            BOOK-SIZED WRAPPER — preserves the SelectionLayer overlay-
-            alignment fix (untouched per "do not touch selection
-            popup"): this wrapper uses width/height:"fit-content", so
-            it sizes itself to EXACTLY match FlipEngine's actual
-            rendered box (FlipEngine is its only sized child) — never
-            bigger than innerW/innerH, since FlipEngine's own leafBox
-            calculation is bounded by its own SAFETY_MARGIN to fit
-            within stageWidth/stageHeight. The overlay below is
-            100%/100% of THIS wrapper, so it stays clipped to the real
-            book area only, not the larger outer stage.
-          */}
+          {/* fit-content wrapper: sizes itself to FlipEngine's exact
+              rendered box so the selection overlay is always clipped
+              to the real book area, never the larger outer stage.
+              CSS transform here is INSTANT (no canvas re-render):
+              zoom/100 scales the already-rendered pixels. Canvas
+              resolution stays constant because leafBox/FlipEngine
+              never changes on zoom — only this transform does. */}
           <div
             style={{
               width: "fit-content",
               height: "fit-content",
               position: "relative",
               zIndex: 10,
-              // TWO-PHASE ZOOM: PdfPageCanvas/FlipEngine render AT
-              // renderZoom's resolution (the DEBOUNCED, settled
-              // value), not at 100% and not at the instant `zoom`.
-              // The correct CSS scale factor to visually reach the
-              // user's CURRENT target zoom from whatever resolution
-              // is actually rendered is therefore zoom/renderZoom —
-              // NOT zoom/100. At rest, once the debounce has settled
-              // and renderZoom === zoom, this ratio is exactly 1: the
-              // canvas is shown at its own native rendered resolution
-              // with zero CSS scaling, i.e. sharp text. Only during
-              // the brief window between a click and the ~250ms
-              // debounce settling does this ratio differ from 1,
-              // giving instant visual feedback (briefly softer, since
-              // it's a CSS scale of the previous resolution) until
-              // PdfPageCanvas catches up and repaints natively sharp.
-              transform: `scale(${zoom / renderZoom})`,
+              transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom / 100})`,
               transformOrigin: "center center",
             }}
           >
             <div
               style={{
-                // FlipEngine must not receive pointer events at all while
-                // in Text Selection Mode, so a page-flip drag can never
-                // start while the user is trying to select text. The
-                // overlay container below is a SIBLING of this div, so
-                // it is unaffected.
                 pointerEvents: selectionMode === "text-selection" ? "none" : "auto",
               }}
             >
@@ -346,7 +322,7 @@ const BookSpread = forwardRef<BookSpreadHandle, BookSpreadProps>(
                 stageHeight={innerH}
                 onPageChange={onPageChange}
                 isImmersiveMode={isImmersiveMode}
-                renderZoom={renderZoom}
+                isResizingReader={isResizingReader}
               />
             </div>
 
