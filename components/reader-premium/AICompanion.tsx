@@ -1,12 +1,52 @@
 "use client";
 
+import { useState } from "react";
+
 type AICompanionProps = {
   aiResponse: string;
   aiQuestion: string;
   setAiQuestion: (value: string) => void;
   onAsk: () => void;
   onQuickAction: (action: string) => void;
+  /** Pass these so quick-action buttons can call the real API */
+  bookTitle?: string;
+  pageNumber?: number;
+  pageText?: string;
 };
+
+const QUICK_ACTIONS = [
+  { label: "🧠 Explain",     prompt: "Explain this page/spread clearly for a student. Use simple language, short paragraphs, and end with key takeaways." },
+  { label: "📝 Summarize",   prompt: "Summarize this page/spread in concise bullet points. No more than 8 bullets." },
+  { label: "🌍 Translate",   prompt: "Translate this page/spread content into Hindi. Return only the translated text." },
+  { label: "❓ Quiz",        prompt: "Create exactly 5 multiple-choice quiz questions from this page/spread. For each question provide 4 options and mark the correct answer clearly." },
+  { label: "🎴 Flashcards",  prompt: "Create 5 flashcards from this page/spread. Format each as:\nFRONT: <concept or question>\nBACK: <explanation or answer>" },
+  { label: "📌 Notes",       prompt: "Create clean, structured study notes from this page/spread with headings, bullet points, and important terms highlighted." },
+];
+
+async function callAskAI(
+  question: string,
+  bookTitle: string,
+  pageNumber: number,
+  pageText: string
+): Promise<string> {
+  const content = pageText.trim().length > 20
+    ? pageText
+    : `The user is reading page ${pageNumber} of "${bookTitle}". No extracted text is available — answer based on the book context and the question asked.`;
+
+  const response = await fetch("/api/ask-ai", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      question,
+      book: bookTitle,
+      chapter: `Page ${pageNumber}`,
+      content,
+    }),
+  });
+
+  const data = await response.json();
+  return data?.answer ?? "No response from AI. Please try again.";
+}
 
 export default function AICompanion({
   aiResponse,
@@ -14,15 +54,37 @@ export default function AICompanion({
   setAiQuestion,
   onAsk,
   onQuickAction,
+  bookTitle = "this book",
+  pageNumber = 1,
+  pageText = "",
 }: AICompanionProps) {
-  const actions = [
-    "🧠 Explain",
-    "📝 Summarize",
-    "🌍 Translate",
-    "❓ Quiz",
-    "🎴 Flashcards",
-    "📌 Notes",
-  ];
+  const [loading, setLoading] = useState(false);
+  const [localResponse, setLocalResponse] = useState<string | null>(null);
+
+  // localResponse takes priority when set (real API result);
+  // falls back to parent-controlled aiResponse for custom asks.
+  const displayResponse = localResponse ?? aiResponse;
+
+  async function handleQuickAction(action: typeof QUICK_ACTIONS[number]) {
+    // Keep old onQuickAction for any parent-level side effects
+    onQuickAction(action.label);
+    setLocalResponse(null);
+    setLoading(true);
+    try {
+      const result = await callAskAI(
+        `[Study Mode: Student] ${action.prompt}`,
+        bookTitle,
+        pageNumber,
+        pageText
+      );
+      setLocalResponse(result);
+    } catch (err) {
+      setLocalResponse("Something went wrong. Please try again.");
+      console.error("AI quick action error:", err);
+    } finally {
+      setLoading(false);
+    }
+  }
 
   return (
     <div className="flex h-full flex-col p-5">
@@ -35,7 +97,13 @@ export default function AICompanion({
 
       <div className="mt-5 flex-1 overflow-auto">
         <div className="rounded-3xl bg-slate-900 p-4 text-sm leading-7 text-slate-200 whitespace-pre-wrap">
-          {aiResponse}
+          {loading ? (
+            <span className="animate-pulse text-slate-400">
+              AI is thinking...
+            </span>
+          ) : (
+            displayResponse
+          )}
         </div>
       </div>
 
@@ -45,13 +113,14 @@ export default function AICompanion({
         </p>
 
         <div className="grid grid-cols-2 gap-2">
-          {actions.map((item) => (
+          {QUICK_ACTIONS.map((action) => (
             <button
-              key={item}
-              onClick={() => onQuickAction(item)}
-              className="rounded-2xl bg-slate-900 px-3 py-3 text-xs font-bold hover:bg-blue-600"
+              key={action.label}
+              onClick={() => handleQuickAction(action)}
+              disabled={loading}
+              className="rounded-2xl bg-slate-900 px-3 py-3 text-xs font-bold hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {item}
+              {action.label}
             </button>
           ))}
         </div>
@@ -61,14 +130,20 @@ export default function AICompanion({
             value={aiQuestion}
             onChange={(e) => setAiQuestion(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === "Enter") onAsk();
+              if (e.key === "Enter") {
+                setLocalResponse(null);
+                onAsk();
+              }
             }}
             placeholder="Ask AI about this book..."
             className="min-w-0 flex-1 rounded-2xl bg-white px-4 py-3 text-sm text-black outline-none"
           />
 
           <button
-            onClick={onAsk}
+            onClick={() => {
+              setLocalResponse(null);
+              onAsk();
+            }}
             className="rounded-2xl bg-blue-600 px-4 py-3 text-sm font-bold text-white"
           >
             Send
