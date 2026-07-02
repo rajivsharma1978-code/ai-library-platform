@@ -2,392 +2,566 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
-type PdfBookSpreadProps = {
+export type PdfBookSpreadProps = {
   title: string;
   pdfPath: string;
   pageNumber: number;
   totalPages: string;
   onPrevious: () => void;
   onNext: () => void;
-  /** 100 = fit (default). CSS transform zoom — no canvas re-render. */
   zoom?: number;
-  /** Pan offset in CSS pixels, applied together with zoom transform. */
   pan?: { x: number; y: number };
+  textSelectMode?: boolean;
   imageSelectMode?: boolean;
   onImageCapture?: (dataUrl: string, pageNumber: number) => void;
+  /**
+   * Fires after first render with canvas CSS dims AND the inner book-card
+   * container dims so the parent can compute an accurate auto-fit zoom.
+   */
+  onPageRendered?: (cssW: number, cssH: number, cardW: number, cardH: number) => void;
+  /** Fires with extracted text keyed by page number after each render. */
+  onTextExtracted?: (texts: Record<number, string>) => void;
+  layoutMode?: "single" | "spread";
+  /** Triggers a brief fade-slide animation (used by parent on page change). */
+  isFlipping?: boolean;
 };
 
-const SAMPLE_STEP = 2;
-const WHITE_THRESHOLD = 245;
-const SAFE_PADDING = 8;
-const MIN_CROP_FRACTION = 0.05;
+// ── Render size: conservative so canvas fits on typical laptops ─────
+// Parent computes fit-zoom from the card container vs this; these are
+// the max rendered dimensions used when computing the CSS transform.
+const PAGE_MAX_W = 860;
+const PAGE_MAX_H = 700;
 
+// ── Whitespace crop ─────────────────────────────────────────────────
+const SAMPLE_STEP = 2, WHITE_THRESHOLD = 245, SAFE_PADDING = 6, MIN_CROP_FRAC = 0.04;
 interface CropBox { x: number; y: number; w: number; h: number }
-
-function detectContentBounds(
-  data: Uint8ClampedArray, canvasW: number, canvasH: number
-): CropBox | null {
-  let minX = canvasW, minY = canvasH, maxX = 0, maxY = 0, found = false;
-  for (let y = 0; y < canvasH; y += SAMPLE_STEP) {
-    for (let x = 0; x < canvasW; x += SAMPLE_STEP) {
-      const idx = (y * canvasW + x) * 4;
-      if (data[idx + 3] < 10) continue;
-      if (data[idx] >= WHITE_THRESHOLD && data[idx+1] >= WHITE_THRESHOLD && data[idx+2] >= WHITE_THRESHOLD) continue;
+function detectContentBounds(data: Uint8ClampedArray, cW: number, cH: number): CropBox | null {
+  let minX = cW, minY = cH, maxX = 0, maxY = 0, found = false;
+  for (let y = 0; y < cH; y += SAMPLE_STEP) {
+    for (let x = 0; x < cW; x += SAMPLE_STEP) {
+      const i = (y * cW + x) * 4;
+      if (data[i+3] < 10 || (data[i] >= WHITE_THRESHOLD && data[i+1] >= WHITE_THRESHOLD && data[i+2] >= WHITE_THRESHOLD)) continue;
       found = true;
-      minX = Math.min(minX, x); minY = Math.min(minY, y);
-      maxX = Math.max(maxX, x); maxY = Math.max(maxY, y);
+      if (x < minX) minX = x; if (y < minY) minY = y;
+      if (x > maxX) maxX = x; if (y > maxY) maxY = y;
     }
   }
   if (!found) return null;
-  const x = Math.max(0, minX - SAFE_PADDING);
-  const y = Math.max(0, minY - SAFE_PADDING);
-  const w = Math.min(canvasW, maxX + SAFE_PADDING) - x;
-  const h = Math.min(canvasH, maxY + SAFE_PADDING) - y;
-  if (w < canvasW * MIN_CROP_FRACTION || h < canvasH * MIN_CROP_FRACTION) return null;
+  const x = Math.max(0, minX - SAFE_PADDING), y = Math.max(0, minY - SAFE_PADDING);
+  const w = Math.min(cW, maxX + SAFE_PADDING) - x, h = Math.min(cH, maxY + SAFE_PADDING) - y;
+  if (w < cW * MIN_CROP_FRAC || h < cH * MIN_CROP_FRAC) return null;
   return { x, y, w, h };
 }
 
-function clearCanvas(canvas: HTMLCanvasElement | null) {
-  if (!canvas) return;
-  const ctx = canvas.getContext("2d");
-  if (!ctx) return;
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-  canvas.width = 1; canvas.height = 1;
+// ── Render a PDF page → canvas + text layer, return text content ────
+async function renderPdfPage(params: {
+  pdf: any; pageNo: number; canvas: HTMLCanvasElement;
+  textLayer: HTMLDivElement | null; pdfjsLib: any;
+  maxW: number; maxH: number; cancelled: () => boolean;
+}): Promise<{ cssW: number; cssH: number; text: string } | null> {
+  const { pdf, pageNo, canvas, textLayer, pdfjsLib, maxW, maxH, cancelled } = params;
+  if (pageNo < 1 || pageNo > pdf.numPages) return null;
+
+  const page = await pdf.getPage(pageNo);
+  if (cancelled()) return null;
+
+  // Offscreen render at 2× for quality
+  const OS = 2;
+  const osVP = page.getViewport({ scale: OS });
+  const os = document.createElement("canvas");
+  os.width = Math.ceil(osVP.width); os.height = Math.ceil(osVP.height);
+  const osCtx = os.getContext("2d", { willReadFrequently: true })!;
+  osCtx.fillStyle = "#fff"; osCtx.fillRect(0, 0, os.width, os.height);
+
+  // Extract text content in parallel with canvas render for efficiency
+  const [, textContent] = await Promise.all([
+    page.render({ canvasContext: osCtx, viewport: osVP, canvas: os }).promise,
+    page.getTextContent().catch(() => ({ items: [] as any[] })),
+  ]);
+  if (cancelled()) return null;
+
+  // Build extracted text string (used by AI when no selection is active)
+  const text = (textContent.items as any[])
+    .map((item: any) => item.str)
+    .join(" ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  // Crop whitespace
+  let srcX = 0, srcY = 0, srcW = os.width, srcH = os.height;
+  try {
+    const id = osCtx.getImageData(0, 0, os.width, os.height);
+    const c = detectContentBounds(id.data, os.width, os.height);
+    if (c) { srcX = c.x; srcY = c.y; srcW = c.w; srcH = c.h; }
+  } catch {}
+
+  // Fit-contain
+  const asp = srcW / srcH;
+  let dW: number, dH: number;
+  if (asp > maxW / maxH) { dW = maxW; dH = Math.floor(maxW / asp); }
+  else { dH = maxH; dW = Math.floor(maxH * asp); }
+  if (dW < 1 || dH < 1) return null;
+
+  // Draw to main canvas
+  canvas.width = dW; canvas.height = dH;
+  canvas.style.width = dW + "px"; canvas.style.height = dH + "px";
+  const ctx = canvas.getContext("2d")!;
+  ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, dW, dH);
+  ctx.drawImage(os, srcX, srcY, srcW, srcH, 0, 0, dW, dH);
+
+  // Text selection layer
+  if (textLayer) {
+    textLayer.innerHTML = "";
+    const displayScale = dW / (srcW / OS);
+    const tVP = page.getViewport({ scale: displayScale });
+    const cropOffsetX = (srcX / OS) * displayScale;
+    const cropOffsetY = (srcY / OS) * displayScale;
+    textLayer.style.width = Math.round(tVP.width) + "px";
+    textLayer.style.height = Math.round(tVP.height) + "px";
+    textLayer.style.transform = `translate(${-cropOffsetX}px, ${-cropOffsetY}px)`;
+    try {
+      const task = pdfjsLib.renderTextLayer({
+        textContentSource: page.streamTextContent(), container: textLayer, viewport: tVP,
+      });
+      if (task?.promise) await task.promise; else if (task?.then) await task;
+    } catch {
+      try {
+        (textContent.items as any[]).forEach((item: any) => {
+          if (!item.str?.trim()) return;
+          const span = document.createElement("span");
+          span.textContent = item.str + (item.hasEOL ? "\n" : " ");
+          const [a, , , d, e, f] = item.transform;
+          const pt = tVP.convertToViewportPoint(e, f);
+          span.style.cssText = [
+            "position:absolute", `left:${pt[0]}px`,
+            `top:${pt[1] - Math.abs(d) * displayScale}px`,
+            `font-size:${Math.abs(d) * displayScale}px`,
+            "font-family:sans-serif", "white-space:pre", "color:transparent", "cursor:text",
+          ].join(";");
+          textLayer.appendChild(span);
+        });
+      } catch {}
+    }
+  }
+
+  return { cssW: dW, cssH: dH, text };
 }
 
-// ── Image selection overlay ──────────────────────────────────────────
-interface DragRect { x: number; y: number; w: number; h: number }
-
-function ImageSelectOverlay({
-  canvasRef, pageNumber, onCapture,
-}: {
-  canvasRef: React.RefObject<HTMLCanvasElement | null>;
-  pageNumber: number;
+interface GlobalImageSelectOverlayProps {
   onCapture: (dataUrl: string, pageNumber: number) => void;
-}) {
+}
+function GlobalImageSelectOverlay({ onCapture }: GlobalImageSelectOverlayProps) {
   const overlayRef = useRef<HTMLDivElement>(null);
-  const dragStart = useRef<{ x: number; y: number } | null>(null);
-  const [drag, setDrag] = useState<DragRect | null>(null);
+  const lockedCanvas  = useRef<HTMLCanvasElement | null>(null);
+  const lockedPageNum = useRef<number>(0);
+  const dragStartScreen = useRef<{ x: number; y: number } | null>(null);
 
-  const handlePointerDown = useCallback((e: React.PointerEvent) => {
-    const el = overlayRef.current; if (!el) return;
-    el.setPointerCapture(e.pointerId);
-    const r = el.getBoundingClientRect();
-    dragStart.current = { x: e.clientX - r.left, y: e.clientY - r.top };
-    setDrag({ x: e.clientX - r.left, y: e.clientY - r.top, w: 0, h: 0 });
+  // Drag rect in OVERLAY-LOCAL pixels — directly usable as left/top/width/height
+  // on the absolutely-positioned rectangle child. No containerRef math needed.
+  const [dragLocal, setDragLocal] = useState<{
+    left: number; top: number; width: number; height: number;
+    // Keep screen coords too for canvas intersection in onPointerUp
+    screenX: number; screenY: number; screenW: number; screenH: number;
+  } | null>(null);
+
+  const toLocal = useCallback((clientX: number, clientY: number) => {
+    const r = overlayRef.current?.getBoundingClientRect();
+    if (!r) return { x: 0, y: 0 };
+    return { x: clientX - r.left, y: clientY - r.top };
   }, []);
 
-  const handlePointerMove = useCallback((e: React.PointerEvent) => {
-    if (!dragStart.current) return;
-    const el = overlayRef.current; if (!el) return;
-    const r = el.getBoundingClientRect();
-    const cx = e.clientX - r.left, cy = e.clientY - r.top;
-    setDrag({
-      x: Math.min(dragStart.current.x, cx), y: Math.min(dragStart.current.y, cy),
-      w: Math.abs(cx - dragStart.current.x), h: Math.abs(cy - dragStart.current.y),
-    });
-  }, []);
+  const onPointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    if (e.button !== 0) return;
+    overlayRef.current?.setPointerCapture(e.pointerId);
 
-  const handlePointerUp = useCallback((e: React.PointerEvent) => {
+    // Temporarily hide overlay so elementFromPoint sees the canvas beneath
+    const overlay = overlayRef.current;
+    if (overlay) overlay.style.pointerEvents = "none";
+    const el = document.elementFromPoint(e.clientX, e.clientY);
+    if (overlay) overlay.style.pointerEvents = "auto";
+
+    const canvas = el instanceof HTMLCanvasElement
+      ? el
+      : (el?.closest("canvas") as HTMLCanvasElement | null);
+
+    if (!canvas) return; // clicked outside any canvas
+
+    // Read page number from data-pdf-page attribute set on each canvas
+    const pageNum = parseInt(canvas.getAttribute("data-pdf-page") || "1", 10) || 1;
+
+    lockedCanvas.current  = canvas;
+    lockedPageNum.current = pageNum;
+    dragStartScreen.current = { x: e.clientX, y: e.clientY };
+
+    const local = toLocal(e.clientX, e.clientY);
+    setDragLocal({ left: local.x, top: local.y, width: 0, height: 0,
+                   screenX: e.clientX, screenY: e.clientY, screenW: 0, screenH: 0 });
+  }, [toLocal]);
+
+  const onPointerMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    if (!dragStartScreen.current || !lockedCanvas.current) return;
+    const start = dragStartScreen.current;
+    const startLocal = toLocal(start.x, start.y);
+    const curLocal   = toLocal(e.clientX, e.clientY);
+
+    const left   = Math.min(startLocal.x, curLocal.x);
+    const top    = Math.min(startLocal.y, curLocal.y);
+    const width  = Math.abs(curLocal.x - startLocal.x);
+    const height = Math.abs(curLocal.y - startLocal.y);
+    const screenX = Math.min(start.x, e.clientX);
+    const screenY = Math.min(start.y, e.clientY);
+    const screenW = Math.abs(e.clientX - start.x);
+    const screenH = Math.abs(e.clientY - start.y);
+
+    setDragLocal({ left, top, width, height, screenX, screenY, screenW, screenH });
+  }, [toLocal]);
+
+  const onPointerUp = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     overlayRef.current?.releasePointerCapture(e.pointerId);
-    if (!drag || drag.w < 8 || drag.h < 8) { dragStart.current = null; setDrag(null); return; }
-    const canvas = canvasRef.current;
-    if (!canvas) { dragStart.current = null; setDrag(null); return; }
+    const canvas = lockedCanvas.current;
+    const d = dragLocal;
+    dragStartScreen.current = null;
+    lockedCanvas.current = null;
+    setDragLocal(null);
+
+    if (!canvas || !d || d.screenW < 8 || d.screenH < 8) {
+      console.warn("[ImageSelect] Drag too small or no canvas");
+      return;
+    }
+
     const canvasRect = canvas.getBoundingClientRect();
-    const overlayRect = overlayRef.current!.getBoundingClientRect();
-    const cssX = overlayRect.left + drag.x - canvasRect.left;
-    const cssY = overlayRect.top + drag.y - canvasRect.top;
-    const scaleX = canvas.width / canvasRect.width;
-    const scaleY = canvas.height / canvasRect.height;
-    let sx = Math.max(0, Math.round(cssX * scaleX));
-    let sy = Math.max(0, Math.round(cssY * scaleY));
-    let sw = Math.max(1, Math.min(Math.round(drag.w * scaleX), canvas.width - sx));
-    let sh = Math.max(1, Math.min(Math.round(drag.h * scaleY), canvas.height - sy));
+    if (canvasRect.width <= 0 || canvasRect.height <= 0) return;
+
+    // Intersect screen-space drag rect with canvas screen rect
+    const selLeft   = Math.max(d.screenX, canvasRect.left);
+    const selTop    = Math.max(d.screenY, canvasRect.top);
+    const selRight  = Math.min(d.screenX + d.screenW, canvasRect.right);
+    const selBottom = Math.min(d.screenY + d.screenH, canvasRect.bottom);
+
+    if (selRight <= selLeft || selBottom <= selTop) {
+      console.warn("[ImageSelect] Selection outside canvas");
+      return;
+    }
+
+    // Map screen coords → canvas buffer coords
+    const bufScaleX = canvas.width  / canvasRect.width;
+    const bufScaleY = canvas.height / canvasRect.height;
+    const sx = Math.max(0, Math.round((selLeft   - canvasRect.left) * bufScaleX));
+    const sy = Math.max(0, Math.round((selTop    - canvasRect.top)  * bufScaleY));
+    const sw = Math.min(Math.round((selRight  - selLeft)   * bufScaleX), canvas.width  - sx);
+    const sh = Math.min(Math.round((selBottom - selTop)    * bufScaleY), canvas.height - sy);
+
+    console.log(`[ImageSelect] page=${lockedPageNum.current} buf=${canvas.width}×${canvas.height} sx=${sx} sy=${sy} sw=${sw} sh=${sh}`);
+
+    if (sw < 4 || sh < 4) { console.warn("[ImageSelect] Crop too small"); return; }
+
     const crop = document.createElement("canvas");
     crop.width = sw; crop.height = sh;
     const ctx = crop.getContext("2d");
-    if (ctx) {
-      ctx.drawImage(canvas, sx, sy, sw, sh, 0, 0, sw, sh);
-      try { onCapture(crop.toDataURL("image/png"), pageNumber); } catch {}
+    if (!ctx) return;
+    ctx.drawImage(canvas, sx, sy, sw, sh, 0, 0, sw, sh);
+    let dataUrl = "";
+    try { dataUrl = crop.toDataURL("image/png"); } catch (err) {
+      console.error("[ImageSelect] toDataURL:", err); return;
     }
-    dragStart.current = null; setDrag(null);
-  }, [drag, canvasRef, pageNumber, onCapture]);
+    if (!dataUrl || dataUrl.length < 100) return;
+
+    onCapture(dataUrl, lockedPageNum.current);
+  }, [dragLocal, onCapture]);
 
   return (
     <div
       ref={overlayRef}
-      onPointerDown={handlePointerDown}
-      onPointerMove={handlePointerMove}
-      onPointerUp={handlePointerUp}
-      style={{ position: "absolute", inset: 0, cursor: "crosshair", zIndex: 30 }}
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={onPointerUp}
+      style={{ position: "absolute", inset: 0, cursor: "crosshair", zIndex: 50, userSelect: "none" }}
     >
-      {drag && drag.w > 2 && drag.h > 2 && (
-        <div style={{
-          position: "absolute", left: drag.x, top: drag.y, width: drag.w, height: drag.h,
-          border: "2px dashed #3b82f6", background: "rgba(59,130,246,0.12)", pointerEvents: "none",
-        }} />
+      {/* Selection rectangle — coordinates are already overlay-local, so
+          left/top are used directly with no extra conversion math */}
+      {dragLocal && dragLocal.width > 3 && dragLocal.height > 3 && (
+        <div
+          className="pointer-events-none absolute border-2 border-blue-500 bg-blue-500/15 z-40"
+          style={{
+            left:   dragLocal.left,
+            top:    dragLocal.top,
+            width:  dragLocal.width,
+            height: dragLocal.height,
+          }}
+        />
       )}
-      <div style={{
-        position: "absolute", top: 8, left: "50%", transform: "translateX(-50%)",
-        background: "rgba(0,0,0,0.72)", color: "#fff", borderRadius: 999,
-        padding: "4px 14px", fontSize: 11, fontWeight: 700, pointerEvents: "none", whiteSpace: "nowrap",
-      }}>
-        Drag to select an image or diagram region
+      <div className="pointer-events-none absolute" style={{ top: 8, left: "50%", transform: "translateX(-50%)",
+        background: "rgba(0,0,0,0.75)", color: "#fff", borderRadius: 999,
+        padding: "4px 14px", fontSize: 11, fontWeight: 700, whiteSpace: "nowrap" }}>
+        Drag over any diagram, chart, or image region
       </div>
     </div>
   );
 }
 
-// ── Main component ───────────────────────────────────────────────────
+// ── PageBox: canvas + text layer ────────────────────────────────────
+function PageBox({ canvasRef, textLayerRef, size, textSelectMode, imageSelectMode, pageNumber }: {
+  canvasRef: React.RefObject<HTMLCanvasElement | null>;
+  textLayerRef: React.RefObject<HTMLDivElement | null>;
+  size: { w: number; h: number } | null;
+  textSelectMode: boolean;
+  imageSelectMode: boolean;
+  pageNumber: number;
+}) {
+  return (
+    <div style={{ position: "relative", width: size?.w || undefined, height: size?.h || undefined, display: size ? "block" : "none" }}>
+      {/* data-pdf-page lets GlobalImageSelectOverlay identify which page was clicked */}
+      <canvas ref={canvasRef} data-pdf-page={pageNumber} style={{ display: "block", borderRadius: 10 }} />
+      <div style={{ position: "absolute", inset: 0, overflow: "hidden" }}>
+        <div ref={textLayerRef} className="ndl-text-layer" style={{
+          position: "absolute", top: 0, left: 0,
+          pointerEvents: (textSelectMode && !imageSelectMode) ? "auto" : "none",
+          userSelect: (textSelectMode && !imageSelectMode) ? "text" : "none",
+          cursor: (textSelectMode && !imageSelectMode) ? "text" : "default",
+        }} />
+      </div>
+      {/* Image selection is handled by GlobalImageSelectOverlay on the book card */}
+    </div>
+  );
+}
+
+// ── Main component ──────────────────────────────────────────────────
 export default function PdfBookSpread({
   title, pdfPath, pageNumber, totalPages,
   onPrevious, onNext,
   zoom = 100, pan = { x: 0, y: 0 },
-  imageSelectMode = false, onImageCapture,
+  textSelectMode = false,
+  imageSelectMode = false,
+  onImageCapture,
+  onPageRendered,
+  onTextExtracted,
+  layoutMode = "single",
+  isFlipping = false,
 }: PdfBookSpreadProps) {
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const textLayerRef = useRef<HTMLDivElement | null>(null);
-  const renderIdRef = useRef(0);
-  const [loading, setLoading] = useState(false);
-  // Rendered canvas CSS dimensions — the text layer must match these exactly.
-  const [canvasSize, setCanvasSize] = useState({ w: 0, h: 0 });
+  const canvasRef  = useRef<HTMLCanvasElement | null>(null);
+  const textRef    = useRef<HTMLDivElement | null>(null);
+  const leftCanvasRef  = useRef<HTMLCanvasElement | null>(null);
+  const leftTextRef    = useRef<HTMLDivElement | null>(null);
+  const rightCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const rightTextRef   = useRef<HTMLDivElement | null>(null);
+  // Ref to the inner book card div — for measuring available area
+  const bookCardRef = useRef<HTMLDivElement | null>(null);
 
-  const safePage = Number(pageNumber) || 1;
-  const total = Number(totalPages || 1);
+  const renderIdRef = useRef(0);
+  const renderedCallbackFired = useRef(false);
+  const [loading, setLoading] = useState(false);
+  const [singleSize, setSingleSize] = useState<{ w: number; h: number } | null>(null);
+  const [leftSize,   setLeftSize]   = useState<{ w: number; h: number } | null>(null);
+  const [rightSize,  setRightSize]  = useState<{ w: number; h: number } | null>(null);
+
+  const safePage = Math.max(1, Number(pageNumber) || 1);
+  const total    = Math.max(1, Number(totalPages)  || 1);
+  const isSpread = layoutMode === "spread" && safePage > 1;
+  const rightPage = safePage + 1;
 
   useEffect(() => {
-    const currentRenderId = ++renderIdRef.current;
-    clearCanvas(canvasRef.current);
-    // Clear text layer
-    if (textLayerRef.current) textLayerRef.current.innerHTML = "";
-    setCanvasSize({ w: 0, h: 0 });
+    const id = ++renderIdRef.current;
     let cancelled = false;
+    const isCancelled = () => cancelled || renderIdRef.current !== id;
 
-    async function renderBook() {
+    setSingleSize(null); setLeftSize(null); setRightSize(null);
+    renderedCallbackFired.current = false;
+    setLoading(true);
+
+    async function go() {
       try {
-        setLoading(true);
         const pdfjsLib = await import("pdfjs-dist");
         pdfjsLib.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
-        if (cancelled || renderIdRef.current !== currentRenderId) return;
+        if (isCancelled()) return;
 
         const pdf = await pdfjsLib.getDocument(pdfPath).promise;
-        if (cancelled || renderIdRef.current !== currentRenderId) return;
-        if (safePage > pdf.numPages) return;
+        if (isCancelled()) return;
 
-        const page = await pdf.getPage(safePage);
-        if (cancelled || renderIdRef.current !== currentRenderId) return;
+        const extractedTexts: Record<number, string> = {};
 
-        // ── Render canvas ──────────────────────────────────────────
-        const MAX_W = 1250, MAX_H = 900;
-        const offscreenScale = 2;
-        const offscreenVP = page.getViewport({ scale: offscreenScale });
-
-        const offscreen = document.createElement("canvas");
-        offscreen.width = Math.ceil(offscreenVP.width);
-        offscreen.height = Math.ceil(offscreenVP.height);
-        const offCtx = offscreen.getContext("2d", { willReadFrequently: true });
-        if (!offCtx) return;
-        offCtx.fillStyle = "#ffffff";
-        offCtx.fillRect(0, 0, offscreen.width, offscreen.height);
-        await page.render({ canvasContext: offCtx, viewport: offscreenVP, canvas: offscreen }).promise;
-        if (cancelled || renderIdRef.current !== currentRenderId) return;
-
-        // Crop whitespace
-        let srcX = 0, srcY = 0, srcW = offscreen.width, srcH = offscreen.height;
-        try {
-          const imgData = offCtx.getImageData(0, 0, offscreen.width, offscreen.height);
-          const crop = detectContentBounds(imgData.data, offscreen.width, offscreen.height);
-          if (crop) { srcX = crop.x; srcY = crop.y; srcW = crop.w; srcH = crop.h; }
-        } catch {}
-
-        const aspect = srcW / srcH;
-        let destW: number, destH: number;
-        if (aspect > MAX_W / MAX_H) { destW = MAX_W; destH = Math.floor(MAX_W / aspect); }
-        else { destH = MAX_H; destW = Math.floor(MAX_H * aspect); }
-        if (!destW || !destH) return;
-
-        const canvas = canvasRef.current;
-        if (!canvas || cancelled || renderIdRef.current !== currentRenderId) return;
-        canvas.width = destW; canvas.height = destH;
-        canvas.style.width = `${destW}px`; canvas.style.height = `${destH}px`;
-        const ctx = canvas.getContext("2d");
-        if (!ctx) return;
-        ctx.fillStyle = "#ffffff";
-        ctx.fillRect(0, 0, destW, destH);
-        ctx.drawImage(offscreen, srcX, srcY, srcW, srcH, 0, 0, destW, destH);
-
-        // ── Render text layer for native text selection ────────────
-        // The text layer must use the SAME scale as the CSS display
-        // dimensions (destW/destH), not the offscreen render scale.
-        // We get the native 1x viewport, then scale it so text items
-        // land exactly over the cropped/resized canvas pixels.
-        const nativeVP = page.getViewport({ scale: 1 });
-        // Scale factors from native PDF units → display CSS pixels,
-        // accounting for the whitespace crop (srcX/srcY/srcW/srcH in
-        // offscreen coords → convert back to native PDF units).
-        const cropScaleX = offscreen.width / srcW;   // how much of offscreen is content
-        const cropScaleY = offscreen.height / srcH;
-        const displayScaleX = destW / (nativeVP.width * offscreenScale / cropScaleX);
-        const displayScaleY = destH / (nativeVP.height * offscreenScale / cropScaleY);
-        const displayScale = Math.min(displayScaleX, displayScaleY);
-        const textVP = page.getViewport({ scale: displayScale });
-
-        if (textLayerRef.current && !cancelled && renderIdRef.current === currentRenderId) {
-          const tl = textLayerRef.current;
-          tl.innerHTML = "";
-          tl.style.width = `${destW}px`;
-          tl.style.height = `${destH}px`;
-
-          try {
-            // PDF.js v5: renderTextLayer takes { textContentSource, container, viewport }
-            const task = (pdfjsLib as any).renderTextLayer({
-              textContentSource: page.streamTextContent(),
-              container: tl,
-              viewport: textVP,
-            });
-            // task may return an object with .promise or be a promise itself
-            if (task?.promise) await task.promise;
-            else if (task?.then) await task;
-          } catch (e) {
-            // Fallback: manually place text spans from getTextContent
-            try {
-              const tc = await page.getTextContent();
-              tc.items.forEach((item: any) => {
-                if (!item.str?.trim()) return;
-                const span = document.createElement("span");
-                span.textContent = item.str + (item.hasEOL ? "\n" : " ");
-                // item.transform = [a, b, c, d, e, f] in PDF coords
-                const [a, b, c, d, e, f] = item.transform;
-                // Convert PDF Y (bottom-up) to CSS Y (top-down) using viewport
-                const tx = textVP.convertToViewportPoint(e, f);
-                const fontSize = Math.sqrt(a * a + b * b) * displayScale;
-                span.style.cssText = `
-                  position:absolute;
-                  left:${tx[0]}px;
-                  top:${tx[1] - fontSize}px;
-                  font-size:${fontSize}px;
-                  font-family:sans-serif;
-                  white-space:pre;
-                  color:transparent;
-                  cursor:text;
-                  transform-origin:0 0;
-                  user-select:text;
-                `;
-                tl.appendChild(span);
+        if (!isSpread) {
+          if (!canvasRef.current) return;
+          const result = await renderPdfPage({
+            pdf, pageNo: safePage, canvas: canvasRef.current,
+            textLayer: textRef.current, pdfjsLib,
+            maxW: PAGE_MAX_W, maxH: PAGE_MAX_H, cancelled: isCancelled,
+          });
+          if (result && !isCancelled()) {
+            setSingleSize({ w: result.cssW, h: result.cssH });
+            extractedTexts[safePage] = result.text;
+            console.log(`[AI] Page ${safePage} text extracted: ${result.text.length} chars`);
+            if (!renderedCallbackFired.current) {
+              renderedCallbackFired.current = true;
+              // Fire after a tick so bookCardRef has laid out
+              requestAnimationFrame(() => {
+                const card = bookCardRef.current;
+                const cardW = card?.clientWidth  || 0;
+                const cardH = card?.clientHeight || 0;
+                onPageRendered?.(result.cssW, result.cssH, cardW, cardH);
               });
-            } catch {}
+            }
           }
+        } else {
+          const halfW = Math.floor(PAGE_MAX_W * 0.50);
+          const [lResult, rResult] = await Promise.all([
+            leftCanvasRef.current ? renderPdfPage({
+              pdf, pageNo: safePage, canvas: leftCanvasRef.current,
+              textLayer: leftTextRef.current, pdfjsLib,
+              maxW: halfW, maxH: PAGE_MAX_H, cancelled: isCancelled,
+            }) : Promise.resolve(null),
+            rightPage <= total && rightCanvasRef.current ? renderPdfPage({
+              pdf, pageNo: rightPage, canvas: rightCanvasRef.current,
+              textLayer: rightTextRef.current, pdfjsLib,
+              maxW: halfW, maxH: PAGE_MAX_H, cancelled: isCancelled,
+            }) : Promise.resolve(null),
+          ]);
+          if (!isCancelled()) {
+            if (lResult) { setLeftSize({ w: lResult.cssW, h: lResult.cssH }); extractedTexts[safePage] = lResult.text; }
+            if (rResult) { setRightSize({ w: rResult.cssW, h: rResult.cssH }); extractedTexts[rightPage] = rResult.text; }
+            console.log(`[AI] Spread pages ${safePage}-${rightPage} extracted: ${(lResult?.text?.length||0) + (rResult?.text?.length||0)} chars`);
+            if ((lResult || rResult) && !renderedCallbackFired.current) {
+              renderedCallbackFired.current = true;
+              const totalW = (lResult?.cssW || 0) + (rResult?.cssW || 0) + 4;
+              const maxH   = Math.max(lResult?.cssH || 0, rResult?.cssH || 0);
+              requestAnimationFrame(() => {
+                const card = bookCardRef.current;
+                onPageRendered?.(totalW, maxH, card?.clientWidth || 0, card?.clientHeight || 0);
+              });
+            }
+          }
+        }
 
-          setCanvasSize({ w: destW, h: destH });
+        if (!isCancelled() && Object.keys(extractedTexts).length > 0) {
+          onTextExtracted?.(extractedTexts);
         }
       } catch (err) {
         console.error("PDF render error:", err);
       } finally {
-        if (!cancelled && renderIdRef.current === currentRenderId) setLoading(false);
+        if (!cancelled && renderIdRef.current === id) setLoading(false);
       }
     }
 
-    renderBook();
+    go();
     return () => { cancelled = true; };
-  }, [pdfPath, safePage]);
+  }, [pdfPath, safePage, isSpread, total]); // eslint-disable-line
 
-  // Zoom + pan transform — applied to canvas+textlayer wrapper
-  const scale = zoom / 100;
-  const zoomTransform = `translate(${pan.x}px, ${pan.y}px) scale(${scale})`;
+  const zoomTransform = `translate(${pan.x}px, ${pan.y}px) scale(${zoom / 100})`;
+  const pageLabel = isSpread
+    ? `Pages ${safePage}–${Math.min(rightPage, total)} of ${total}`
+    : `Page ${safePage} of ${total}`;
 
   return (
-    <section className="flex min-h-screen flex-col bg-[radial-gradient(circle_at_center,#fff8e8_0%,#ead2a6_50%,#c18a3f_100%)] px-8 py-6">
-      <header className="mx-auto mb-5 flex w-full max-w-[1500px] items-center justify-between">
+    <section className="flex h-full flex-col bg-[radial-gradient(circle_at_center,#fff8e8_0%,#ead2a6_50%,#c18a3f_100%)] px-6 py-3">
+      <header className="mx-auto mb-3 flex w-full max-w-[1500px] flex-shrink-0 items-center justify-between">
         <div>
           <p className="text-xs font-black uppercase tracking-[0.35em] text-amber-800">National Digital Library AI</p>
-          <h1 className="mt-1 text-3xl font-black text-slate-950">{title}</h1>
+          <h1 className="mt-0.5 text-2xl font-black text-slate-950">{title}</h1>
         </div>
-        <div className="rounded-full bg-white/80 px-5 py-2 text-sm font-bold text-slate-700 shadow">
-          Page {safePage} of {total}
+        <div className="rounded-full bg-white/80 px-4 py-1.5 text-sm font-bold text-slate-700 shadow">
+          {pageLabel}
         </div>
       </header>
 
-      <main className="relative mx-auto flex w-full max-w-[1500px] flex-1 items-center justify-center">
-        <div className="absolute bottom-8 h-20 w-[74%] rounded-full bg-black/30 blur-3xl" />
+      {/* Book card — flex-1 min-h-0 so it fills available column height */}
+      <main ref={bookCardRef} className="relative mx-auto flex w-full max-w-[1500px] flex-1 min-h-0 items-center justify-center">
+        <div className="absolute bottom-6 h-14 w-[74%] rounded-full bg-black/20 blur-3xl" />
 
         <div
-          className="relative z-10 flex min-h-[760px] w-full max-w-[1340px] items-center justify-center rounded-[2.5rem] border border-amber-200 bg-[#fffaf0] p-5 shadow-[0_35px_90px_rgba(75,45,12,0.30)]"
+          className="relative z-10 flex h-full w-full max-w-[1340px] items-center justify-center rounded-[2.5rem] border border-amber-200 bg-[#fffaf0] p-3 shadow-[0_25px_70px_rgba(75,45,12,0.28)]"
           style={{ overflow: zoom > 100 ? "auto" : "hidden" }}
         >
-          {imageSelectMode && (
+          {imageSelectMode && !textSelectMode && (
             <div className="absolute left-4 top-4 z-40 rounded-full bg-blue-600 px-4 py-1.5 text-xs font-bold text-white shadow">
               📐 Image Select Mode
             </div>
           )}
+          {textSelectMode && (
+            <div className="absolute left-4 top-4 z-40 rounded-full bg-amber-500 px-4 py-1.5 text-xs font-bold text-white shadow">
+              📝 Text Select
+            </div>
+          )}
 
-          {/* Zoom + pan wrapper — this is what transforms, not the outer card */}
-          <div
-            style={{
-              transform: zoomTransform,
-              transformOrigin: "center center",
-              transition: "transform 120ms ease",
-              display: "inline-flex",
-              position: "relative",
-            }}
-          >
+          {loading && (
+            <div className="absolute inset-0 z-30 flex items-center justify-center bg-[#fffaf0]/80">
+              <div className="flex items-center gap-3 rounded-2xl bg-white px-6 py-3 shadow-lg">
+                <div className="h-5 w-5 animate-spin rounded-full border-2 border-amber-200 border-t-amber-600" />
+                <span className="text-sm font-bold text-slate-600">Loading…</span>
+              </div>
+            </div>
+          )}
+
+          {/* GlobalImageSelectOverlay: covers full card, finds canvas via elementFromPoint */}
+          {imageSelectMode && !textSelectMode && onImageCapture && (
+            <GlobalImageSelectOverlay onCapture={onImageCapture} />
+          )}
+
+          <div style={{
+            transform: zoomTransform,
+            transformOrigin: "center center",
+            transition: "transform 100ms ease",
+            display: "inline-flex",
+            position: "relative",
+            opacity: isFlipping ? 0 : 1,
+            scale: isFlipping ? "0.97" : "1",
+            transitionProperty: "transform, opacity, scale",
+            transitionDuration: "150ms",
+            transitionTimingFunction: "ease",
+          }}>
             <div className="relative flex items-center justify-center rounded-[2rem] bg-white p-3 shadow-inner">
-              {loading && (
-                <div className="absolute top-5 z-20 rounded-full bg-white/90 px-4 py-2 text-xs font-bold text-slate-500 shadow">
-                  Loading page...
+              {!isSpread ? (
+                <PageBox
+                  canvasRef={canvasRef} textLayerRef={textRef} size={singleSize}
+                  textSelectMode={textSelectMode} imageSelectMode={imageSelectMode}
+                  pageNumber={safePage}
+                />
+              ) : (
+                <div style={{ display: "flex", alignItems: "center", gap: 0 }}>
+                  <PageBox
+                    canvasRef={leftCanvasRef} textLayerRef={leftTextRef} size={leftSize}
+                    textSelectMode={textSelectMode} imageSelectMode={imageSelectMode}
+                    pageNumber={safePage}
+                  />
+                  <div style={{ width: 3, alignSelf: "stretch", margin: "8px 0",
+                                background: "linear-gradient(to right,#d4c5a9,#e8dfc8,#d4c5a9)", flexShrink: 0 }} />
+                  {rightPage <= total ? (
+                    <PageBox
+                      canvasRef={rightCanvasRef} textLayerRef={rightTextRef} size={rightSize}
+                      textSelectMode={textSelectMode} imageSelectMode={imageSelectMode}
+                      pageNumber={rightPage}
+                    />
+                  ) : (
+                    <div style={{ width: leftSize?.w || 400, height: leftSize?.h || 600, background: "#fdfcf9", borderRadius: 10 }} />
+                  )}
                 </div>
-              )}
-
-              {/* Canvas */}
-              <canvas
-                ref={canvasRef}
-                style={{ display: loading ? "none" : "block", maxWidth: "100%", maxHeight: "100%", borderRadius: 12 }}
-              />
-
-              {/* Text layer — absolutely positioned over canvas, same size */}
-              <div
-                ref={textLayerRef}
-                style={{
-                  position: "absolute",
-                  left: "50%",
-                  top: "50%",
-                  transform: `translate(-50%, -50%)`,
-                  width: canvasSize.w || 0,
-                  height: canvasSize.h || 0,
-                  overflow: "hidden",
-                  pointerEvents: imageSelectMode ? "none" : "auto",
-                  userSelect: imageSelectMode ? "none" : "text",
-                  // Text layer CSS: text is invisible but selectable
-                }}
-              />
-
-              {/* Image select overlay sits above text layer */}
-              {imageSelectMode && !loading && onImageCapture && (
-                <ImageSelectOverlay canvasRef={canvasRef} pageNumber={safePage} onCapture={onImageCapture} />
               )}
             </div>
           </div>
         </div>
       </main>
 
-      <footer className="mx-auto mt-5 flex w-full max-w-[1300px] items-center justify-between gap-5">
-        <button onClick={onPrevious} className="rounded-full bg-slate-950 px-8 py-3 text-sm font-black text-white shadow-xl">
+      <footer className="mx-auto mt-3 flex w-full max-w-[1300px] flex-shrink-0 items-center justify-between gap-5">
+        <button onClick={onPrevious} className="rounded-full bg-slate-950 px-7 py-2.5 text-sm font-black text-white shadow-xl">
           ← Previous
         </button>
         <div className="flex-1">
-          <div className="h-3 rounded-full bg-white/75 shadow-inner">
-            <div className="h-3 rounded-full bg-amber-500" style={{ width: `${Math.min(100, Math.round((safePage / total) * 100))}%` }} />
+          <div className="h-2.5 rounded-full bg-white/75 shadow-inner">
+            <div className="h-2.5 rounded-full bg-amber-500"
+              style={{ width: `${Math.min(100, Math.round((safePage / total) * 100))}%` }} />
           </div>
         </div>
-        <button onClick={onNext} className="rounded-full bg-blue-600 px-8 py-3 text-sm font-black text-white shadow-xl">
+        <button onClick={onNext} className="rounded-full bg-blue-600 px-7 py-2.5 text-sm font-black text-white shadow-xl">
           Next →
         </button>
       </footer>
 
-      {/* Global text layer selection style */}
       <style>{`
-        .textLayer span, .textLayer br { color: transparent; cursor: text; }
-        .textLayer ::selection { background: rgba(59,130,246,0.28); color: transparent; }
-        .textLayer span::selection { background: rgba(59,130,246,0.28); }
+        .ndl-text-layer span, .ndl-text-layer br, .ndl-text-layer .markedContent {
+          color: transparent !important;
+        }
+        .ndl-text-layer span::selection, .ndl-text-layer *::selection {
+          background: rgba(59,130,246,0.28) !important;
+          color: transparent !important;
+        }
       `}</style>
     </section>
   );

@@ -7,6 +7,9 @@ export type DirectorBook = {
   cover: string;
   pdf: string;
   pages: number;
+  /** 'single' = one page at a time.
+   *  'spread' = show two pages side-by-side (page 1 is solo cover, then 2-3, 4-5...) */
+  layout?: "single" | "spread";
 };
 
 export const directorBooks: DirectorBook[] = [
@@ -20,6 +23,7 @@ export const directorBooks: DirectorBook[] = [
     cover: "/director-books/nalanda-cover.jpg",
     pdf: "/director-books/nalanda.pdf",
     pages: 32,
+    layout: "single",
   },
   {
     id: "chandrayaan-3",
@@ -31,6 +35,7 @@ export const directorBooks: DirectorBook[] = [
     cover: "/director-books/chandrayaan-3-cover.jpg",
     pdf: "/director-books/chandrayaan-3.pdf",
     pages: 35,
+    layout: "single",
   },
   {
     id: "quantum",
@@ -42,5 +47,6 @@ export const directorBooks: DirectorBook[] = [
     cover: "/director-books/quantum-cover.jpg",
     pdf: "/director-books/quantum-computing.pdf",
     pages: 400,
+    layout: "spread",
   },
 ];

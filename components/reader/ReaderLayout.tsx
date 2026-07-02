@@ -69,7 +69,7 @@ export default function ReaderLayout({
         )}
 
         {/* Main reading stage */}
-        <section className="relative h-screen overflow-auto px-8 py-6">
+        <section className="relative h-screen overflow-hidden px-4 py-3">
           {/* Fullscreen exit button — floats top-right when in fullscreen */}
           {isFullscreen && (
             <button

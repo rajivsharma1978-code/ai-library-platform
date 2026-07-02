@@ -35,6 +35,10 @@ export async function POST(req: Request) {
     const safeContent = content || "No content provided.";
     const trimmedContent = safeContent.slice(0, 12000);
 
+    // Extract language from question — supports all 6 NDL languages
+    const langMatch = userQuestion.match(/Respond\s+(?:ONLY\s+)?in[:\s]+([A-Za-z]+)/i);
+    const responseLang = langMatch?.[1]?.trim() ?? null;
+
     if (!process.env.OPENAI_API_KEY) {
       return NextResponse.json({
         answer: "OPENAI_API_KEY is missing. Please add it in .env.local.",
@@ -85,12 +89,32 @@ ${userQuestion}
 You are NDL AI Tutor, an AI tutor inside a national digital learning platform.
 
 Core rules:
-- Use the provided book/PDF content as the primary source.
-${imageDataUrl ? "- An image of a selected diagram/figure/table region from the page is attached. Base your answer primarily on what is visible in that image, using the surrounding page text only as supporting context." : ""}
-- If the exact answer is not present, say: "This is not clearly available in the provided content", then give a helpful general explanation.
-- Do not hallucinate book-specific facts.
+- The provided page content is the PRIMARY source. USE IT. Do not say content is unavailable unless the content block is truly empty.
+- If the content block has text, base your response on that text.
+- Only say "not available in the provided content" if the content is literally empty or says "text extraction unavailable".
+${imageDataUrl ? "- An image of a selected region is attached. Base your answer primarily on what is visible in the image." : ""}
+- Do not hallucinate book-specific facts not present in the content.
 - Keep answers structured, practical, and learner-friendly.
 - Adapt strongly to the active study mode.
+${responseLang ? `
+LANGUAGE INSTRUCTION — MANDATORY:
+The user has selected "${responseLang}" as their response language.
+You MUST write your ENTIRE response in ${responseLang}.
+Supported languages and their usage:
+- English: standard English
+- Hindi: Devanagari script (हिंदी)
+- Tamil: Tamil script (தமிழ்)
+- Bengali: Bengali script (বাংলা)
+- Marathi: Devanagari script (मराठी)
+- Telugu: Telugu script (తెలుగు)
+
+RULES (never violate):
+1. Write every sentence in ${responseLang} — no English fallback.
+2. NEVER say "I cannot translate" or "translation unavailable".
+3. NEVER refuse to respond in ${responseLang}.
+4. If you don't have a word, use the closest ${responseLang} equivalent or keep the technical term.
+5. This is an Indian language learning platform — all languages above are fully supported.
+` : ""}
 
 Active study mode:
 ${studyMode}
