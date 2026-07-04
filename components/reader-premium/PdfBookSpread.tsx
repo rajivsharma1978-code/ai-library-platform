@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
 export type PdfBookSpreadProps = {
   title: string;
@@ -147,170 +148,177 @@ async function renderPdfPage(params: {
   return { cssW: dW, cssH: dH, text };
 }
 
-interface GlobalImageSelectOverlayProps {
+// ── Per-page image selection overlay ───────────────────────────────
+// One instance per PageBox. Pointer events are captured on this overlay
+// (position:absolute; inset:0 inside PageBox). The selection rectangle
+// is rendered via createPortal to document.body with position:fixed —
+// this bypasses all ancestor CSS transforms (zoom scale) so the rectangle
+// always appears at the exact screen position of the drag, every time.
+function ImageSelectOverlay({ canvasRef, pageNumber, onCapture }: {
+  canvasRef: React.RefObject<HTMLCanvasElement | null>;
+  pageNumber: number;
   onCapture: (dataUrl: string, pageNumber: number) => void;
-}
-function GlobalImageSelectOverlay({ onCapture }: GlobalImageSelectOverlayProps) {
+}) {
   const overlayRef = useRef<HTMLDivElement>(null);
-  const lockedCanvas  = useRef<HTMLCanvasElement | null>(null);
-  const lockedPageNum = useRef<number>(0);
-  const dragStartScreen = useRef<{ x: number; y: number } | null>(null);
+  const dragStartRef = useRef<{ x: number; y: number } | null>(null);
+  const activePointerIdRef = useRef<number | null>(null);
 
-  // Drag rect in OVERLAY-LOCAL pixels — directly usable as left/top/width/height
-  // on the absolutely-positioned rectangle child. No containerRef math needed.
-  const [dragLocal, setDragLocal] = useState<{
-    left: number; top: number; width: number; height: number;
-    // Keep screen coords too for canvas intersection in onPointerUp
-    screenX: number; screenY: number; screenW: number; screenH: number;
-  } | null>(null);
-
-  const toLocal = useCallback((clientX: number, clientY: number) => {
-    const r = overlayRef.current?.getBoundingClientRect();
-    if (!r) return { x: 0, y: 0 };
-    return { x: clientX - r.left, y: clientY - r.top };
+  // Cleanup on unmount — release any active pointer capture so events don't
+  // get routed to a dead overlay element after the component is removed.
+  useEffect(() => {
+    return () => {
+      dragStartRef.current = null;
+      if (activePointerIdRef.current !== null && overlayRef.current) {
+        try { overlayRef.current.releasePointerCapture(activePointerIdRef.current); } catch {}
+        activePointerIdRef.current = null;
+      }
+    };
   }, []);
+  // screenRect: VIEWPORT coordinates — used both for createPortal rectangle
+  // rendering AND for canvas buffer coordinate mapping via getBoundingClientRect
+  const [screenRect, setScreenRect] = useState<{
+    left: number; top: number; width: number; height: number;
+  } | null>(null);
 
   const onPointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     if (e.button !== 0) return;
+    e.stopPropagation();
     overlayRef.current?.setPointerCapture(e.pointerId);
-
-    // Temporarily hide overlay so elementFromPoint sees the canvas beneath
-    const overlay = overlayRef.current;
-    if (overlay) overlay.style.pointerEvents = "none";
-    const el = document.elementFromPoint(e.clientX, e.clientY);
-    if (overlay) overlay.style.pointerEvents = "auto";
-
-    const canvas = el instanceof HTMLCanvasElement
-      ? el
-      : (el?.closest("canvas") as HTMLCanvasElement | null);
-
-    if (!canvas) return; // clicked outside any canvas
-
-    // Read page number from data-pdf-page attribute set on each canvas
-    const pageNum = parseInt(canvas.getAttribute("data-pdf-page") || "1", 10) || 1;
-
-    lockedCanvas.current  = canvas;
-    lockedPageNum.current = pageNum;
-    dragStartScreen.current = { x: e.clientX, y: e.clientY };
-
-    const local = toLocal(e.clientX, e.clientY);
-    setDragLocal({ left: local.x, top: local.y, width: 0, height: 0,
-                   screenX: e.clientX, screenY: e.clientY, screenW: 0, screenH: 0 });
-  }, [toLocal]);
+    activePointerIdRef.current = e.pointerId;
+    dragStartRef.current = { x: e.clientX, y: e.clientY };
+    setScreenRect({ left: e.clientX, top: e.clientY, width: 0, height: 0 });
+    console.log(`[ImageSelect] ▼ pointerDown page=${pageNumber} at (${Math.round(e.clientX)}, ${Math.round(e.clientY)})`);
+  }, [pageNumber]);
 
   const onPointerMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
-    if (!dragStartScreen.current || !lockedCanvas.current) return;
-    const start = dragStartScreen.current;
-    const startLocal = toLocal(start.x, start.y);
-    const curLocal   = toLocal(e.clientX, e.clientY);
-
-    const left   = Math.min(startLocal.x, curLocal.x);
-    const top    = Math.min(startLocal.y, curLocal.y);
-    const width  = Math.abs(curLocal.x - startLocal.x);
-    const height = Math.abs(curLocal.y - startLocal.y);
-    const screenX = Math.min(start.x, e.clientX);
-    const screenY = Math.min(start.y, e.clientY);
-    const screenW = Math.abs(e.clientX - start.x);
-    const screenH = Math.abs(e.clientY - start.y);
-
-    setDragLocal({ left, top, width, height, screenX, screenY, screenW, screenH });
-  }, [toLocal]);
+    if (!dragStartRef.current) return;
+    const s = dragStartRef.current;
+    const left   = Math.min(s.x, e.clientX);
+    const top    = Math.min(s.y, e.clientY);
+    const width  = Math.abs(e.clientX - s.x);
+    const height = Math.abs(e.clientY - s.y);
+    setScreenRect({ left, top, width, height });
+    if (width > 20 && height > 20) {
+      console.log(`[ImageSelect] ↔ move ${Math.round(width)}×${Math.round(height)} screen px`);
+    }
+  }, []);
 
   const onPointerUp = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     overlayRef.current?.releasePointerCapture(e.pointerId);
-    const canvas = lockedCanvas.current;
-    const d = dragLocal;
-    dragStartScreen.current = null;
-    lockedCanvas.current = null;
-    setDragLocal(null);
+    activePointerIdRef.current = null;
+    const r = screenRect;
+    const canvas = canvasRef.current;
+    dragStartRef.current = null;
+    setScreenRect(null); // always clear rectangle on up
 
-    if (!canvas || !d || d.screenW < 8 || d.screenH < 8) {
-      console.warn("[ImageSelect] Drag too small or no canvas");
+    console.log(`[ImageSelect] ▲ pointerUp rect=${r ? `${Math.round(r.width)}×${Math.round(r.height)}` : "null"}`);
+
+    if (!r || r.width < 8 || r.height < 8) {
+      console.warn("[ImageSelect] Too small — skip");
+      return;
+    }
+    if (!canvas) {
+      console.warn("[ImageSelect] No canvas ref");
       return;
     }
 
+    // canvas.getBoundingClientRect() is in SCREEN pixels (post-zoom, post-transform)
     const canvasRect = canvas.getBoundingClientRect();
-    if (canvasRect.width <= 0 || canvasRect.height <= 0) return;
+    console.log(`[ImageSelect] canvas screen=${Math.round(canvasRect.width)}×${Math.round(canvasRect.height)} buf=${canvas.width}×${canvas.height}`);
 
-    // Intersect screen-space drag rect with canvas screen rect
-    const selLeft   = Math.max(d.screenX, canvasRect.left);
-    const selTop    = Math.max(d.screenY, canvasRect.top);
-    const selRight  = Math.min(d.screenX + d.screenW, canvasRect.right);
-    const selBottom = Math.min(d.screenY + d.screenH, canvasRect.bottom);
+    // Intersect drag screen rect with canvas screen rect
+    const selLeft   = Math.max(r.left,          canvasRect.left);
+    const selTop    = Math.max(r.top,           canvasRect.top);
+    const selRight  = Math.min(r.left + r.width, canvasRect.right);
+    const selBottom = Math.min(r.top  + r.height, canvasRect.bottom);
 
     if (selRight <= selLeft || selBottom <= selTop) {
-      console.warn("[ImageSelect] Selection outside canvas");
+      console.warn("[ImageSelect] Selection does not intersect canvas");
       return;
     }
 
     // Map screen coords → canvas buffer coords
+    // bufScale = buffer pixels per screen pixel, accounts for zoom & DPR
     const bufScaleX = canvas.width  / canvasRect.width;
     const bufScaleY = canvas.height / canvasRect.height;
     const sx = Math.max(0, Math.round((selLeft   - canvasRect.left) * bufScaleX));
     const sy = Math.max(0, Math.round((selTop    - canvasRect.top)  * bufScaleY));
-    const sw = Math.min(Math.round((selRight  - selLeft)   * bufScaleX), canvas.width  - sx);
-    const sh = Math.min(Math.round((selBottom - selTop)    * bufScaleY), canvas.height - sy);
+    const sw = Math.min(Math.round((selRight  - selLeft)  * bufScaleX), canvas.width  - sx);
+    const sh = Math.min(Math.round((selBottom - selTop)   * bufScaleY), canvas.height - sy);
 
-    console.log(`[ImageSelect] page=${lockedPageNum.current} buf=${canvas.width}×${canvas.height} sx=${sx} sy=${sy} sw=${sw} sh=${sh}`);
+    console.log(`[ImageSelect] crop sx=${sx} sy=${sy} sw=${sw} sh=${sh} bufScale=${bufScaleX.toFixed(2)}×${bufScaleY.toFixed(2)}`);
 
-    if (sw < 4 || sh < 4) { console.warn("[ImageSelect] Crop too small"); return; }
+    if (sw < 4 || sh < 4) {
+      console.warn("[ImageSelect] Buffer crop too small");
+      return;
+    }
 
     const crop = document.createElement("canvas");
     crop.width = sw; crop.height = sh;
     const ctx = crop.getContext("2d");
     if (!ctx) return;
     ctx.drawImage(canvas, sx, sy, sw, sh, 0, 0, sw, sh);
+
     let dataUrl = "";
     try { dataUrl = crop.toDataURL("image/png"); } catch (err) {
       console.error("[ImageSelect] toDataURL:", err); return;
     }
-    if (!dataUrl || dataUrl.length < 100) return;
+    console.log(`[ImageSelect] ✓ base64 length=${dataUrl.length} page=${pageNumber}`);
+    if (dataUrl.length < 100) { console.warn("[ImageSelect] Empty dataUrl"); return; }
 
-    onCapture(dataUrl, lockedPageNum.current);
-  }, [dragLocal, onCapture]);
+    onCapture(dataUrl, pageNumber);
+  }, [screenRect, canvasRef, pageNumber, onCapture]);
 
   return (
-    <div
-      ref={overlayRef}
-      onPointerDown={onPointerDown}
-      onPointerMove={onPointerMove}
-      onPointerUp={onPointerUp}
-      style={{ position: "absolute", inset: 0, cursor: "crosshair", zIndex: 50, userSelect: "none" }}
-    >
-      {/* Selection rectangle — coordinates are already overlay-local, so
-          left/top are used directly with no extra conversion math */}
-      {dragLocal && dragLocal.width > 3 && dragLocal.height > 3 && (
-        <div
-          className="pointer-events-none absolute border-2 border-blue-500 bg-blue-500/15 z-40"
-          style={{
-            left:   dragLocal.left,
-            top:    dragLocal.top,
-            width:  dragLocal.width,
-            height: dragLocal.height,
-          }}
-        />
-      )}
-      <div className="pointer-events-none absolute" style={{ top: 8, left: "50%", transform: "translateX(-50%)",
-        background: "rgba(0,0,0,0.75)", color: "#fff", borderRadius: 999,
-        padding: "4px 14px", fontSize: 11, fontWeight: 700, whiteSpace: "nowrap" }}>
-        Drag over any diagram, chart, or image region
-      </div>
-    </div>
+    <>
+      {/* Pointer-event capture layer, fills PageBox exactly */}
+      <div
+        ref={overlayRef}
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={onPointerUp}
+        style={{
+          position: "absolute", inset: 0,
+          cursor: "crosshair", zIndex: 30,
+          userSelect: "none",
+        }}
+      />
+
+      {/* Rectangle via portal: position:fixed on document.body so it renders
+          at exact viewport coordinates, completely unaffected by zoom transforms */}
+      {screenRect && screenRect.width > 2 && screenRect.height > 2 &&
+        typeof document !== "undefined" &&
+        createPortal(
+          <div style={{
+            position: "fixed",
+            left:   screenRect.left,
+            top:    screenRect.top,
+            width:  screenRect.width,
+            height: screenRect.height,
+            border: "2px solid #3b82f6",
+            background: "rgba(59,130,246,0.15)",
+            boxSizing: "border-box",
+            pointerEvents: "none",
+            zIndex: 99999,
+          }} />,
+          document.body
+        )
+      }
+    </>
   );
 }
 
-// ── PageBox: canvas + text layer ────────────────────────────────────
-function PageBox({ canvasRef, textLayerRef, size, textSelectMode, imageSelectMode, pageNumber }: {
+function PageBox({ canvasRef, textLayerRef, size, textSelectMode, imageSelectMode, pageNumber, onCapture }: {
   canvasRef: React.RefObject<HTMLCanvasElement | null>;
   textLayerRef: React.RefObject<HTMLDivElement | null>;
   size: { w: number; h: number } | null;
   textSelectMode: boolean;
   imageSelectMode: boolean;
   pageNumber: number;
+  onCapture?: (dataUrl: string, pageNumber: number) => void;
 }) {
   return (
     <div style={{ position: "relative", width: size?.w || undefined, height: size?.h || undefined, display: size ? "block" : "none" }}>
-      {/* data-pdf-page lets GlobalImageSelectOverlay identify which page was clicked */}
       <canvas ref={canvasRef} data-pdf-page={pageNumber} style={{ display: "block", borderRadius: 10 }} />
       <div style={{ position: "absolute", inset: 0, overflow: "hidden" }}>
         <div ref={textLayerRef} className="ndl-text-layer" style={{
@@ -320,7 +328,10 @@ function PageBox({ canvasRef, textLayerRef, size, textSelectMode, imageSelectMod
           cursor: (textSelectMode && !imageSelectMode) ? "text" : "default",
         }} />
       </div>
-      {/* Image selection is handled by GlobalImageSelectOverlay on the book card */}
+      {/* Per-page image select overlay — renders rect via portal so zoom transform doesn't affect it */}
+      {imageSelectMode && onCapture && (
+        <ImageSelectOverlay canvasRef={canvasRef} pageNumber={pageNumber} onCapture={onCapture} />
+      )}
     </div>
   );
 }
@@ -490,10 +501,7 @@ export default function PdfBookSpread({
             </div>
           )}
 
-          {/* GlobalImageSelectOverlay: covers full card, finds canvas via elementFromPoint */}
-          {imageSelectMode && !textSelectMode && onImageCapture && (
-            <GlobalImageSelectOverlay onCapture={onImageCapture} />
-          )}
+          {/* No global overlay — each PageBox has its own ImageSelectOverlay */}
 
           <div style={{
             transform: zoomTransform,
@@ -512,14 +520,14 @@ export default function PdfBookSpread({
                 <PageBox
                   canvasRef={canvasRef} textLayerRef={textRef} size={singleSize}
                   textSelectMode={textSelectMode} imageSelectMode={imageSelectMode}
-                  pageNumber={safePage}
+                  pageNumber={safePage} onCapture={onImageCapture}
                 />
               ) : (
                 <div style={{ display: "flex", alignItems: "center", gap: 0 }}>
                   <PageBox
                     canvasRef={leftCanvasRef} textLayerRef={leftTextRef} size={leftSize}
                     textSelectMode={textSelectMode} imageSelectMode={imageSelectMode}
-                    pageNumber={safePage}
+                    pageNumber={safePage} onCapture={onImageCapture}
                   />
                   <div style={{ width: 3, alignSelf: "stretch", margin: "8px 0",
                                 background: "linear-gradient(to right,#d4c5a9,#e8dfc8,#d4c5a9)", flexShrink: 0 }} />
@@ -527,7 +535,7 @@ export default function PdfBookSpread({
                     <PageBox
                       canvasRef={rightCanvasRef} textLayerRef={rightTextRef} size={rightSize}
                       textSelectMode={textSelectMode} imageSelectMode={imageSelectMode}
-                      pageNumber={rightPage}
+                      pageNumber={rightPage} onCapture={onImageCapture}
                     />
                   ) : (
                     <div style={{ width: leftSize?.w || 400, height: leftSize?.h || 600, background: "#fdfcf9", borderRadius: 10 }} />

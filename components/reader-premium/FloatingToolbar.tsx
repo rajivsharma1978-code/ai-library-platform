@@ -22,12 +22,19 @@ export default function FloatingToolbar({
   if (!selectedText.trim()) return null;
 
   return (
-    <div className="fixed left-1/2 top-24 z-[100] -translate-x-1/2 rounded-3xl border border-amber-200 bg-white/95 p-3 shadow-[0_25px_70px_rgba(0,0,0,0.22)] backdrop-blur-xl">
+    <div
+      // preventDefault on mousedown prevents the browser from collapsing the
+      // text selection when user clicks a button in this toolbar.
+      // stopPropagation on mouseup prevents the center div's handleMouseUp from
+      // running and incorrectly clearing selectedText before actions fire.
+      onMouseDown={(e) => e.preventDefault()}
+      onMouseUp={(e) => e.stopPropagation()}
+      className="fixed left-1/2 top-24 z-[100] -translate-x-1/2 rounded-3xl border border-amber-200 bg-white/95 p-3 shadow-[0_25px_70px_rgba(0,0,0,0.22)] backdrop-blur-xl"
+    >
       <div className="mb-2 flex items-center justify-between gap-4 px-2">
         <p className="max-w-[420px] truncate text-xs font-bold text-slate-500">
-          Selected: “{selectedText}”
+          Selected: &ldquo;{selectedText}&rdquo;
         </p>
-
         <button
           onClick={onClose}
           className="rounded-full bg-slate-100 px-3 py-1 text-xs font-black text-slate-600 hover:bg-slate-200"

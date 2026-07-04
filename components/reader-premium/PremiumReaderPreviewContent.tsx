@@ -1,10 +1,9 @@
 "use client";
 
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import dynamic from "next/dynamic";
 import AICompanion from "@/components/reader-premium/AICompanion";
-import FloatingToolbar from "@/components/reader-premium/FloatingToolbar";
 import BookOpeningAnimation from "@/components/reader-premium/BookOpeningAnimation";
 import BookCover from "@/components/reader-premium/BookCover";
 import { directorBooks } from "@/lib/directorBooks";
@@ -15,25 +14,32 @@ const PdfBookSpread = dynamic(
   { ssr: false }
 );
 
-// ── Supported languages ──────────────────────────────────────────────
+// ── Languages ────────────────────────────────────────────────────────
 const LANGUAGES = ["English","Hindi","Tamil","Bengali","Marathi","Telugu"] as const;
 type Lang = typeof LANGUAGES[number];
 
+// ── ONE interaction mode enum ─────────────────────────────────────────
+// Replaces textSelectMode + imageSelectMode booleans which could
+// coexist and conflict. At any point EXACTLY ONE mode is active.
+type InteractionMode = "none" | "text" | "image";
+
+// ── ONE selection type ────────────────────────────────────────────────
+type ActiveSelection =
+  | { type: "text";  id: string; text: string;      pageNumber: number; x: number; y: number }
+  | { type: "image"; id: string; imageData: string;  pageNumber: number }
+  | null;
+
+// ── AI caller ─────────────────────────────────────────────────────────
 async function callAskAI(
   question: string, bookTitle: string, pageNumber: number,
   content: string, language: Lang, imageDataUrl?: string
 ): Promise<string> {
-  // "Respond ONLY in: X" — matches the regex in route.ts that injects
-  // the language directive into the system prompt, which is what actually
-  // enforces the language for Indian scripts.
-  const langDirective = `Respond ONLY in: ${language}.`;
-  const prompt = `[Study Mode: Student] ${question} ${langDirective}`;
   const res = await fetch("/api/ask-ai", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      question: prompt, book: bookTitle,
-      chapter: `Page ${pageNumber}`, content,
+      question: `[Study Mode: Student] ${question} Respond ONLY in: ${language}.`,
+      book: bookTitle, chapter: `Page ${pageNumber}`, content,
       ...(imageDataUrl ? { imageDataUrl } : {}),
     }),
   });
@@ -45,7 +51,7 @@ type SpeechState = "idle" | "loading" | "speaking" | "paused";
 const ZOOM_MIN = 50, ZOOM_MAX = 200, ZOOM_STEP = 20;
 
 export default function PremiumReaderPreviewContent() {
-  // ── Book setup ───────────────────────────────────────────────────
+  // ── Book ──────────────────────────────────────────────────────────
   const searchParams = useSearchParams();
   const bookId = searchParams.get("book") || "nalanda";
   const currentBook = directorBooks.find((b) => b.id === bookId) || directorBooks[0];
@@ -53,112 +59,156 @@ export default function PremiumReaderPreviewContent() {
   const totalPages = Number(currentBook.pages);
   const isSpreadBook = currentBook.layout === "spread";
 
-  // ── Reader state ─────────────────────────────────────────────────
-  // readerPage: for spread mode, this is always the LEFT page of the spread
-  // (or 1 for the solo cover page). For single mode it's the page number.
+  // ── Reader ────────────────────────────────────────────────────────
   const [readerPage, setReaderPage] = useState(1);
   const [bookOpened, setBookOpened] = useState(false);
   const [bookOpening, setBookOpening] = useState(false);
 
-  // ── Zoom / pan ───────────────────────────────────────────────────
+  // ── Zoom / pan ────────────────────────────────────────────────────
   const [zoom, setZoom] = useState(100);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [isPanning, setIsPanning] = useState(false);
   const panStart = useRef({ mx: 0, my: 0, px: 0, py: 0 });
-  // Auto-fit: computed once after first render
   const bookAreaRef = useRef<HTMLDivElement>(null);
   const autoFitDone = useRef(false);
-  // Page flip animation state
   const [isFlipping, setIsFlipping] = useState(false);
-  // Extracted PDF text keyed by page number — populated by PdfBookSpread
-  // after each render; passed to AICompanion so quick actions have real content
+
+  // ── Page text cache ───────────────────────────────────────────────
   const [pageTexts, setPageTexts] = useState<Record<number, string>>({});
 
-  // ── AI state ─────────────────────────────────────────────────────
+  // ── Language ──────────────────────────────────────────────────────
   const [language, setLanguage] = useState<Lang>("English");
+
+  // ── AI ────────────────────────────────────────────────────────────
   const [aiResponse, setAiResponse] = useState(
-    "Select text, drag an image region, or click a quick action."
+    "Select text from the book, drag a region, or click a quick action."
   );
   const [aiQuestion, setAiQuestion] = useState("");
   const [aiLoading, setAiLoading] = useState(false);
 
-  // ── Text selection ───────────────────────────────────────────────
-  const [textSelectMode, setTextSelectMode] = useState(false);
-  const [selectedText, setSelectedText] = useState("");
-  const [toolbarPos, setToolbarPos] = useState<{ x: number; y: number } | null>(null);
+  // ── SINGLE INTERACTION MODE ───────────────────────────────────────
+  // ONE enum. No two modes are ever both "active".
+  const [interactionMode, setInteractionMode] = useState<InteractionMode>("none");
 
-  // ── Image selection ──────────────────────────────────────────────
-  const [imageSelectMode, setImageSelectMode] = useState(false);
+  // ── SINGLE ACTIVE SELECTION ───────────────────────────────────────
+  const [activeSelection, setActiveSelection] = useState<ActiveSelection>(null);
 
-  // ── Read Aloud ───────────────────────────────────────────────────
+  // ── Speech ────────────────────────────────────────────────────────
   const [speechState, setSpeechState] = useState<SpeechState>("idle");
   const utteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
 
-  // ── Go To Page ───────────────────────────────────────────────────
+  // ── Go To Page ────────────────────────────────────────────────────
   const [goToInput, setGoToInput] = useState("");
 
-  // ── Reset selection/speech on page change ────────────────────────
+  // ─────────────────────────────────────────────────────────────────
+  //  SWITCH INTERACTION MODE — the ONLY way to change modes.
+  //  Every toolbar button calls this. Never set individual flags directly.
+  // ─────────────────────────────────────────────────────────────────
+  function switchInteractionMode(newMode: InteractionMode) {
+    setInteractionMode(prev => {
+      if (prev === newMode) return prev; // no-op if already in this mode
+
+      // ── Cleanup leaving previous mode ──────────────────────────
+      if (prev === "text") {
+        // Clear any browser text selection so it doesn't linger visually
+        window.getSelection()?.removeAllRanges();
+      }
+      // prev === "image": ImageSelectOverlay unmounts automatically
+      // because textSelectMode/imageSelectMode are derived from interactionMode
+
+      return newMode;
+    });
+
+    // ── Clear activeSelection when switching modes ─────────────────
+    // A selection belongs to the mode that created it. Switching modes
+    // makes it stale — clear it so no cross-mode menu leakage occurs.
+    setActiveSelection(null);
+
+    // ── Reset pan state on every mode switch ───────────────────────
+    setIsPanning(false);
+  }
+
+  // Convenience: toggle a mode (same mode → "none", different mode → that mode)
+  function toggleMode(mode: InteractionMode) {
+    switchInteractionMode(interactionMode === mode ? "none" : mode);
+  }
+
+  // ── Derive boolean flags from interactionMode ──────────────────────
+  // PdfBookSpread still accepts these as props. They are NOT state —
+  // they are computed from the single source of truth.
+  const textSelectMode  = interactionMode === "text";
+  const imageSelectMode = interactionMode === "image";
+
+  // ── Floating menu is visible ONLY when selection matches mode ──────
+  const showFloatingMenu =
+    activeSelection !== null &&
+    ((activeSelection.type === "text"  && interactionMode === "text")  ||
+     (activeSelection.type === "image" && interactionMode === "image"));
+
+  // ── resetInteractionState: clears transient drag flags ─────────────
+  // Does NOT clear activeSelection or interactionMode.
+  function resetInteractionState() {
+    setIsPanning(false);
+  }
+
+  // ── Clear selection explicitly ──────────────────────────────────────
+  function clearActiveSelection() {
+    setActiveSelection(null);
+    window.getSelection()?.removeAllRanges();
+  }
+
+  // ── Page / book change cleanup ──────────────────────────────────────
   useEffect(() => {
     window.speechSynthesis?.cancel();
     setSpeechState("idle");
     utteranceRef.current = null;
-    setSelectedText("");
-    setToolbarPos(null);
-    window.getSelection()?.removeAllRanges();
-    // Reset pan but not zoom when navigating
+    clearActiveSelection();
+    resetInteractionState();
     setPan({ x: 0, y: 0 });
-  }, [readerPage, bookId]);
+  }, [readerPage, bookId]); // eslint-disable-line
 
-  // Reset everything when book changes
   useEffect(() => {
     setReaderPage(1);
     setBookOpened(false);
     setBookOpening(false);
     setZoom(100);
     setPan({ x: 0, y: 0 });
-    setAiResponse("Select text, drag an image region, or click a quick action.");
+    setAiResponse("Select text from the book, drag a region, or click a quick action.");
     autoFitDone.current = false;
-  }, [bookId]);
+    switchInteractionMode("none");
+  }, [bookId]); // eslint-disable-line
 
-  // Reset pan when zooming back to 100
   useEffect(() => { if (zoom <= 100) setPan({ x: 0, y: 0 }); }, [zoom]);
 
-  // ── Auto-fit: compute zoom from canvas size vs container ──────────
+  // ── Auto-fit ────────────────────────────────────────────────────────
   const handlePageRendered = useCallback((cssW: number, cssH: number, cardW: number, cardH: number) => {
     if (autoFitDone.current) return;
     autoFitDone.current = true;
     if (cssW <= 0 || cssH <= 0 || cardW <= 0 || cardH <= 0) return;
-    // bookCardRef is the <main> element inside PdfBookSpread.
-    // Its dimensions include the card's own padding (p-3 ≈ 24px each side).
-    // Inner usable area for canvas ≈ cardW - 56px (padding + white-box padding)
-    const innerW = cardW - 56;
-    const innerH = cardH - 56;
-    const fitZoom = Math.min(
-      Math.floor((innerW / cssW) * 100),
-      Math.floor((innerH / cssH) * 100),
-      100  // never auto-zoom IN beyond fit
-    );
+    const innerW = cardW - 56, innerH = cardH - 56;
+    const fitZoom = Math.min(Math.floor((innerW / cssW) * 100), Math.floor((innerH / cssH) * 100), 100);
     const snapped = Math.max(40, Math.floor(fitZoom / 5) * 5);
-    console.log(`[AutoFit] canvas ${cssW}×${cssH}, card ${cardW}×${cardH}, inner ${innerW}×${innerH}, fitZoom ${fitZoom}% → ${snapped}%`);
     if (snapped < 100) setZoom(snapped);
-  }, []); // eslint-disable-line
+  }, []);
 
   const handleTextExtracted = useCallback((texts: Record<number, string>) => {
     setPageTexts(prev => ({ ...prev, ...texts }));
-    const pages = Object.keys(texts);
-    const totalChars = Object.values(texts).reduce((a, b) => a + b.length, 0);
-    console.log(`[AI] Text extracted for pages [${pages.join(",")}]: ${totalChars} chars total`);
   }, []);
 
-  // ── Navigation helpers ────────────────────────────────────────────
-  function triggerFlip(action: () => void) {
-    setIsFlipping(true);
-    setTimeout(() => {
-      action();
-      setTimeout(() => setIsFlipping(false), 160);
-    }, 140);
+  // ── Visible page text ───────────────────────────────────────────────
+  function getVisiblePageText(): string {
+    if (isSpreadBook && readerPage > 1) {
+      const l = pageTexts[readerPage] || "", r = pageTexts[readerPage + 1] || "";
+      return [l, r].filter(Boolean).join("\n\n--- Next Page ---\n\n");
+    }
+    return pageTexts[readerPage] || "";
   }
 
+  // ── Navigation ──────────────────────────────────────────────────────
+  function triggerFlip(action: () => void) {
+    setIsFlipping(true);
+    setTimeout(() => { action(); setTimeout(() => setIsFlipping(false), 160); }, 140);
+  }
   function goNext() {
     triggerFlip(() => {
       autoFitDone.current = false;
@@ -167,7 +217,7 @@ export default function PremiumReaderPreviewContent() {
         const next = readerPage + 2;
         if (next <= totalPages) setReaderPage(next);
       } else {
-        setReaderPage((p) => Math.min(totalPages, p + 1));
+        setReaderPage(p => Math.min(totalPages, p + 1));
       }
     });
   }
@@ -176,9 +226,9 @@ export default function PremiumReaderPreviewContent() {
       autoFitDone.current = false;
       if (isSpreadBook) {
         if (readerPage <= 2) { setReaderPage(1); return; }
-        setReaderPage((p) => Math.max(1, p - 2));
+        setReaderPage(p => Math.max(1, p - 2));
       } else {
-        setReaderPage((p) => Math.max(1, p - 1));
+        setReaderPage(p => Math.max(1, p - 1));
       }
     });
   }
@@ -188,55 +238,22 @@ export default function PremiumReaderPreviewContent() {
     if (isNaN(n) || n < 1 || n > totalPages) return;
     triggerFlip(() => {
       autoFitDone.current = false;
-      if (isSpreadBook && n > 1) {
-        setReaderPage(n % 2 === 0 ? n : n - 1);
-      } else {
-        setReaderPage(n);
-      }
+      if (isSpreadBook && n > 1) setReaderPage(n % 2 === 0 ? n : n - 1);
+      else setReaderPage(n);
     });
     setGoToInput("");
   }
 
-  // ── AI content helpers ────────────────────────────────────────────
-  function getVisiblePageText(): string {
-    if (isSpreadBook && readerPage > 1) {
-      const left  = pageTexts[readerPage]  || "";
-      const right = pageTexts[readerPage + 1] || "";
-      const combined = [left, right].filter(Boolean).join("\n\n--- Next Page ---\n\n");
-      return combined || "";
-    }
-    return pageTexts[readerPage] || "";
-  }
-
-  function pageContext() {
-    const extracted = getVisiblePageText();
-    if (extracted.length > 50) {
-      const pages = isSpreadBook && readerPage > 1
-        ? `pages ${readerPage}–${Math.min(readerPage + 1, totalPages)}`
-        : `page ${readerPage}`;
-      return `Content from ${pages} of "${book}":\n\n${extracted}`;
-    }
-    // Fallback when text extraction returned nothing (e.g. scanned/image PDF)
-    const pages = isSpreadBook && readerPage > 1
-      ? `pages ${readerPage}–${Math.min(readerPage + 1, totalPages)}`
-      : `page ${readerPage}`;
-    return `The user is viewing ${pages} of "${book}". ` +
-      `Text extraction is unavailable for this page (possibly a scanned/image-based PDF). ` +
-      `Please provide a general explanation based on the book title and page number.`;
-  }
-
-  function selectionContent() {
-    return selectedText.trim().length > 10
-      ? `Selected text from page ${readerPage} of "${book}":\n\n${selectedText}`
-      : pageContext();
-  }
-
-  // ── AI runner ─────────────────────────────────────────────────────
+  // ── AI ───────────────────────────────────────────────────────────────
   async function runAI(prompt: string, content?: string, imageDataUrl?: string) {
+    resetInteractionState();
     setAiLoading(true);
     setAiResponse("AI is thinking…");
     try {
-      const answer = await callAskAI(prompt, book, readerPage, content ?? pageContext(), language, imageDataUrl);
+      const fallback = getVisiblePageText().length > 50
+        ? `Content from page ${readerPage} of "${book}":\n\n${getVisiblePageText()}`
+        : `Viewing page ${readerPage} of "${book}".`;
+      const answer = await callAskAI(prompt, book, readerPage, content ?? fallback, language, imageDataUrl);
       setAiResponse(answer);
     } catch {
       setAiResponse("Something went wrong. Please try again.");
@@ -245,80 +262,117 @@ export default function PremiumReaderPreviewContent() {
     }
   }
 
+  // ── UNIFIED SELECTION ACTION ──────────────────────────────────────────
+  // ONE function. Reads ONLY from activeSelection. Never falls back to
+  // page text when a selection exists. Never clears the selection.
+  function handleSelectionAction(action: string) {
+    if (!activeSelection) return;
+    resetInteractionState();
+    let prompt = "", content = "";
+    let imageDataUrl: string | undefined;
+
+    if (activeSelection.type === "text") {
+      // Always embed the selected text as part of content — model cannot
+      // accidentally use page context when the selection is explicit here.
+      content = `SELECTED TEXT (page ${activeSelection.pageNumber} of "${book}"):\n"""\n${activeSelection.text}\n"""\nUse ONLY the text above. Do not use any other page content.`;
+      switch (action) {
+        case "explain":   prompt = `Explain the SELECTED TEXT above clearly for a student. Respond ONLY in: ${language}.`; break;
+        case "summarize": prompt = `Summarize the SELECTED TEXT above in concise bullet points. Respond ONLY in: ${language}.`; break;
+        case "translate": prompt = `Translate the SELECTED TEXT above into ${language}. Return only the translation. Respond ONLY in: ${language}.`; break;
+        case "quiz":      prompt = `Create 3 quiz questions with answers from the SELECTED TEXT above. Respond ONLY in: ${language}.`; break;
+        case "notes":     prompt = `Convert the SELECTED TEXT above into clean study notes. Respond ONLY in: ${language}.`; break;
+        default:          prompt = `${action} Respond ONLY in: ${language}.`;
+      }
+    } else {
+      content = `SELECTED IMAGE from page ${activeSelection.pageNumber} of "${book}". Analyze ONLY this image.`;
+      imageDataUrl = activeSelection.imageData;
+      switch (action) {
+        case "explain":   prompt = `Explain what is shown in this SELECTED IMAGE clearly for a student. Respond ONLY in: ${language}.`; break;
+        case "summarize": prompt = `Describe and summarize the key parts of this SELECTED DIAGRAM in bullet points. Respond ONLY in: ${language}.`; break;
+        case "ask":       prompt = `Analyze this SELECTED IMAGE and answer student questions. Respond ONLY in: ${language}.`; break;
+        default:          prompt = `${action} Respond ONLY in: ${language}.`;
+      }
+    }
+    runAI(prompt, content, imageDataUrl);
+  }
+
   function askPremiumAI() {
     if (!aiQuestion.trim()) return;
-    const q = aiQuestion;
-    setAiQuestion("");
-    const content = pageContext();
-    console.log(`[AI] Ask: lang=${language}, page=${readerPage}, contentLen=${content.length}, q="${q}"`);
+    const q = aiQuestion; setAiQuestion("");
+    const content = getVisiblePageText().length > 50
+      ? `Content from page ${readerPage} of "${book}":\n\n${getVisiblePageText()}`
+      : `Viewing page ${readerPage} of "${book}".`;
     runAI(q, content);
   }
 
-  // ── Read Aloud ────────────────────────────────────────────────────
+  // ── Read Aloud ────────────────────────────────────────────────────────
   async function handleReadAloud() {
     if (typeof window === "undefined") return;
     const synth = window.speechSynthesis;
     if (speechState === "speaking") { synth.pause(); setSpeechState("paused"); return; }
-    if (speechState === "paused") { synth.resume(); setSpeechState("speaking"); return; }
+    if (speechState === "paused")  { synth.resume(); setSpeechState("speaking"); return; }
     setSpeechState("loading");
     let text = "";
     try {
-      text = await callAskAI(
-        "Give a 3–4 sentence spoken summary of this page suitable for listening. No bullet points, no markdown.",
-        book, readerPage, pageContext(), language
-      );
+      const content = getVisiblePageText().length > 50
+        ? `Content from page ${readerPage} of "${book}":\n\n${getVisiblePageText()}`
+        : `Viewing page ${readerPage} of "${book}".`;
+      text = await callAskAI("Give a 3–4 sentence spoken summary. No markdown.", book, readerPage, content, language);
     } catch { text = `Reading page ${readerPage} of ${book}.`; }
     const utt = new SpeechSynthesisUtterance(text);
     utt.rate = 0.92;
     utt.onend = () => setSpeechState("idle");
     utt.onerror = () => setSpeechState("idle");
     utteranceRef.current = utt;
-    synth.cancel();
-    synth.speak(utt);
+    synth.cancel(); synth.speak(utt);
     setSpeechState("speaking");
   }
   function handleStopReadAloud() {
     window.speechSynthesis?.cancel(); setSpeechState("idle"); utteranceRef.current = null;
   }
 
-  // ── Image capture ─────────────────────────────────────────────────
+  // ── Image captured → set activeSelection (STAYS in image mode) ────────
+  // Do NOT switch mode here. Staying in image mode means the user can
+  // immediately see the floating menu (mode=image, selection=image) and can
+  // also drag a new region to replace the selection.
   function handleImageCapture(dataUrl: string, pageNumber: number) {
-    setImageSelectMode(false);
-    runAI(
-      `Explain what is shown in this selected region from page ${pageNumber} of "${book}". Describe key elements clearly for a student.`,
-      `Image/diagram region from page ${pageNumber} of "${book}".`,
-      dataUrl
-    );
+    resetInteractionState();
+    setActiveSelection({
+      type: "image",
+      id: Date.now().toString(),
+      imageData: dataUrl,
+      pageNumber,
+    });
   }
 
-  // ── Text selection mouseUp ────────────────────────────────────────
+  // ── Text selected → set activeSelection ──────────────────────────────
   function handleMouseUp(e: React.MouseEvent) {
-    if (!textSelectMode || imageSelectMode) return;
+    if (interactionMode !== "text") return;
+    // Walk up DOM: ignore button/input clicks so they don't clear selection
+    let node: HTMLElement | null = e.target as HTMLElement;
+    while (node) {
+      if (["BUTTON","INPUT","SELECT","A"].includes(node.tagName)) return;
+      node = node.parentElement;
+    }
     setTimeout(() => {
-      const sel = window.getSelection();
-      const text = sel?.toString().trim() || "";
-      if (text.length < 2) {
-        setSelectedText(""); setToolbarPos(null);
-        return;
-      }
-      // Reject suspiciously large selections that are likely accidental
-      // whole-page grabs (text layer covers the full page area so a stray
-      // click-drag easily selects everything).
-      // Threshold: 1200 chars is ~2–3 paragraphs; above that it's likely
-      // an accidental select-all.
-      if (text.length > 1200) {
-        sel?.removeAllRanges();
-        setSelectedText(""); setToolbarPos(null);
-        return;
-      }
-      setSelectedText(text);
-      setToolbarPos({ x: e.clientX, y: e.clientY });
+      const text = window.getSelection()?.toString().trim() || "";
+      if (text.length < 2 || text.length > 1200) return;
+      resetInteractionState();
+      setActiveSelection({
+        type: "text",
+        id: Date.now().toString(),
+        text,
+        pageNumber: readerPage,
+        x: e.clientX,
+        y: e.clientY,
+      });
     }, 10);
   }
 
-  // ── Pan ───────────────────────────────────────────────────────────
+  // ── Pan ───────────────────────────────────────────────────────────────
   function onCenterMouseDown(e: React.MouseEvent) {
-    if (zoom <= 100 || imageSelectMode || textSelectMode) return;
+    // Never start panning in a selection mode or when floating menu is visible
+    if (interactionMode !== "none" || activeSelection) return;
     if (e.button !== 0) return;
     setIsPanning(true);
     panStart.current = { mx: e.clientX, my: e.clientY, px: pan.x, py: pan.y };
@@ -330,7 +384,7 @@ export default function PremiumReaderPreviewContent() {
   }
   function onCenterMouseUp() { setIsPanning(false); }
 
-  // ── Opening flow ──────────────────────────────────────────────────
+  // ── Open book ─────────────────────────────────────────────────────────
   function openBookWithAnimation() {
     setBookOpening(true);
     setTimeout(() => { setBookOpened(true); setBookOpening(false); }, 900);
@@ -347,10 +401,9 @@ export default function PremiumReaderPreviewContent() {
     );
   }
 
-  // ── Labels ────────────────────────────────────────────────────────
   const readLabel = speechState === "loading" ? "⏳ Preparing…"
     : speechState === "speaking" ? "⏸ Pause"
-    : speechState === "paused" ? "▶ Resume"
+    : speechState === "paused"   ? "▶ Resume"
     : "🔊 Read";
 
   return (
@@ -379,100 +432,124 @@ export default function PremiumReaderPreviewContent() {
           onMouseUp={(e) => { onCenterMouseUp(); handleMouseUp(e); }}
           onMouseLeave={onCenterMouseUp}
           style={{
-            height: "100%",
-            display: "flex",
-            flexDirection: "column",
-            cursor: zoom > 100 && !imageSelectMode && !textSelectMode
-              ? (isPanning ? "grabbing" : "grab") : "default",
+            height: "100%", display: "flex", flexDirection: "column",
+            cursor: imageSelectMode ? "crosshair"
+              : textSelectMode ? "text"
+              : isPanning ? "grabbing" : "grab",
           }}
         >
-          {/* ── Controls strip (flex-shrink-0 so it never gets squashed) ── */}
+          {/* ── Controls strip ─────────────────────────────── */}
           <div className="mx-auto mb-2 flex w-full max-w-[1340px] flex-shrink-0 flex-wrap items-center gap-2">
-
-            {/* Read Aloud */}
             <button onClick={handleReadAloud} disabled={speechState === "loading"}
               className="rounded-full bg-slate-950 px-4 py-2 text-xs font-bold text-white shadow hover:bg-slate-800 disabled:opacity-50">
               {readLabel}
             </button>
             {(speechState === "speaking" || speechState === "paused") && (
               <button onClick={handleStopReadAloud}
-                className="rounded-full bg-red-600 px-4 py-2 text-xs font-bold text-white shadow">
-                ⏹ Stop
-              </button>
+                className="rounded-full bg-red-600 px-4 py-2 text-xs font-bold text-white shadow">⏹ Stop</button>
             )}
-
             <span className="h-5 w-px bg-slate-300" />
-
-            {/* Zoom */}
-            <button onClick={() => setZoom((z) => Math.max(z - ZOOM_STEP, ZOOM_MIN))} disabled={zoom <= ZOOM_MIN}
+            <button onClick={() => setZoom(z => Math.max(z - ZOOM_STEP, ZOOM_MIN))} disabled={zoom <= ZOOM_MIN}
               className="rounded-full bg-white px-3 py-2 text-xs font-bold text-slate-800 shadow ring-1 ring-slate-200 hover:bg-slate-50 disabled:opacity-40">−</button>
             <span className="min-w-[44px] text-center text-xs font-bold text-slate-700">{zoom}%</span>
-            <button onClick={() => setZoom((z) => Math.min(z + ZOOM_STEP, ZOOM_MAX))} disabled={zoom >= ZOOM_MAX}
+            <button onClick={() => setZoom(z => Math.min(z + ZOOM_STEP, ZOOM_MAX))} disabled={zoom >= ZOOM_MAX}
               className="rounded-full bg-white px-3 py-2 text-xs font-bold text-slate-800 shadow ring-1 ring-slate-200 hover:bg-slate-50 disabled:opacity-40">+</button>
             <button onClick={fitScreen}
-              className="rounded-full bg-white px-4 py-2 text-xs font-bold text-slate-800 shadow ring-1 ring-slate-200 hover:bg-slate-50">
-              Fit
-            </button>
-
+              className="rounded-full bg-white px-4 py-2 text-xs font-bold text-slate-800 shadow ring-1 ring-slate-200 hover:bg-slate-50">Fit</button>
             <span className="h-5 w-px bg-slate-300" />
-
-            {/* Go To Page */}
-            <form onSubmit={(e) => { e.preventDefault(); goToPage(goToInput); }}
-              className="flex items-center gap-1">
-              <input
-                type="number" min={1} max={totalPages} value={goToInput}
-                onChange={(e) => setGoToInput(e.target.value)}
-                placeholder="Page #"
-                className="w-16 rounded-full bg-white px-3 py-2 text-xs text-slate-800 shadow ring-1 ring-slate-200 outline-none"
-              />
+            <form onSubmit={(e) => { e.preventDefault(); goToPage(goToInput); }} className="flex items-center gap-1">
+              <input type="number" min={1} max={totalPages} value={goToInput}
+                onChange={(e) => setGoToInput(e.target.value)} placeholder="Page #"
+                className="w-16 rounded-full bg-white px-3 py-2 text-xs text-slate-800 shadow ring-1 ring-slate-200 outline-none" />
               <button type="submit"
-                className="rounded-full bg-white px-3 py-2 text-xs font-bold text-slate-800 shadow ring-1 ring-slate-200 hover:bg-slate-50">
-                Go
-              </button>
+                className="rounded-full bg-white px-3 py-2 text-xs font-bold text-slate-800 shadow ring-1 ring-slate-200 hover:bg-slate-50">Go</button>
             </form>
-
             <span className="h-5 w-px bg-slate-300" />
 
-            {/* Text Select / Page Turn */}
-            <button
-              onClick={() => {
-                const next = !textSelectMode;
-                setTextSelectMode(next);
-                if (!next) { setSelectedText(""); setToolbarPos(null); window.getSelection()?.removeAllRanges(); }
-                if (next) setImageSelectMode(false);
-              }}
+            {/* Mode buttons — ALL use switchInteractionMode via toggleMode */}
+            <button onClick={() => toggleMode("text")}
               className={`rounded-full px-4 py-2 text-xs font-bold shadow transition-colors ${
                 textSelectMode ? "bg-amber-500 text-white" : "bg-white text-slate-800 ring-1 ring-slate-200 hover:bg-slate-50"}`}>
               {textSelectMode ? "📖 Page Turn" : "📝 Text Select"}
             </button>
-
-            {/* Image Select */}
-            <button
-              onClick={() => {
-                const next = !imageSelectMode;
-                setImageSelectMode(next);
-                if (next) { setTextSelectMode(false); setSelectedText(""); setToolbarPos(null); window.getSelection()?.removeAllRanges(); }
-              }}
+            <button onClick={() => toggleMode("image")}
               className={`rounded-full px-4 py-2 text-xs font-bold shadow transition-colors ${
                 imageSelectMode ? "bg-blue-600 text-white" : "bg-white text-slate-800 ring-1 ring-slate-200 hover:bg-slate-50"}`}>
               {imageSelectMode ? "✕ Cancel" : "📐 Image Select"}
             </button>
           </div>
 
-          {/* ── Text selection floating toolbar ───────────────── */}
-          {textSelectMode && selectedText && toolbarPos && (
-            <FloatingToolbar
-              selectedText={selectedText}
-              onExplain={() => runAI(`Explain the following selected text clearly for a student. Respond ONLY in: ${language}.`, selectionContent())}
-              onSummarize={() => runAI(`Summarize the following selected text in concise bullet points. Respond ONLY in: ${language}.`, selectionContent())}
-              onTranslate={() => runAI(`Rewrite and explain the following selected text in ${language} script. Write everything in ${language}. Respond ONLY in: ${language}.`, selectionContent())}
-              onQuiz={() => runAI(`Create 3 quiz questions with answers from the following selected text. Respond ONLY in: ${language}.`, selectionContent())}
-              onSaveNote={() => runAI(`Convert the following into clean study notes. Respond ONLY in: ${language}.`, selectionContent())}
-              onClose={() => { setSelectedText(""); setToolbarPos(null); window.getSelection()?.removeAllRanges(); }}
-            />
+          {/* ── UNIFIED FLOATING MENU ─────────────────────────
+              Visible ONLY when activeSelection != null AND
+              mode matches the selection type.
+              Clicking mode buttons always hides the stale menu
+              because switchInteractionMode clears activeSelection. */}
+          {showFloatingMenu && activeSelection && (
+            <div
+              onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); }}
+              style={{
+                position: "fixed",
+                top: activeSelection.type === "text"
+                  ? Math.max(10, activeSelection.y - 80) : "28%",
+                left: activeSelection.type === "text"
+                  ? activeSelection.x : "50%",
+                transform: activeSelection.type === "text"
+                  ? "translate(-50%, -100%)" : "translate(-50%, -50%)",
+                zIndex: 200,
+                background: "rgba(255,255,255,0.97)",
+                border: "1px solid #e5e0d0",
+                borderRadius: 20,
+                padding: "12px 14px",
+                boxShadow: "0 16px 50px rgba(0,0,0,0.20)",
+                backdropFilter: "blur(16px)",
+                minWidth: 260,
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between",
+                            marginBottom: 10, gap: 8 }}>
+                <p style={{ fontSize: 11, fontWeight: 700, color: "#92774a",
+                            letterSpacing: "0.07em", textTransform: "uppercase",
+                            maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {activeSelection.type === "text"
+                    ? `"${activeSelection.text.slice(0, 40)}${activeSelection.text.length > 40 ? "…" : ""}"`
+                    : `Image — Page ${activeSelection.pageNumber}`}
+                </p>
+                <button onClick={clearActiveSelection}
+                  style={{ background: "#f1f0ee", border: "none", borderRadius: 999,
+                            padding: "3px 10px", fontSize: 11, fontWeight: 700,
+                            color: "#64748b", cursor: "pointer", flexShrink: 0 }}>
+                  ✕ Clear
+                </button>
+              </div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                {activeSelection.type === "text" ? (
+                  ["explain","summarize","translate","quiz","notes"].map(action => (
+                    <button key={action} onClick={() => handleSelectionAction(action)}
+                      style={{ background: "#0f172a", color: "#fff", border: "none",
+                                borderRadius: 12, padding: "8px 14px", fontSize: 12,
+                                fontWeight: 700, cursor: "pointer" }}>
+                      { action==="explain" ? "🧠 Explain"
+                      : action==="summarize" ? "📝 Summarize"
+                      : action==="translate" ? "🌍 Translate"
+                      : action==="quiz"      ? "❓ Quiz"
+                                             : "📌 Notes" }
+                    </button>
+                  ))
+                ) : (
+                  [["explain","🔍 Explain Image"],["summarize","📊 Summarize"],["ask","❓ Ask AI"]].map(([action, label]) => (
+                    <button key={action} onClick={() => handleSelectionAction(action)}
+                      style={{ background: "#0f172a", color: "#fff", border: "none",
+                                borderRadius: 12, padding: "8px 14px", fontSize: 12,
+                                fontWeight: 700, cursor: "pointer" }}>
+                      {label}
+                    </button>
+                  ))
+                )}
+              </div>
+            </div>
           )}
 
-          {/* ── PDF Spread (flex-1 min-h-0: fills remaining height) ── */}
+          {/* ── PDF Spread ─────────────────────────────────── */}
           <div style={{ flex: 1, minHeight: 0 }}>
             <PdfBookSpread
               title={book}
@@ -480,8 +557,7 @@ export default function PremiumReaderPreviewContent() {
               pageNumber={readerPage}
               totalPages={String(totalPages)}
               layoutMode={isSpreadBook ? "spread" : "single"}
-              zoom={zoom}
-              pan={pan}
+              zoom={zoom} pan={pan}
               textSelectMode={textSelectMode}
               imageSelectMode={imageSelectMode}
               onImageCapture={handleImageCapture}
@@ -496,12 +572,19 @@ export default function PremiumReaderPreviewContent() {
       }
       rightPanel={
         <AICompanion
-          aiResponse={aiLoading ? "AI is thinking…" : aiResponse}
+          aiResponse={aiResponse}
+          isLoading={aiLoading}
           aiQuestion={aiQuestion}
           setAiQuestion={setAiQuestion}
           onAsk={askPremiumAI}
-          onQuickAction={(label) => {
-            setSelectedText(""); setToolbarPos(null);
+          onQuickAction={(label, prompt) => {
+            // Quick actions in the sidebar always use VISIBLE PAGE TEXT —
+            // not activeSelection. If user wants selection-specific AI,
+            // they use the floating toolbar buttons.
+            const content = getVisiblePageText().length > 50
+              ? `Content from page ${readerPage} of "${book}":\n\n${getVisiblePageText()}`
+              : `Viewing page ${readerPage} of "${book}".`;
+            runAI(prompt, content);
           }}
           bookTitle={book}
           pageNumber={readerPage}
