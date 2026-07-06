@@ -1,0 +1,72 @@
+"use client";
+
+import { HighlightColor, HIGHLIGHT_COLOR_HEX } from "./studyData";
+
+const ORDER: HighlightColor[] = ["yellow", "green", "blue", "pink"];
+
+export default function HighlightColorPicker({
+  left, top, onPick, onCancel,
+}: {
+  left: number;
+  top: number;
+  onPick: (color: HighlightColor) => void;
+  onCancel: () => void;
+}) {
+  const W = 220;
+  const vw = typeof window !== "undefined" ? window.innerWidth : 1200;
+  const vh = typeof window !== "undefined" ? window.innerHeight : 800;
+  const PAD = 12;
+  const clampedLeft = Math.max(PAD, Math.min(left - W / 2, vw - W - PAD));
+  const clampedTop = Math.max(PAD, Math.min(top, vh - 90 - PAD));
+
+  return (
+    <div
+      onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); }}
+      style={{
+        position: "fixed",
+        left: clampedLeft, top: clampedTop,
+        width: W,
+        zIndex: 220,
+        background: "rgba(255,255,255,0.98)",
+        border: "1px solid #e5e0d0",
+        borderRadius: 16,
+        padding: "10px 12px",
+        boxShadow: "0 16px 50px rgba(0,0,0,0.22)",
+        backdropFilter: "blur(16px)",
+        boxSizing: "border-box",
+      }}
+    >
+      <p style={{
+        fontSize: 10, fontWeight: 700, color: "#92774a",
+        letterSpacing: "0.07em", textTransform: "uppercase", marginBottom: 8,
+      }}>
+        Highlight color
+      </p>
+      <div style={{ display: "flex", gap: 8, justifyContent: "space-between" }}>
+        {ORDER.map((c) => (
+          <button
+            key={c}
+            onClick={() => onPick(c)}
+            title={HIGHLIGHT_COLOR_HEX[c].label}
+            style={{
+              width: 40, height: 40, borderRadius: "50%",
+              background: HIGHLIGHT_COLOR_HEX[c].fill,
+              border: `2px solid ${HIGHLIGHT_COLOR_HEX[c].border}`,
+              cursor: "pointer",
+            }}
+          />
+        ))}
+      </div>
+      <button
+        onClick={onCancel}
+        style={{
+          marginTop: 8, width: "100%", background: "#f1f0ee", color: "#64748b",
+          border: "none", borderRadius: 10, padding: "6px 10px", fontSize: 11,
+          fontWeight: 600, cursor: "pointer",
+        }}
+      >
+        Cancel
+      </button>
+    </div>
+  );
+}

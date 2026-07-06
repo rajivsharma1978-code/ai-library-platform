@@ -1,6 +1,8 @@
 "use client";
 
 import { useState } from "react";
+import StudyWorkspace, { RevisionAction } from "./study/StudyWorkspace";
+import type { StoredHighlight, StoredNote, StoredBookmark } from "./study/studyData";
 
 const LANGUAGES = ["English", "Hindi", "Tamil", "Bengali", "Marathi", "Telugu"] as const;
 type Lang = typeof LANGUAGES[number];
@@ -21,6 +23,18 @@ type AICompanionProps = {
   pageText?: string;
   language: Lang;
   onLanguageChange: (lang: Lang) => void;
+
+  // ── Phase 2: Study Workspace tab (additive — existing tab/behavior
+  //    above is completely untouched) ──────────────────────────────────
+  studyHighlights: StoredHighlight[];
+  studyNotes: StoredNote[];
+  studyBookmarks: StoredBookmark[];
+  onStudyJumpToPage: (page: number, flashId?: string) => void;
+  onStudyDeleteHighlight: (id: string) => void;
+  onStudyDeleteNote: (id: string) => void;
+  onStudyDeleteBookmark: (id: string) => void;
+  onStudyGenerateFromHighlight: (highlight: StoredHighlight, action: RevisionAction) => void;
+  studyGeneratingId: string | null;
 };
 
 const QUICK_ACTIONS = [
@@ -98,7 +112,15 @@ export default function AICompanion({
   aiResponse, isLoading = false, aiQuestion, setAiQuestion, onAsk, onQuickAction,
   bookTitle = "this book", pageNumber = 1, pageText = "",
   language, onLanguageChange,
+  studyHighlights, studyNotes, studyBookmarks,
+  onStudyJumpToPage, onStudyDeleteHighlight, onStudyDeleteNote, onStudyDeleteBookmark,
+  onStudyGenerateFromHighlight, studyGeneratingId,
 }: AICompanionProps) {
+  // Outer tab — "companion" is the ENTIRE original component, unchanged.
+  // "study" is the new Phase 2 workspace. Nothing inside the "companion"
+  // branch below was modified from the original implementation.
+  const [outerTab, setOuterTab] = useState<"companion" | "study">("companion");
+
   return (
     <div className="flex h-full flex-col p-5">
       {/* Header */}
@@ -107,6 +129,42 @@ export default function AICompanion({
         <p className="mt-1 text-xs font-semibold text-green-400">Active beside the book</p>
       </div>
 
+      {/* Outer tab bar — Phase 2 addition. Switching tabs never touches
+          aiResponse/aiQuestion/language state; the AI Companion tab keeps
+          whatever it had exactly as it was. */}
+      <div className="mt-3 flex gap-1 rounded-2xl bg-slate-900 p-1">
+        <button
+          onClick={() => setOuterTab("companion")}
+          className={`flex-1 rounded-xl py-2 text-xs font-bold transition-colors ${
+            outerTab === "companion" ? "bg-blue-600 text-white" : "text-slate-400 hover:text-slate-200"}`}
+        >
+          🤖 AI Companion
+        </button>
+        <button
+          onClick={() => setOuterTab("study")}
+          className={`flex-1 rounded-xl py-2 text-xs font-bold transition-colors ${
+            outerTab === "study" ? "bg-blue-600 text-white" : "text-slate-400 hover:text-slate-200"}`}
+        >
+          📚 Study
+        </button>
+      </div>
+
+      {outerTab === "study" ? (
+        <div className="mt-3 flex-1 min-h-0">
+          <StudyWorkspace
+            highlights={studyHighlights}
+            notes={studyNotes}
+            bookmarks={studyBookmarks}
+            onJumpToPage={onStudyJumpToPage}
+            onDeleteHighlight={onStudyDeleteHighlight}
+            onDeleteNote={onStudyDeleteNote}
+            onDeleteBookmark={onStudyDeleteBookmark}
+            onGenerateFromHighlight={onStudyGenerateFromHighlight}
+            generatingId={studyGeneratingId}
+          />
+        </div>
+      ) : (
+      <>
       {/* Language selector */}
       <div className="mt-3 border-b border-white/10 pb-3">
         <label className="mb-1 block text-[10px] font-bold uppercase tracking-widest text-slate-400">
@@ -162,6 +220,8 @@ export default function AICompanion({
           </button>
         </div>
       </div>
+      </>
+      )}
     </div>
   );
 }
