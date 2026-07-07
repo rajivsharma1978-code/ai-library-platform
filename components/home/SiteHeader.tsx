@@ -18,9 +18,9 @@ const ROLE_COLORS: Record<string, string> = {
 const USER_NAV = [
   { label: "🧠 My Space", href: "/my-space" },
   { label: "My Library", href: "/my-library" },
-  { label: "Quiz",       href: "/quiz" },
-  { label: "Flashcards", href: "/flashcards" },
+  { label: "My Books",   href: "/my-books" },
   { label: "Notes",      href: "/notes" },
+  { label: "Revision",   href: "/revision" },
   { label: "Analytics",  href: "/analytics" },
   { label: "Settings",   href: "/settings" },
 ];
@@ -29,6 +29,7 @@ export function SiteHeader() {
   const { language, setLanguage } = useLanguage();
   const [user, setUser] = useState<NDLUser | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [learningOpen, setLearningOpen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
   const [mounted, setMounted] = useState(false);
   const t = mounted ? UI_TEXT[language] : UI_TEXT.en;
@@ -49,6 +50,28 @@ export function SiteHeader() {
     setUser(null);
     window.location.href = "/";
   };
+
+  // "My Learning" — every personal-learning page lives here now, keeping
+  // the top-level bar down to exactly Home / Library / Explore / AI Tutor.
+  const MY_LEARNING_NAV: [string, string][] = [
+    [t.navLibrary.includes("Library") ? "🧠 My Space" : "🧠 माई स्पेस", "/my-space"],
+    [t.navLibrary.includes("Library") ? "My Library" : "मेरी लाइब्रेरी", "/my-library"],
+    [t.navLibrary.includes("Library") ? "My Books" : "मेरी पुस्तकें", "/my-books"],
+    [t.navLibrary.includes("Library") ? "Notes" : "नोट्स", "/notes"],
+    [t.navLibrary.includes("Library") ? "Revision" : "पुनरीक्षण", "/revision"],
+    ["Analytics", "/analytics"],
+  ];
+
+  // Leftover utility tools that aren't part of the core "My Learning" set —
+  // kept reachable without cluttering the top-level bar. No Admin Login
+  // here: that's been removed from public navigation entirely (still
+  // reachable by going directly to /admin-login).
+  const MORE_NAV: [string, string][] = [
+    ["Read PDF", "/read"],
+    ["Flashcards", "/flashcards"],
+    ["Quiz", "/quiz"],
+    ["Settings", "/settings"],
+  ];
 
   return (
     <header className="sticky top-0 z-50 bg-white border-b border-gray-100 shadow-sm">
@@ -72,41 +95,54 @@ export function SiteHeader() {
           </div>
         </Link>
 
-        {/* Nav */}
-        <nav className="hidden md:flex items-center gap-1">
-          <Link href="/" className="px-3 py-1 text-[13.5px] font-semibold text-orange-500 border-b-2 border-orange-500">
+        {/* Nav — tightened spacing (gap-0.5 / px-2.5) so 4 top-level items
+            + 2 dropdowns breathe rather than sprawl. Every trigger shares
+            the same inline-flex + items-center + hover:text-orange-500
+            treatment for a consistent hover/alignment rhythm. */}
+        <nav className="hidden md:flex items-center gap-0.5">
+          <Link href="/" className="inline-flex items-center px-2.5 py-1.5 text-[13.5px] font-semibold text-orange-500 border-b-2 border-orange-500">
             Home
           </Link>
           {([
-            [t.navLibrary,   "/library"],
-            [t.navAiTutor,   "/reader"],
-            ["Explore",      "/explore"],
-            [t.navLibrary.includes("Library") ? "My Library" : "मेरी लाइब्रेरी", "/my-library"],
-            ["Analytics",    "/analytics"],
-            [t.navLibrary.includes("Library") ? "🧠 My Space" : "🧠 माई स्पेस", "/my-space"],
+            [t.navLibrary, "/library"],
+            ["Explore", "/explore"],
+            [t.navAiTutor, "/reader"],
           ] as [string, string][]).map(([l, h]) => (
             <Link key={h} href={h}
-              className="px-3 py-1 text-[13.5px] font-medium text-gray-700 hover:text-orange-500 transition-colors">
+              className="inline-flex items-center px-2.5 py-1.5 text-[13.5px] font-medium text-gray-700 hover:text-orange-500 transition-colors">
               {l}
             </Link>
           ))}
+
+          {/* My Learning dropdown */}
           <div className="relative">
-            <button onClick={() => setMoreOpen(!moreOpen)}
-              className="flex items-center gap-1 px-3 py-1 text-[13.5px] font-medium text-gray-700 hover:text-orange-500">
+            <button onClick={() => { setLearningOpen(!learningOpen); setMoreOpen(false); }}
+              className="inline-flex items-center gap-1 px-2.5 py-1.5 text-[13.5px] font-medium text-gray-700 hover:text-orange-500 transition-colors">
+              {t.navLibrary.includes("Library") ? "My Learning" : "मेरी शिक्षा"} <span className="text-[10px] mt-0.5">▾</span>
+            </button>
+            {learningOpen && (
+              <div className="absolute top-full left-0 mt-1 bg-white rounded-xl shadow-xl border border-gray-100 py-1.5 w-48 z-50">
+                {MY_LEARNING_NAV.map(([l, h]) => (
+                  <Link key={h} href={h} onClick={() => setLearningOpen(false)}
+                    className="block px-4 py-2 text-[13px] text-gray-600 hover:bg-orange-50 hover:text-orange-500 transition-colors">
+                    {l}
+                  </Link>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* More dropdown — utility tools only, Admin Login removed */}
+          <div className="relative">
+            <button onClick={() => { setMoreOpen(!moreOpen); setLearningOpen(false); }}
+              className="inline-flex items-center gap-1 px-2.5 py-1.5 text-[13.5px] font-medium text-gray-700 hover:text-orange-500 transition-colors">
               More <span className="text-[10px] mt-0.5">▾</span>
             </button>
             {moreOpen && (
               <div className="absolute top-full left-0 mt-1 bg-white rounded-xl shadow-xl border border-gray-100 py-1.5 w-44 z-50">
-                {[
-                  ["Read PDF",    "/read"],
-                  [t.navLibrary.includes("Library") ? "Notes" : "नोट्स", "/notes"],
-                  ["Flashcards",  "/flashcards"],
-                  ["Revision",    "/revision"],
-                  ["Settings",    "/settings"],
-                  [t.adminLogin,  "/admin-login"],
-                ].map(([l, h]) => (
+                {MORE_NAV.map(([l, h]) => (
                   <Link key={h} href={h} onClick={() => setMoreOpen(false)}
-                    className="block px-4 py-2 text-[13px] text-gray-600 hover:bg-orange-50 hover:text-orange-500">
+                    className="block px-4 py-2 text-[13px] text-gray-600 hover:bg-orange-50 hover:text-orange-500 transition-colors">
                     {l}
                   </Link>
                 ))}
@@ -181,19 +217,13 @@ export function SiteHeader() {
               )}
             </div>
           ) : (
-            <>
-              <Link href="/sign-in"
-                className="flex items-center gap-1.5 bg-orange-500 hover:bg-orange-600 text-white text-[13px] font-semibold px-4 py-2 rounded-xl shadow-sm transition-all hover:shadow-md">
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                  <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>
-                </svg>
-                {t.signIn}
-              </Link>
-              <Link href="/admin-login"
-                className="hidden lg:flex items-center gap-1.5 border border-orange-300 text-orange-600 hover:bg-orange-50 text-[12px] font-semibold px-3 py-2 rounded-xl transition-all">
-                {t.adminLogin}
-              </Link>
-            </>
+            <Link href="/sign-in"
+              className="flex items-center gap-1.5 bg-orange-500 hover:bg-orange-600 text-white text-[13px] font-semibold px-4 py-2 rounded-xl shadow-sm transition-all hover:shadow-md">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>
+              </svg>
+              {t.signIn}
+            </Link>
           )}
         </div>
       </div>
