@@ -290,7 +290,7 @@ function PageBox({ canvasRef, textLayerRef, size, textSelectMode, imageSelectMod
       width: size?.w || undefined,
       height: size?.h || undefined,
       display: size ? "block" : "none",
-      userSelect: isModeActive ? "contain" : "none",
+      userSelect: isModeActive ? "text" : "none",
     }}>
       <canvas
         ref={canvasRef}
