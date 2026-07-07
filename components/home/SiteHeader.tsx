@@ -16,6 +16,7 @@ const ROLE_COLORS: Record<string, string> = {
 };
 
 const USER_NAV = [
+  { label: "🧠 My Space", href: "/my-space" },
   { label: "My Library", href: "/my-library" },
   { label: "Quiz",       href: "/quiz" },
   { label: "Flashcards", href: "/flashcards" },
@@ -80,8 +81,9 @@ export function SiteHeader() {
             [t.navLibrary,   "/library"],
             [t.navAiTutor,   "/reader"],
             ["Explore",      "/explore"],
-            [t.navLibrary.includes("Library") ? "My Space" : "मेरा स्थान", "/my-library"],
+            [t.navLibrary.includes("Library") ? "My Library" : "मेरी लाइब्रेरी", "/my-library"],
             ["Analytics",    "/analytics"],
+            [t.navLibrary.includes("Library") ? "🧠 My Space" : "🧠 माई स्पेस", "/my-space"],
           ] as [string, string][]).map(([l, h]) => (
             <Link key={h} href={h}
               className="px-3 py-1 text-[13.5px] font-medium text-gray-700 hover:text-orange-500 transition-colors">

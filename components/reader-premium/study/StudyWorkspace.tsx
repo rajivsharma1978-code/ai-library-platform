@@ -4,13 +4,18 @@ import { useMemo, useState } from "react";
 import { StoredHighlight, StoredNote, StoredBookmark, HIGHLIGHT_COLOR_HEX } from "./studyData";
 
 type StudySubTab = "highlights" | "notes" | "bookmarks" | "search";
+// Kept for prop-compatibility with AICompanion's existing pass-through —
+// no longer used to render anything (see note below).
 export type RevisionAction = "flashcards" | "quiz" | "mcqs" | "revision";
 
 export default function StudyWorkspace({
+  bookTitle,
   highlights, notes, bookmarks,
   onJumpToPage, onDeleteHighlight, onDeleteNote, onDeleteBookmark,
   onGenerateFromHighlight, generatingId,
 }: {
+  /** Current book's display title, shown on each highlight card. */
+  bookTitle?: string;
   highlights: StoredHighlight[];
   notes: StoredNote[];
   bookmarks: StoredBookmark[];
@@ -18,8 +23,15 @@ export default function StudyWorkspace({
   onDeleteHighlight: (id: string) => void;
   onDeleteNote: (id: string) => void;
   onDeleteBookmark: (id: string) => void;
-  onGenerateFromHighlight: (highlight: StoredHighlight, action: RevisionAction) => void;
-  generatingId: string | null;
+  /**
+   * No longer called from anywhere in this component — Flashcards/Quiz/
+   * MCQs/Revision were removed from highlight cards (they duplicated AI
+   * Companion and didn't respond in the demo). Kept as an accepted prop
+   * purely so AICompanion's existing pass-through doesn't need editing;
+   * safe to delete from both places whenever that cleanup happens.
+   */
+  onGenerateFromHighlight?: (highlight: StoredHighlight, action: RevisionAction) => void;
+  generatingId?: string | null;
 }) {
   const [subTab, setSubTab] = useState<StudySubTab>("highlights");
   const [query, setQuery] = useState("");
@@ -45,6 +57,14 @@ export default function StudyWorkspace({
     return list.filter(b => (b.title || "").toLowerCase().includes(q) || String(b.page).includes(q));
   }, [bookmarks, query]);
 
+  // A highlight and a note don't carry an explicit cross-reference in the
+  // data model — the best available signal that a note "belongs to" a
+  // highlight is the same page + identical selected text (both are
+  // captured from the same activeSelection at creation time).
+  function findNoteForHighlight(h: StoredHighlight): StoredNote | undefined {
+    return notes.find(n => n.page === h.page && n.selectedText === h.selectedText);
+  }
+
   const tabBtn = (tab: StudySubTab, label: string) => (
     <button
       onClick={() => setSubTab(tab)}
@@ -59,12 +79,73 @@ export default function StudyWorkspace({
     </button>
   );
 
-  const REVISION_ACTIONS: { action: RevisionAction; label: string }[] = [
-    { action: "flashcards", label: "🎴 Flashcards" },
-    { action: "quiz",       label: "❓ Quiz" },
-    { action: "mcqs",       label: "☑️ MCQs" },
-    { action: "revision",   label: "📚 Revision" },
-  ];
+  const actionBtnStyle: React.CSSProperties = {
+    background: "#1e293b", color: "#cbd5e1", border: "none",
+    borderRadius: 8, padding: "5px 10px", fontSize: 11, fontWeight: 700,
+    cursor: "pointer", whiteSpace: "nowrap",
+  };
+
+  // ── Simplified highlight card ────────────────────────────────────────
+  // ONLY: highlighted text (2-3 lines, ellipsis), book title, page number,
+  // color indicator, note indicator (if any). Actions: Open Page,
+  // Edit Note (only if a note exists), Delete. Nothing else — no
+  // Flashcards/Quiz/MCQs/Revision here; that generation lives in AI
+  // Companion now.
+  function HighlightCard({ h }: { h: StoredHighlight }) {
+    const note = findNoteForHighlight(h);
+    return (
+      <div style={{ background: "#0f172a", borderRadius: 14, padding: 12 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <span style={{
+            width: 10, height: 10, borderRadius: "50%", flexShrink: 0,
+            background: HIGHLIGHT_COLOR_HEX[h.color].fill,
+            border: `2px solid ${HIGHLIGHT_COLOR_HEX[h.color].border}`,
+          }} />
+          <span style={{
+            fontSize: 10, fontWeight: 700, color: "#94a3b8",
+            textTransform: "uppercase", letterSpacing: "0.04em",
+            overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+          }}>
+            📖 {bookTitle?.trim() ? bookTitle : "This book"}
+          </span>
+          {note && (
+            <span title="Note attached" style={{ marginLeft: "auto", fontSize: 12, flexShrink: 0 }}>📝</span>
+          )}
+        </div>
+
+        <p style={{
+          fontSize: 13, color: "#e2e8f0", lineHeight: 1.5, margin: "8px 0 0",
+          display: "-webkit-box",
+          WebkitLineClamp: 3,
+          WebkitBoxOrient: "vertical",
+          overflow: "hidden",
+        }}>
+          “{h.selectedText}”
+        </p>
+
+        <p style={{ fontSize: 10, color: "#64748b", marginTop: 6, fontWeight: 700 }}>
+          Page {h.page}
+        </p>
+
+        <div style={{ display: "flex", gap: 6, marginTop: 10 }}>
+          <button onClick={() => onJumpToPage(h.page, h.id)} style={actionBtnStyle}>
+            📖 Open Page
+          </button>
+          {note && (
+            <button onClick={() => onJumpToPage(h.page, note.id)} style={actionBtnStyle}>
+              ✏️ Edit Note
+            </button>
+          )}
+          <button
+            onClick={() => onDeleteHighlight(h.id)}
+            style={{ ...actionBtnStyle, marginLeft: "auto", background: "#3f1d1d", color: "#fca5a5" }}
+          >
+            🗑 Delete
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
@@ -93,45 +174,7 @@ export default function StudyWorkspace({
 
       <div style={{ flex: 1, overflowY: "auto", marginTop: 10, display: "flex", flexDirection: "column", gap: 8 }}>
         {(subTab === "highlights" || subTab === "search") && filteredHighlights.map(h => (
-          <div key={h.id} style={{ background: "#0f172a", borderRadius: 14, padding: 10 }}>
-            <div style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
-              <span style={{
-                width: 12, height: 12, borderRadius: "50%", flexShrink: 0, marginTop: 3,
-                background: HIGHLIGHT_COLOR_HEX[h.color].fill,
-                border: `2px solid ${HIGHLIGHT_COLOR_HEX[h.color].border}`,
-              }} />
-              <button
-                onClick={() => onJumpToPage(h.page, h.id)}
-                style={{ flex: 1, textAlign: "left", background: "none", border: "none", cursor: "pointer", padding: 0 }}
-              >
-                <p style={{ fontSize: 12, color: "#e2e8f0", lineHeight: 1.5 }}>
-                  “{h.selectedText.slice(0, 110)}{h.selectedText.length > 110 ? "…" : ""}”
-                </p>
-                <p style={{ fontSize: 10, color: "#64748b", marginTop: 4, fontWeight: 700 }}>Page {h.page} · tap to jump</p>
-              </button>
-              <button onClick={() => onDeleteHighlight(h.id)}
-                style={{ background: "none", border: "none", color: "#64748b", cursor: "pointer", fontSize: 13, flexShrink: 0 }}>
-                🗑️
-              </button>
-            </div>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 8 }}>
-              {REVISION_ACTIONS.map(({ action, label }) => (
-                <button
-                  key={action}
-                  disabled={generatingId === h.id}
-                  onClick={() => onGenerateFromHighlight(h, action)}
-                  style={{
-                    background: "#1e293b", color: "#cbd5e1", border: "none",
-                    borderRadius: 8, padding: "4px 8px", fontSize: 10, fontWeight: 700,
-                    cursor: generatingId === h.id ? "default" : "pointer",
-                    opacity: generatingId === h.id ? 0.5 : 1,
-                  }}
-                >
-                  {generatingId === h.id ? "…" : label}
-                </button>
-              ))}
-            </div>
-          </div>
+          <HighlightCard key={h.id} h={h} />
         ))}
         {subTab === "highlights" && filteredHighlights.length === 0 && (
           <p style={{ fontSize: 12, color: "#64748b", textAlign: "center", marginTop: 20 }}>

@@ -44,7 +44,10 @@ export const directorBooks: DirectorBook[] = [
     description:
       "A comprehensive textbook introducing the mathematical foundations of both classical and quantum computing, written for students with a basic background in linear algebra.",
     language: "English",
-    cover: "/director-books/quantum-cover.jpg",
+    // Real cover asset (was pointing to a non-existent .jpg — the book's
+    // PDF opens on a plain academic title page, so a designed SVG cover
+    // was added instead of relying on the PDF-first-page fallback).
+    cover: "/director-books/quantum-cover.svg",
     pdf: "/director-books/quantum-computing.pdf",
     pages: 400,
     layout: "spread",

@@ -1350,6 +1350,7 @@ export default function PremiumReaderPreviewContent() {
               imageSelectMode={imageSelectMode}
               pageHighlights={pageHighlightsForSpread}
               pageNotes={pageNotesForSpread}
+              bookId={bookId}
               onPageRendered={handlePageRendered}
               onTextExtracted={handleTextExtracted}
               isFlipping={isFlipping}

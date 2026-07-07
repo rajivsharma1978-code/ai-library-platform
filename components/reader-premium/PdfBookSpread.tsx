@@ -41,6 +41,8 @@ export type PdfBookSpreadProps = {
    *  list for the current book. */
   pageHighlights?: PageOverlayHighlight[];
   pageNotes?: PageOverlayNote[];
+  /** Current book id — only used for the temporary debug logging below. */
+  bookId?: string;
   /**
    * Fires after first render with canvas CSS dims AND the inner book-card
    * container dims so the parent can compute an accurate auto-fit zoom.
@@ -240,13 +242,14 @@ async function renderPdfPage(params: {
 // from selecting text in Image Select mode, and we are not trying to stop
 // image cropping from working in Text Select mode — both are always
 // physically possible; only the AI-facing router cares which mode is on.
-function PageBox({ canvasRef, textLayerRef, size, textSelectMode, imageSelectMode, pageNumber, highlights, notes }: {
+function PageBox({ canvasRef, textLayerRef, size, textSelectMode, imageSelectMode, pageNumber, bookId, highlights, notes }: {
   canvasRef: React.RefObject<HTMLCanvasElement | null>;
   textLayerRef: React.RefObject<HTMLDivElement | null>;
   size: { w: number; h: number } | null;
   textSelectMode: boolean;
   imageSelectMode: boolean;
   pageNumber: number;
+  bookId?: string;
   highlights?: PageOverlayHighlight[];
   notes?: PageOverlayNote[];
 }) {
@@ -259,13 +262,22 @@ function PageBox({ canvasRef, textLayerRef, size, textSelectMode, imageSelectMod
   const pageHighlights = (highlights ?? []).filter(h => h.page === pageNumber);
   const pageNoteMarkers = (notes ?? []).filter(n => n.page === pageNumber);
 
+  // flatMap (not a nested .map().map()) so this produces ONE flat array of
+  // already-keyed elements directly — no ambiguity about whether the
+  // OUTER per-highlight group also needs its own key.
+  const highlightBoxes = pageHighlights.flatMap(h =>
+    h.rectsPct.map((r, i) => ({ boxKey: `${h.id}-${i}`, rect: r, fill: h.fill, border: h.border, flashing: h.flashing }))
+  );
+
   // ── TEMPORARY DEBUG (Phase 2 highlight-overlay bugfix) ───────────────
-  // Safe to remove once highlight rendering is confirmed working in your
-  // environment — logs what this specific page box is about to paint.
+  // Exactly the values requested: bookId, page, rectsPct, and the final
+  // rendered overlay count for this page. Safe to remove once confirmed.
   if (typeof window !== "undefined" && (pageHighlights.length > 0 || pageNoteMarkers.length > 0)) {
-    console.log(`[HighlightOverlay] page=${pageNumber} highlights=${pageHighlights.length} notes=${pageNoteMarkers.length}`, {
-      rectsPct: pageHighlights.map(h => ({ id: h.id, rectsPct: h.rectsPct })),
-    });
+    console.log(
+      `[HighlightOverlay] bookId=${bookId ?? "?"} page=${pageNumber} ` +
+      `highlightsForPage=${pageHighlights.length} renderedBoxes=${highlightBoxes.length} notes=${pageNoteMarkers.length}`,
+      { rectsPct: pageHighlights.map(h => ({ id: h.id, rectsPct: h.rectsPct })) }
+    );
   }
 
   return (
@@ -278,7 +290,7 @@ function PageBox({ canvasRef, textLayerRef, size, textSelectMode, imageSelectMod
       width: size?.w || undefined,
       height: size?.h || undefined,
       display: size ? "block" : "none",
-      userSelect: isModeActive ? "text" : "none",
+      userSelect: isModeActive ? "contain" : "none",
     }}>
       <canvas
         ref={canvasRef}
@@ -291,39 +303,30 @@ function PageBox({ canvasRef, textLayerRef, size, textSelectMode, imageSelectMod
           that sizes the canvas — using percentage-based absolute
           positioning. This is deliberately NOT position:fixed and NOT
           computed via getBoundingClientRect() from a distant parent
-          component: because leftPct/topPct/widthPct/heightPct are
-          fractions of THIS container's own box, they automatically stay
-          aligned under zoom (the whole PageBox is inside the zoomed CSS
-          transform), fullscreen (still the same box, just bigger), and
-          page turns/refresh (recomputed fresh every render from plain
-          data, no async DOM measurement or timing race involved at all).
+          component: because left/top/width/height are fractions of THIS
+          container's own box, they automatically stay aligned under zoom
+          (the whole PageBox is inside the zoomed CSS transform),
+          fullscreen (still the same box, just bigger), and page
+          turns/refresh (recomputed fresh every render from plain data,
+          no async DOM measurement or timing race involved at all).
           z-index 2: above the canvas (z-index 1) and below the text
-          layer (z-index 3, bumped below) / floating toolbar (rendered
-          far above this in the parent, z-index 150-200). */}
-      {pageHighlights.map(h => (
-        h.rectsPct.map((r, i) => {
-          const rendered = size !== null;
-          if (typeof window !== "undefined") {
-            console.log(`[HighlightOverlay] rendering box id=${h.id}-${i} page=${pageNumber} rendered=${rendered}`, r);
-          }
-          return (
-            <div key={`${h.id}-${i}`} style={{
-              position: "absolute",
-              left: `${r.left * 100}%`,
-              top: `${r.top * 100}%`,
-              width: `${r.width * 100}%`,
-              height: `${r.height * 100}%`,
-              background: h.fill,
-              borderBottom: `3px solid ${h.border}`,
-              boxSizing: "border-box",
-              pointerEvents: "none",
-              zIndex: 2,
-              transition: "outline 200ms ease",
-              outline: h.flashing ? `3px solid ${h.border}` : "none",
-              outlineOffset: 2,
-            }} />
-          );
-        })
+          layer (z-index 3, just below) / floating toolbar (rendered far
+          above this, in the parent, at z-index 150-200). */}
+      {highlightBoxes.map(({ boxKey, rect, fill, border, flashing }) => (
+        <div key={boxKey} style={{
+          position: "absolute",
+          left: `${rect.left * 100}%`,
+          top: `${rect.top * 100}%`,
+          width: `${rect.width * 100}%`,
+          height: `${rect.height * 100}%`,
+          background: fill,
+          borderRadius: 2,
+          pointerEvents: "none",
+          zIndex: 2,
+          transition: "outline 200ms ease",
+          outline: flashing ? `3px solid ${border}` : "none",
+          outlineOffset: 2,
+        }} />
       ))}
 
       {/* ── PHASE 2: small note indicator icon ──────────────────────── */}
@@ -372,6 +375,7 @@ export default function PdfBookSpread({
   imageSelectMode = false,
   pageHighlights = [],
   pageNotes = [],
+  bookId,
   onPageRendered,
   onTextExtracted,
   layoutMode = "single",
@@ -547,7 +551,7 @@ export default function PdfBookSpread({
                   canvasRef={canvasRef} textLayerRef={textRef} size={singleSize}
                   textSelectMode={textSelectMode} imageSelectMode={imageSelectMode}
                   pageNumber={safePage}
-                  highlights={pageHighlights} notes={pageNotes}
+                  bookId={bookId} highlights={pageHighlights} notes={pageNotes}
                 />
               ) : (
                 <div style={{ display: "flex", alignItems: "center", gap: 0 }}>
@@ -555,7 +559,7 @@ export default function PdfBookSpread({
                     canvasRef={leftCanvasRef} textLayerRef={leftTextRef} size={leftSize}
                     textSelectMode={textSelectMode} imageSelectMode={imageSelectMode}
                     pageNumber={safePage}
-                    highlights={pageHighlights} notes={pageNotes}
+                    bookId={bookId} highlights={pageHighlights} notes={pageNotes}
                   />
                   <div style={{ width: 3, alignSelf: "stretch", margin: "8px 0",
                                 background: "linear-gradient(to right,#d4c5a9,#e8dfc8,#d4c5a9)",
@@ -565,7 +569,7 @@ export default function PdfBookSpread({
                       canvasRef={rightCanvasRef} textLayerRef={rightTextRef} size={rightSize}
                       textSelectMode={textSelectMode} imageSelectMode={imageSelectMode}
                       pageNumber={rightPage}
-                      highlights={pageHighlights} notes={pageNotes}
+                      bookId={bookId} highlights={pageHighlights} notes={pageNotes}
                     />
                   ) : (
                     <div style={{ width: leftSize?.w || 400, height: leftSize?.h || 600, background: "#fdfcf9", borderRadius: 10 }} />
