@@ -135,8 +135,53 @@ const MIN_DRAG_PX = 6;
 export default function PremiumReaderPreviewContent() {
   // ── Book ──────────────────────────────────────────────────────────
   const searchParams = useSearchParams();
-  const bookId = searchParams.get("book") || "nalanda";
-  const currentBook = directorBooks.find((b) => b.id === bookId) || directorBooks[0];
+
+  // ── Unified reading experience: user-uploaded PDFs ──────────────────
+  // app/read/page.tsx stores an uploaded file as a base64 data URL in
+  // sessionStorage (survives both client-side navigation AND a full
+  // page reload — unlike a blob: URL, which dies the moment the
+  // document that created it unloads), then redirects here with
+  // ?source=upload. This is the ONLY place in the whole Reader that
+  // decides which "book" is active — everything downstream (PdfBookSpread,
+  // AI Companion, Study Workspace, highlights, notes, bookmarks, Read
+  // Aloud, translation, quiz, revision) already just consumes whatever
+  // currentBook/bookId resolve to below, so none of it needed to change.
+  //
+  // Guarded with typeof window !== "undefined" since this component is
+  // statically imported (not dynamic(..., {ssr:false})) and can be
+  // server-rendered on first load; sessionStorage doesn't exist there.
+  // The one accepted trade-off: if the server-rendered pass differs from
+  // the client's (i.e. an upload really is present), React corrects the
+  // mismatch on hydration — a brief correction, not a crash.
+  const uploadedSource = searchParams.get("source") === "upload";
+  const uploadedPdfData = typeof window !== "undefined" ? window.sessionStorage.getItem("ndl_uploaded_pdf_data") : null;
+  const uploadedPdfName = typeof window !== "undefined" ? window.sessionStorage.getItem("ndl_uploaded_pdf_name") : null;
+  const uploadedPdfPages = typeof window !== "undefined" ? window.sessionStorage.getItem("ndl_uploaded_pdf_pages") : null;
+  const uploadedPdfId = typeof window !== "undefined" ? window.sessionStorage.getItem("ndl_uploaded_pdf_id") : null;
+  // Explicit AND — requires both the URL's stated intent (?source=upload)
+  // and the data actually being present, so a stale/bad link (or leftover
+  // sessionStorage from a previous session) never silently hijacks a
+  // normal library-book visit.
+  const isUploadedBook = Boolean(uploadedSource && uploadedPdfData && uploadedPdfId);
+
+  const bookId = isUploadedBook ? (uploadedPdfId as string) : (searchParams.get("book") || "nalanda");
+  const currentBook = isUploadedBook
+    ? {
+        id: uploadedPdfId as string,
+        title: uploadedPdfName || "Uploaded Document",
+        author: "",
+        description: "",
+        language: "",
+        cover: "",
+        // The SAME string PdfBookSpread already passes straight into
+        // pdfjsLib.getDocument(pdfPath) for every catalog book — a
+        // data: URL is fetchable the same way a /director-books/*.pdf
+        // path is, so PdfBookSpread needed zero changes for this to work.
+        pdf: uploadedPdfData as string,
+        pages: Number(uploadedPdfPages) || 1,
+        layout: "single" as const,
+      }
+    : (directorBooks.find((b) => b.id === bookId) || directorBooks[0]);
   const book = currentBook.title;
   const totalPages = Number(currentBook.pages);
   const isSpreadBook = currentBook.layout === "spread";

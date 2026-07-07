@@ -9,8 +9,8 @@ export function SiteFooter() {
   const t = UI_TEXT[language];
 
   const LINKS = {
-    [t.footerResources]:  [["Library","/library"],["AI Tutor","/reader"],["Upload PDF","/read"],["Explore","/explore"],["My Library","/my-library"],["My Space","/my-space"]],
-    [t.footerResources === "Resources" ? "Learning" : "शिक्षण"]: [["Notes","/notes"],["Flashcards","/flashcards"],["Quiz Generator","/quiz"],["Revision Hub","/revision"],["AI Summaries","/reader"]],
+    [t.footerResources]:  [["Library","/library"],["AI Tutor","/ai-tutor"],["Upload PDF","/read"],["Explore","/explore"],["My Library","/my-library"],["My Space","/my-space"]],
+    [t.footerResources === "Resources" ? "Learning" : "शिक्षण"]: [["Notes","/notes"],["Flashcards","/flashcards"],["Quiz Generator","/quiz"],["Revision Hub","/revision"],["AI Summaries","/ai-tutor"]],
     [t.footerContact === "Contact" ? "Company" : "कंपनी"]:  [["About Us","/"],["Careers","/"],["Press","/"],["Blog","/"],["Contact Us","/"]],
     [t.footerSupport]:    [["Help Center","/"],["Privacy Policy","/"],["Terms of Service","/"],["Accessibility","/"]],
   };
