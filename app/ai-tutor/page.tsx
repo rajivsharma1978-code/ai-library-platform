@@ -5,6 +5,9 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { UI_TEXT } from "@/lib/i18n";
 import { useLanguage } from "@/lib/useLanguage";
 import { directorBooks } from "@/lib/directorBooks";
+import PageHeader from "@/components/ui/PageHeader";
+import QuickLinks from "@/components/ui/QuickLinks";
+import AppButton from "@/components/ui/AppButton";
 
 // ── Local types + helpers, self-contained on purpose (same pattern as
 // app/my-books, app/my-library) — this page doesn't import from those
@@ -17,6 +20,7 @@ type DirectorBook = {
   cover?: string; coverUrl?: string; image?: string; thumbnail?: string;
   [k: string]: any;
 };
+type UIText = { [K in keyof typeof UI_TEXT["en"]]: string };
 
 function readArray<T>(key: string): T[] {
   if (typeof window === "undefined") return [];
@@ -97,28 +101,31 @@ function CoverThumb({ book, className = "" }: { book?: DirectorBook; className?:
   );
 }
 
-function BookCard({ book, isEn, badge }: { book: DirectorBook; isEn: boolean; badge?: string }) {
+// Fixed-height flex-column card so every card's CTA lines up on the same
+// row regardless of title/author length — fixes the alignment
+// inconsistency across book cards.
+function BookCard({ book, t }: { book: DirectorBook; t: UIText }) {
   return (
-    <div className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm hover:shadow-lg transition-shadow">
+    <div className="flex h-full flex-col rounded-3xl border border-slate-200 bg-white p-4 shadow-sm transition-shadow hover:shadow-lg">
       <div className="relative h-56 w-full overflow-hidden rounded-2xl shadow">
         <CoverThumb book={book} className="h-full w-full" />
-        {badge && (
-          <span className="absolute left-2 top-2 rounded-full bg-slate-900/90 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-white">
-            {badge}
-          </span>
-        )}
       </div>
       <h3 className="mt-3 truncate text-lg font-bold text-slate-900">{book.title}</h3>
       {book.author && <p className="truncate text-sm text-slate-500">{book.author}</p>}
       {book.language && (
         <p className="mt-0.5 truncate text-[11px] font-semibold uppercase tracking-wide text-slate-400">{book.language}</p>
       )}
-      <Link
-        href={`/reader-premium?book=${book.id}`}
-        className="mt-4 block rounded-xl bg-black px-4 py-2.5 text-center text-sm font-bold text-white hover:bg-slate-800"
-      >
-        🤖 {isEn ? "Start AI Tutor" : "एआई ट्यूटर शुरू करें"}
-      </Link>
+      <div className="mt-auto pt-4">
+        <AppButton href={`/reader-premium?book=${book.id}`} fullWidth>
+          🤖 {t.aiTutorStart}
+        </AppButton>
+        {/* Secondary, deliberately lightweight — AI Tutor stays the
+            primary path on this page; this just avoids forcing AI on
+            anyone who only wants to read. */}
+        <AppButton href={`/read?book=${book.id}`} variant="ghost" size="sm" fullWidth className="mt-2">
+          📖 {t.aiTutorOrReadNormally}
+        </AppButton>
+      </div>
     </div>
   );
 }
@@ -126,7 +133,6 @@ function BookCard({ book, isEn, badge }: { book: DirectorBook; isEn: boolean; ba
 export default function AiTutorPage() {
   const { language } = useLanguage();
   const t = UI_TEXT[language];
-  const isEn = t.navLibrary === "Library";
 
   const [mounted, setMounted] = useState(false);
   const [progress, setProgress] = useState<ReadingProgressEntry[]>([]);
@@ -155,11 +161,23 @@ export default function AiTutorPage() {
       .filter((b): b is DirectorBook => !!b && b.id !== continueBook?.id);
   }, [continueBook]);
 
+  const quickLinks = [
+    { href: "/", icon: "🏠", label: t.commonHome },
+    { href: "/library", icon: "🏛️", label: t.navLibrary },
+    { href: "/my-space", icon: "🧠", label: t.navMySpace },
+    { href: "/my-library", icon: "📚", label: t.myLibraryTitle },
+    { href: "/my-books", icon: "📖", label: t.myBooksTitle },
+    { href: "/notes", icon: "📝", label: t.navNotes },
+    { href: "/revision", icon: "🔄", label: t.navRevision },
+    { href: "/analytics", icon: "📊", label: t.navAnalytics },
+    { href: "/read", icon: "📤", label: t.uploadPdf },
+  ];
+
   if (!mounted) {
     return (
       <main className="min-h-screen bg-slate-50 p-6">
         <div className="mx-auto max-w-6xl animate-pulse text-sm font-semibold text-slate-400">
-          {isEn ? "Loading AI Tutor…" : "एआई ट्यूटर लोड हो रहा है…"}
+          {t.commonLoading}
         </div>
       </main>
     );
@@ -169,25 +187,16 @@ export default function AiTutorPage() {
     <main className="min-h-screen bg-slate-50 p-6">
       <div className="mx-auto max-w-6xl">
 
-        {/* Header */}
-        <div className="mb-8 flex items-start justify-between gap-4">
-          <div>
-            <h1 className="text-4xl font-bold text-slate-900">{isEn ? "AI Tutor" : "एआई ट्यूटर"}</h1>
-            <p className="mt-2 text-slate-600">
-              {isEn ? "Choose a book or document and start learning with AI." : "एक किताब या दस्तावेज़ चुनें और एआई के साथ सीखना शुरू करें।"}
-            </p>
-          </div>
-          <Link href="/" className="rounded-xl bg-black px-4 py-2 text-white flex-shrink-0">{isEn ? "← Home" : "← होम"}</Link>
-        </div>
+        <PageHeader title={t.navAiTutor} subtitle={t.aiTutorSubtitle} homeLabel={t.commonHome} />
 
         {/* 1. Continue Learning */}
         {continueBook && (
           <section className="mb-10">
             <div className="mb-4 flex items-center justify-between">
-              <h2 className="text-lg font-black text-slate-900">{isEn ? "Continue Learning" : "सीखना जारी रखें"}</h2>
+              <h2 className="text-lg font-black text-slate-900">{t.aiTutorContinueLearning}</h2>
               {usingFallbackContinue && (
                 <span className="rounded-full bg-amber-100 px-3 py-1 text-[10px] font-bold uppercase tracking-wide text-amber-700">
-                  {isEn ? "suggested" : "सुझाया गया"}
+                  {t.aiTutorSuggested}
                 </span>
               )}
             </div>
@@ -197,24 +206,28 @@ export default function AiTutorPage() {
               </div>
               <div className="flex-1 text-center sm:text-left">
                 <p className="text-xs font-black uppercase tracking-widest text-amber-700">
-                  {usingFallbackContinue
-                    ? (isEn ? "Popular with learners" : "शिक्षार्थियों में लोकप्रिय")
-                    : (isEn ? "Pick up where you left off" : "जहां से छोड़ा था वहां से शुरू करें")}
+                  {usingFallbackContinue ? t.aiTutorPopularWithLearners : t.aiTutorPickUpWhere}
                 </p>
                 <h3 className="mt-1 text-2xl font-black text-slate-950">{continueBook.title}</h3>
                 {continueBook.author && <p className="mt-1 text-sm text-slate-500">{continueBook.author}</p>}
                 {continueProgressEntry && (
                   <p className="mt-1 text-sm text-slate-500">
-                    {isEn ? "Page" : "पृष्ठ"} {continueProgressEntry.currentPage} / {continueProgressEntry.totalPages}
+                    {t.commonPage} {continueProgressEntry.currentPage} / {continueProgressEntry.totalPages}
                   </p>
                 )}
               </div>
-              <div className="flex-shrink-0">
+              <div className="flex-shrink-0 text-center">
                 <Link
                   href={`/reader-premium?book=${continueBook.id}`}
                   className="inline-block rounded-full bg-amber-500 px-7 py-3 text-sm font-black text-white shadow-xl hover:bg-amber-600"
                 >
-                  🤖 {isEn ? "Start AI Tutor" : "एआई ट्यूटर शुरू करें"}
+                  🤖 {t.aiTutorStart}
+                </Link>
+                <Link
+                  href={`/read?book=${continueBook.id}`}
+                  className="mt-2 block text-xs font-semibold text-slate-400 hover:text-slate-600"
+                >
+                  📖 {t.aiTutorOrReadNormally}
                 </Link>
               </div>
             </div>
@@ -224,9 +237,9 @@ export default function AiTutorPage() {
         {/* 2. Recommended for Demo */}
         {recommended.length > 0 && (
           <section className="mb-10">
-            <h2 className="mb-4 text-lg font-black text-slate-900">{isEn ? "Recommended for Demo" : "डेमो के लिए अनुशंसित"}</h2>
+            <h2 className="mb-4 text-lg font-black text-slate-900">{t.aiTutorRecommended}</h2>
             <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
-              {recommended.map(book => <BookCard key={book.id} book={book} isEn={isEn} />)}
+              {recommended.map(book => <BookCard key={book.id} book={book} t={t} />)}
             </div>
           </section>
         )}
@@ -238,22 +251,22 @@ export default function AiTutorPage() {
             className="rounded-3xl bg-slate-900 p-8 text-white shadow-lg transition-transform hover:-translate-y-0.5"
           >
             <div className="text-3xl">📤</div>
-            <h3 className="mt-3 text-xl font-black">{isEn ? "Upload Your Own PDF" : "अपनी पीडीएफ अपलोड करें"}</h3>
-            <p className="mt-2 text-sm text-slate-300">
-              {isEn ? "Bring your own document and use AI Tutor on it directly." : "अपना दस्तावेज़ लाएं और सीधे उस पर एआई ट्यूटर का उपयोग करें।"}
-            </p>
+            <h3 className="mt-3 text-xl font-black">{t.aiTutorUploadTitle}</h3>
+            <p className="mt-2 text-sm text-slate-300">{t.aiTutorUploadDesc}</p>
           </Link>
           <Link
             href="/library"
             className="rounded-3xl bg-white p-8 shadow-lg ring-1 ring-black/5 transition-transform hover:-translate-y-0.5"
           >
             <div className="text-3xl">🏛️</div>
-            <h3 className="mt-3 text-xl font-black text-slate-900">{isEn ? "Browse Full Library" : "पूरी लाइब्रेरी ब्राउज़ करें"}</h3>
-            <p className="mt-2 text-sm text-slate-600">
-              {isEn ? "Explore every book in the National Digital Library catalog." : "राष्ट्रीय डिजिटल पुस्तकालय कैटलॉग की हर किताब देखें।"}
-            </p>
+            <h3 className="mt-3 text-xl font-black text-slate-900">{t.aiTutorBrowseTitle}</h3>
+            <p className="mt-2 text-sm text-slate-600">{t.aiTutorBrowseDesc}</p>
           </Link>
         </section>
+
+        {/* Quick Links / Shortcuts — compact, placed at the bottom so it
+            never competes with the hero/Continue Learning above. */}
+        <QuickLinks title={t.aiTutorQuickLinks} links={quickLinks} className="mt-10" />
       </div>
     </main>
   );

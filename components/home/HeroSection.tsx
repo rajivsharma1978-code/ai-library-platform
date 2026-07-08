@@ -9,6 +9,7 @@ const chips = ["UPSC", "NCERT", "Science", "History", "AI", "Engineering", "Psyc
 export function HeroSection() {
   const { language } = useLanguage();
   const t = UI_TEXT[language];
+  const isEn = t.navLibrary === "Library";
 
   return (
     <section className="px-6 pt-0">
@@ -40,26 +41,31 @@ export function HeroSection() {
               {t.heroDesc}
             </p>
 
-            <div className="mt-5 flex flex-nowrap gap-3">
+            {/* CTA hierarchy: Primary = Start AI Tutor, Secondary = Explore
+                Library, Tertiary = Upload PDF. Order and visual weight both
+                reflect that priority now (previously Explore was first/
+                filled and AI Tutor was second/outlined — reversed here —
+                and AI Tutor pointed at the dead /reader route). */}
+            <div className="mt-5 flex flex-wrap gap-3">
               <Link
-                href="/library"
+                href="/ai-tutor"
                 className="rounded-xl bg-orange-600 px-5 py-3 text-sm font-bold text-white shadow-md shadow-orange-500/25 transition hover:-translate-y-1 hover:bg-orange-700"
               >
-                📚 {t.heroExplore}
+                🤖 {isEn ? "Start AI Tutor" : "एआई ट्यूटर शुरू करें"}
               </Link>
 
               <Link
-                href="/reader"
+                href="/library"
                 className="rounded-xl bg-white px-5 py-3 text-sm font-bold text-slate-800 shadow-md ring-1 ring-slate-200 transition hover:-translate-y-1 hover:bg-slate-50"
               >
-                🤖 {t.heroAiTutor}
+                📚 {isEn ? "Explore Library" : "लाइब्रेरी देखें"}
               </Link>
 
               <Link
                 href="/read"
-                className="rounded-xl bg-white px-5 py-3 text-sm font-bold text-slate-800 shadow-md ring-1 ring-slate-200 transition hover:-translate-y-1 hover:bg-slate-50"
+                className="rounded-xl px-5 py-3 text-sm font-bold text-slate-500 transition hover:text-slate-800 hover:bg-slate-50"
               >
-                📄 Upload PDF
+                📄 {isEn ? "Upload PDF" : "पीडीएफ अपलोड करें"}
               </Link>
             </div>
           </div>

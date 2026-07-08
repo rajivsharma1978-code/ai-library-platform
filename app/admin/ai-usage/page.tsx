@@ -1,163 +1,140 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import AdminSidebar from "@/components/admin/AdminSidebar";
-import { UI_TEXT } from "@/lib/i18n";
-import { useLanguage } from "@/lib/useLanguage";
+import { loadAIUsage, loadActivity, type AdminActivityEntry } from "@/components/admin/adminData";
 
-const aiModels = [
-  { name: "GPT-4o Mini", provider: "OpenAI", requests: 98200, tokens: "142M", cost: "$284.10", status: "Active", latency: "310ms" },
-  { name: "Claude Sonnet", provider: "Anthropic", requests: 41000, tokens: "68M", cost: "$136.00", status: "Active", latency: "420ms" },
-  { name: "Ollama (Local)", provider: "Self-hosted", requests: 12300, tokens: "18M", cost: "$0.00", status: "Active", latency: "890ms" },
-  { name: "GPT-3.5 Turbo", provider: "OpenAI", requests: 6800, tokens: "10M", cost: "$10.00", status: "Fallback", latency: "220ms" },
+const DEMO_AI_QUESTIONS = 24;
+// Feature breakdown is demo-only — ndl_ai_usage_stats only tracks a single
+// total count today, not per-feature usage, so this is clearly labeled.
+const DEMO_FEATURE_BREAKDOWN = [
+  { feature: "Explain", pct: 32 },
+  { feature: "Summarize", pct: 24 },
+  { feature: "Quiz", pct: 20 },
+  { feature: "Translate", pct: 14 },
+  { feature: "Flashcards", pct: 10 },
 ];
 
-const usageByFeature = [
-  { feature: "Book Q&A", icon: "💬", queries: 64200, pct: 88 },
-  { feature: "AI Summaries", icon: "📝", queries: 38100, pct: 72 },
-  { feature: "Quiz Generation", icon: "🧠", queries: 22800, pct: 55 },
-  { feature: "Multilingual Explain", icon: "🌐", queries: 18400, pct: 48 },
-  { feature: "Voice Read (TTS)", icon: "🔊", queries: 12000, pct: 36 },
-  { feature: "Revision Notes", icon: "📋", queries: 9400, pct: 28 },
-  { feature: "Flashcard Gen", icon: "🃏", queries: 5100, pct: 18 },
-];
+function timeAgo(ts: number): string {
+  const diff = Date.now() - ts;
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  return `${Math.floor(hrs / 24)}d ago`;
+}
 
-const recentAlerts = [
-  { level: "info", msg: "GPT-4o Mini response time spiked to 980ms at 14:22 IST", time: "1h ago" },
-  { level: "warn", msg: "Token usage 78% of monthly budget reached", time: "3h ago" },
-  { level: "info", msg: "Claude Sonnet fallback triggered 42 times today", time: "5h ago" },
-  { level: "ok", msg: "AI pipeline health check passed — all systems nominal", time: "6h ago" },
-];
-
-const alertStyle: Record<string, string> = {
-  info: "bg-blue-50 border-blue-200 text-blue-700",
-  warn: "bg-yellow-50 border-yellow-200 text-yellow-700",
-  ok: "bg-green-50 border-green-200 text-green-700",
-};
-const alertIcon: Record<string, string> = { info: "ℹ️", warn: "⚠️", ok: "✅" };
-
-export default function AIUsagePage() {
-  const { language } = useLanguage();
-  const t = UI_TEXT[language];
-
+export default function AdminAIUsagePage() {
   const router = useRouter();
+  const [mounted, setMounted] = useState(false);
+  const [checkedAccess, setCheckedAccess] = useState(false);
+  const [aiQuestions, setAiQuestions] = useState(0);
+  const [lastUsedAt, setLastUsedAt] = useState<number | undefined>(undefined);
+  const [usingDemo, setUsingDemo] = useState(false);
+  const [aiActivity, setAiActivity] = useState<AdminActivityEntry[]>([]);
 
   useEffect(() => {
-    if (localStorage.getItem("ndlAdminAccess") !== "granted") router.push("/admin-login");
+    if (localStorage.getItem("ndlAdminAccess") !== "granted") {
+      router.push("/admin-login");
+      return;
+    }
+    setCheckedAccess(true);
+    const usage = loadAIUsage();
+    setUsingDemo(usage.questionsAsked === 0);
+    setAiQuestions(usage.questionsAsked > 0 ? usage.questionsAsked : DEMO_AI_QUESTIONS);
+    setLastUsedAt(usage.lastUsedAt);
+    setAiActivity(loadActivity().filter(a => a.type === "ai"));
+    setMounted(true);
   }, [router]);
+
+  if (!mounted || !checkedAccess) {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-slate-100">
+        <p className="text-sm font-semibold text-slate-400">Checking admin access…</p>
+      </main>
+    );
+  }
 
   return (
     <main className="min-h-screen bg-slate-100 flex">
       <AdminSidebar />
       <section className="flex-1 p-8 overflow-auto">
-        <div className="bg-gradient-to-r from-cyan-700 to-blue-700 text-white rounded-3xl p-10 shadow-2xl">
+        <div className="bg-gradient-to-r from-purple-700 to-indigo-700 text-white rounded-3xl p-10 shadow-2xl">
           <p className="uppercase tracking-widest text-sm opacity-80">Admin · AI Usage</p>
-          <h2 className="text-4xl font-bold mt-2">AI Usage Monitor</h2>
-          <p className="mt-3 text-cyan-100">Track AI model consumption, token usage, cost, latency, and feature breakdowns in real time.</p>
+          <h2 className="text-4xl font-bold mt-2">AI Usage</h2>
+          <p className="mt-3 text-purple-100">Monitor how learners are using the AI Companion across the platform.</p>
         </div>
 
-        {/* Top KPIs */}
-        <div className="grid grid-cols-4 gap-4 mt-6">
-          {[
-            ["185K", "Queries Today", "text-blue-600"],
-            ["238M", "Tokens This Month", "text-purple-600"],
-            ["$430.10", "AI Cost This Month", "text-red-600"],
-            ["96.4%", "Uptime (30 days)", "text-green-600"],
-          ].map(([val, label, color]) => (
-            <div key={String(label)} className="bg-white rounded-2xl p-5 shadow text-center">
-              <p className={`text-3xl font-bold ${color}`}>{val}</p>
-              <p className="text-slate-500 text-sm mt-1">{label}</p>
-            </div>
-          ))}
+        <div className="mt-6 rounded-2xl bg-amber-50 px-5 py-3 text-sm font-semibold text-amber-800 ring-1 ring-amber-200">
+          📌 Demo admin actions are stored locally for this prototype — nothing here touches a real backend.
         </div>
 
-        <div className="grid grid-cols-2 gap-8 mt-8">
-          {/* Model breakdown */}
-          <div className="bg-white rounded-3xl p-8 shadow">
-            <h3 className="text-xl font-bold mb-6">Model Breakdown</h3>
-            <div className="space-y-4">
-              {aiModels.map((m) => (
-                <div key={m.name} className="border border-slate-100 rounded-2xl p-4">
-                  <div className="flex justify-between items-start">
-                    <div>
-                      <p className="font-semibold text-slate-800">{m.name}</p>
-                      <p className="text-xs text-slate-400">{m.provider}</p>
-                    </div>
-                    <span className={`px-2.5 py-0.5 rounded-full text-xs font-semibold ${m.status === "Active" ? "bg-green-100 text-green-700" : "bg-yellow-100 text-yellow-700"}`}>
-                      {m.status}
-                    </span>
-                  </div>
-                  <div className="mt-3 grid grid-cols-3 gap-2 text-sm">
-                    <div>
-                      <p className="text-slate-400 text-xs">Requests</p>
-                      <p className="font-semibold">{m.requests.toLocaleString()}</p>
-                    </div>
-                    <div>
-                      <p className="text-slate-400 text-xs">Tokens</p>
-                      <p className="font-semibold">{m.tokens}</p>
-                    </div>
-                    <div>
-                      <p className="text-slate-400 text-xs">Cost / Latency</p>
-                      <p className="font-semibold">{m.cost} · {m.latency}</p>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-6">
+          <div className="bg-white rounded-2xl p-5 shadow">
+            <p className="text-3xl font-bold text-purple-600">{aiQuestions}</p>
+            <p className="text-slate-500 text-sm mt-1">Total AI Questions</p>
+            {usingDemo && <span className="mt-1 inline-block rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold uppercase text-amber-700">demo</span>}
           </div>
+          <div className="bg-white rounded-2xl p-5 shadow">
+            <p className="text-lg font-bold text-slate-900">{lastUsedAt ? timeAgo(lastUsedAt) : "No activity yet"}</p>
+            <p className="text-slate-500 text-sm mt-1">Last Used</p>
+          </div>
+          <div className="bg-white rounded-2xl p-5 shadow"><p className="text-3xl font-bold text-green-600">98%</p><p className="text-slate-500 text-sm mt-1">Success Rate <span className="text-[10px] font-bold uppercase text-amber-600">demo</span></p></div>
+          <div className="bg-white rounded-2xl p-5 shadow"><p className="text-3xl font-bold text-blue-600">1.4s</p><p className="text-slate-500 text-sm mt-1">Avg Response Time <span className="text-[10px] font-bold uppercase text-amber-600">demo</span></p></div>
+        </div>
 
-          {/* Feature usage */}
-          <div className="bg-white rounded-3xl p-8 shadow">
-            <h3 className="text-xl font-bold mb-6">Usage by Feature</h3>
-            <div className="space-y-4">
-              {usageByFeature.map((f) => (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mt-8">
+          <div className="bg-white rounded-3xl p-8 shadow-lg">
+            <div className="flex items-center justify-between">
+              <h3 className="text-2xl font-bold">Usage by Feature</h3>
+              <span className="rounded-full bg-amber-100 px-3 py-1 text-[10px] font-bold uppercase text-amber-700">demo</span>
+            </div>
+            <div className="mt-6 space-y-4">
+              {DEMO_FEATURE_BREAKDOWN.map(f => (
                 <div key={f.feature}>
-                  <div className="flex justify-between text-sm mb-1.5">
-                    <span className="font-medium text-slate-700">{f.icon} {f.feature}</span>
-                    <span className="text-slate-500">{f.queries.toLocaleString()} queries</span>
+                  <div className="flex justify-between text-sm"><p>{f.feature}</p><p>{f.pct}%</p></div>
+                  <div className="w-full bg-slate-200 h-3 rounded-full mt-2">
+                    <div className="bg-purple-600 h-3 rounded-full" style={{ width: `${f.pct}%` }} />
                   </div>
-                  <div className="w-full bg-slate-200 h-2.5 rounded-full">
-                    <div className="bg-blue-500 h-2.5 rounded-full transition-all" style={{ width: `${f.pct}%` }} />
-                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="bg-white rounded-3xl p-8 shadow-lg">
+            <h3 className="text-2xl font-bold">AI System Status</h3>
+            <div className="mt-6 space-y-4">
+              {[
+                ["AI Provider", "Demo / OpenAI Ready"],
+                ["Response Language Support", "6 Languages"],
+                ["Voice Reader Integration", "Enabled"],
+                ["Fallback Mode", "Enabled"],
+              ].map(([label, value]) => (
+                <div key={label} className="flex justify-between border-b pb-3">
+                  <span>{label}</span><span className="font-bold text-green-600">{value}</span>
                 </div>
               ))}
             </div>
           </div>
         </div>
 
-        {/* Alerts */}
-        <div className="bg-white rounded-3xl p-8 shadow mt-8">
-          <h3 className="text-xl font-bold mb-5">Recent Alerts & Events</h3>
-          <div className="space-y-3">
-            {recentAlerts.map((a, i) => (
-              <div key={i} className={`flex items-start gap-3 border rounded-xl p-4 text-sm ${alertStyle[a.level]}`}>
-                <span>{alertIcon[a.level]}</span>
-                <p className="flex-1">{a.msg}</p>
-                <span className="text-xs opacity-60 shrink-0">{a.time}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* Config */}
-        <div className="bg-white rounded-3xl p-8 shadow mt-8">
-          <h3 className="text-xl font-bold mb-5">AI Configuration</h3>
-          <div className="grid grid-cols-2 gap-4">
-            {[
-              ["Primary Model", "gpt-4o-mini"],
-              ["Fallback Model", "gpt-3.5-turbo"],
-              ["Monthly Token Budget", "250M tokens"],
-              ["Rate Limit (per user)", "50 req / hour"],
-              ["PDF Context Window", "8,000 tokens"],
-              ["Demo Mode Fallback", "Enabled"],
-            ].map(([label, value]) => (
-              <div key={String(label)} className="flex justify-between items-center border border-slate-100 rounded-2xl px-5 py-3">
-                <span className="text-slate-600 text-sm">{label}</span>
-                <span className="font-semibold text-slate-800 text-sm">{value}</span>
-              </div>
-            ))}
-          </div>
+        <div className="bg-white rounded-3xl p-8 shadow-lg mt-8">
+          <h3 className="text-2xl font-bold">Recent AI Activity</h3>
+          {aiActivity.length === 0 ? (
+            <p className="mt-4 text-slate-500">No AI-related admin activity logged yet.</p>
+          ) : (
+            <div className="mt-6 space-y-1">
+              {aiActivity.map((a, i) => (
+                <div key={a.id} className={`flex items-center gap-3 py-3 ${i !== aiActivity.length - 1 ? "border-b border-slate-100" : ""}`}>
+                  <span className="text-lg">🤖</span>
+                  <span className="flex-1 text-slate-700">{a.message}</span>
+                  <span className="text-slate-400 text-sm flex-shrink-0">{timeAgo(a.timestamp)}</span>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </section>
     </main>

@@ -1,18 +1,15 @@
 "use client";
 
 import Link from "next/link";
+import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
-import { ALL_BOOKS } from "./data";
+import { directorBooks } from "@/lib/directorBooks";
+import RealBookCover from "./RealBookCover";
 import { UI_TEXT } from "@/lib/i18n";
 import { useLanguage } from "@/lib/useLanguage";
 
-const COVER_URLS: Record<string,string> = {
-  "Artificial Intelligence":"https://covers.openlibrary.org/b/id/10523338-M.jpg",
-  "Machine Learning":"https://covers.openlibrary.org/b/id/8231856-M.jpg",
-  "Deep Learning":"https://covers.openlibrary.org/b/id/10720543-M.jpg",
-  "Python Basics":"https://covers.openlibrary.org/b/id/9108915-M.jpg",
-  "Cyber Security":"https://covers.openlibrary.org/b/id/8775165-M.jpg",
-};
+type DirectorBook = { id: string; title: string; author?: string; pages?: number | string; [k: string]: any };
+interface ReadingProgressEntry { bookId: string; currentPage: number; totalPages: number; lastReadAt: number; [k: string]: any }
 
 const TESTIMONIALS = [
   { initials:"AS", color:"bg-orange-500",
@@ -26,20 +23,54 @@ const TESTIMONIALS = [
     name:"Neha Patel", role:"School Teacher" },
 ];
 
-const READING_PROGRESS = [
-  { title:"Artificial Intelligence", progress:72, lastRead:"Yesterday" },
-  { title:"Machine Learning",        progress:45, lastRead:"2 days ago" },
-  { title:"Python Basics",           progress:88, lastRead:"Last week" },
-];
+function readReadingProgress(): ReadingProgressEntry[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = window.localStorage.getItem("ndl_reading_progress");
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch { return []; }
+}
+function bookTotalPages(book?: DirectorBook): number {
+  const n = Number(book?.pages);
+  return Number.isFinite(n) && n > 0 ? n : 220;
+}
 
 export function Recommendations() {
   const { language } = useLanguage();
   const t = UI_TEXT[language];
+  const isEn = t.navLibrary === "Library";
+  const books = directorBooks as DirectorBook[];
+
+  const [mounted, setMounted] = useState(false);
+  const [progress, setProgress] = useState<ReadingProgressEntry[]>([]);
+  useEffect(() => { setProgress(readReadingProgress()); setMounted(true); }, []);
+
+  // Real progress if it exists; otherwise a plausible demo spread across
+  // the real catalog — never the old fictional book list.
+  const continueReading = (() => {
+    if (progress.length > 0) {
+      return [...progress]
+        .sort((a, b) => b.lastReadAt - a.lastReadAt)
+        .slice(0, 3)
+        .map(p => {
+          const book = books.find(b => b.id === p.bookId);
+          if (!book) return null;
+          const total = p.totalPages || bookTotalPages(book);
+          return { book, pct: Math.min(100, Math.round((p.currentPage / Math.max(1, total)) * 100)) };
+        })
+        .filter((x): x is { book: DirectorBook; pct: number } => !!x);
+    }
+    const demoPercents = [72, 45, 88];
+    return books.slice(0, 3).map((book, i) => ({ book, pct: demoPercents[i] ?? 50 }));
+  })();
+  const usingDemoProgress = mounted && progress.length === 0;
 
   return (
     <section id="recommendations" className="bg-white border-b border-gray-100">
 
-      {/* Testimonials */}
+      {/* Testimonials — unchanged, not book-data related */}
       <div className="py-12 border-b border-gray-100">
         <div className="mx-auto max-w-[1200px] px-6">
           <h2 className="text-[20px] font-extrabold text-gray-900 mb-8">{t.whatLearnersSay}</h2>
@@ -62,7 +93,6 @@ export function Recommendations() {
               </motion.div>
             ))}
           </div>
-          {/* Pagination dots */}
           <div className="flex justify-center gap-1.5 mt-7">
             <div className="w-5 h-2 rounded-full bg-orange-500"/>
             <div className="w-2 h-2 rounded-full bg-gray-200"/>
@@ -71,43 +101,56 @@ export function Recommendations() {
         </div>
       </div>
 
-      {/* Continue Reading */}
+      {/* Continue Reading — now the REAL catalog + REAL progress */}
       <div className="py-12">
         <div className="mx-auto max-w-[1200px] px-6">
           <div className="flex items-center justify-between mb-6">
-            <h2 className="text-[20px] font-extrabold text-gray-900">{t.continueReading}</h2>
+            <div className="flex items-center gap-2">
+              <h2 className="text-[20px] font-extrabold text-gray-900">{t.continueReading}</h2>
+              {usingDemoProgress && (
+                <span className="rounded-full bg-amber-100 px-2.5 py-0.5 text-[10px] font-bold uppercase text-amber-700">
+                  {isEn ? "demo" : "डेमो"}
+                </span>
+              )}
+            </div>
             <Link href="/my-library" className="text-[13px] font-semibold text-orange-500 hover:text-orange-600">{t.viewAll} →</Link>
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            {READING_PROGRESS.map((item, i) => {
-              const book = ALL_BOOKS.find(b => b.title === item.title);
-              return (
-                <motion.div key={item.title}
-                  initial={{opacity:0,y:10}} whileInView={{opacity:1,y:0}} viewport={{once:true}}
-                  transition={{delay:i*0.07}}>
-                  <Link href={`/book/${encodeURIComponent(item.title)}`}
-                    className="group flex items-center gap-4 rounded-2xl border border-gray-100 bg-white p-4 shadow-sm hover:shadow-md hover:border-orange-200 transition-all">
-                    <div className="flex-shrink-0 w-12 h-16 rounded-xl overflow-hidden shadow bg-gray-100">
-                      <img src={COVER_URLS[item.title]} alt={item.title}
-                        className="w-full h-full object-cover"
-                        onError={e=>{(e.target as HTMLImageElement).style.display="none";}}/>
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-[13px] font-bold text-gray-900 truncate group-hover:text-orange-500 transition-colors">{item.title}</p>
-                      <p className="text-[11px] text-gray-400 mt-0.5 truncate">{book?.author}</p>
-                      <div className="mt-2">
-                        <div className="flex justify-between text-[10px] text-gray-400 mb-1">
-                          <span>{item.lastRead}</span><span>{item.progress}%</span>
-                        </div>
-                        <div className="h-1.5 w-full bg-gray-100 rounded-full overflow-hidden">
-                          <div className="h-full bg-orange-500 rounded-full" style={{width:`${item.progress}%`}}/>
-                        </div>
+            {continueReading.map(({ book, pct }, i) => (
+              <motion.div key={book.id}
+                initial={{opacity:0,y:10}} whileInView={{opacity:1,y:0}} viewport={{once:true}}
+                transition={{delay:i*0.07}}
+                className="group rounded-2xl border border-gray-100 bg-white p-4 shadow-sm hover:shadow-md hover:border-orange-200 transition-all">
+                <div className="flex items-center gap-4">
+                  <div className="flex-shrink-0 w-12 h-16 rounded-xl overflow-hidden shadow bg-gray-100">
+                    <RealBookCover book={book} className="h-full w-full" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-[13px] font-bold text-gray-900 truncate group-hover:text-orange-500 transition-colors">{book.title}</p>
+                    <p className="text-[11px] text-gray-400 mt-0.5 truncate">{book.author}</p>
+                    <div className="mt-2">
+                      <div className="flex justify-between text-[10px] text-gray-400 mb-1">
+                        <span>{isEn ? "Progress" : "प्रगति"}</span><span>{pct}%</span>
+                      </div>
+                      <div className="h-1.5 w-full bg-gray-100 rounded-full overflow-hidden">
+                        <div className="h-full bg-orange-500 rounded-full" style={{width:`${pct}%`}}/>
                       </div>
                     </div>
+                  </div>
+                </div>
+                {/* Two clear reading choices, per the site-wide requirement */}
+                <div className="mt-3 flex gap-2">
+                  <Link href={`/read?book=${book.id}`}
+                    className="flex-1 rounded-lg bg-slate-100 px-2 py-1.5 text-center text-[11px] font-bold text-slate-700 hover:bg-slate-200">
+                    📖 {isEn ? "Read Normally" : "सामान्य रूप से पढ़ें"}
                   </Link>
-                </motion.div>
-              );
-            })}
+                  <Link href={`/reader-premium?book=${book.id}`}
+                    className="flex-1 rounded-lg bg-purple-600 px-2 py-1.5 text-center text-[11px] font-bold text-white hover:bg-purple-700">
+                    🤖 {isEn ? "AI Tutor" : "एआई ट्यूटर"}
+                  </Link>
+                </div>
+              </motion.div>
+            ))}
           </div>
         </div>
       </div>

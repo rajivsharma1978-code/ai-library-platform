@@ -67,7 +67,7 @@ export function SiteHeader() {
   // here: that's been removed from public navigation entirely (still
   // reachable by going directly to /admin-login).
   const MORE_NAV: [string, string][] = [
-    [t.navLibrary.includes("Library") ? "📤 Upload PDF" : "📤 पीडीएफ अपलोड करें", "/read"],
+    [t.navLibrary.includes("Library") ? "📖 Normal PDF Reader" : "📖 सामान्य पीडीएफ रीडर", "/read"],
     ["Flashcards", "/flashcards"],
     ["Quiz", "/quiz"],
     ["Settings", "/settings"],

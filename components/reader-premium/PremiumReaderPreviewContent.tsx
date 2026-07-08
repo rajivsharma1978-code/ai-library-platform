@@ -136,6 +136,20 @@ export default function PremiumReaderPreviewContent() {
   // ── Book ──────────────────────────────────────────────────────────
   const searchParams = useSearchParams();
 
+  // ── Hydration gate ───────────────────────────────────────────────────
+  // isHydrated is false during SSR and during the client's FIRST render
+  // (the one React uses to hydrate against the server markup) — those
+  // two renders are therefore guaranteed identical. It only flips to
+  // true in a useEffect, i.e. strictly AFTER hydration has already
+  // completed successfully. Nothing below ever reads
+  // localStorage/sessionStorage/window unless isHydrated is already true,
+  // so the uploaded-PDF title (or any other client-only data) can never
+  // leak into the server-rendered / first-client-rendered output.
+  const [isHydrated, setIsHydrated] = useState(false);
+  useEffect(() => {
+    setIsHydrated(true);
+  }, []);
+
   // ── Unified reading experience: user-uploaded PDFs ──────────────────
   // app/read/page.tsx stores an uploaded file as a base64 data URL in
   // sessionStorage (survives both client-side navigation AND a full
@@ -147,22 +161,24 @@ export default function PremiumReaderPreviewContent() {
   // Aloud, translation, quiz, revision) already just consumes whatever
   // currentBook/bookId resolve to below, so none of it needed to change.
   //
-  // Guarded with typeof window !== "undefined" since this component is
-  // statically imported (not dynamic(..., {ssr:false})) and can be
-  // server-rendered on first load; sessionStorage doesn't exist there.
-  // The one accepted trade-off: if the server-rendered pass differs from
-  // the client's (i.e. an upload really is present), React corrects the
-  // mismatch on hydration — a brief correction, not a crash.
+  // BEFORE hydration: always the stable directorBooks default (Nalanda,
+  // or whatever ?book= says) — never sessionStorage, never the uploaded
+  // title. AFTER hydration: if an upload is actually present, this
+  // re-evaluates on the next render (triggered by isHydrated flipping)
+  // and swaps to it. That swap is a perfectly normal post-mount state
+  // update, not part of hydration reconciliation, so it can never
+  // produce a mismatch — this is intentionally "BookCover updates only
+  // after client mount," not eliminated.
   const uploadedSource = searchParams.get("source") === "upload";
-  const uploadedPdfData = typeof window !== "undefined" ? window.sessionStorage.getItem("ndl_uploaded_pdf_data") : null;
-  const uploadedPdfName = typeof window !== "undefined" ? window.sessionStorage.getItem("ndl_uploaded_pdf_name") : null;
-  const uploadedPdfPages = typeof window !== "undefined" ? window.sessionStorage.getItem("ndl_uploaded_pdf_pages") : null;
-  const uploadedPdfId = typeof window !== "undefined" ? window.sessionStorage.getItem("ndl_uploaded_pdf_id") : null;
+  const uploadedPdfData = isHydrated ? window.sessionStorage.getItem("ndl_uploaded_pdf_data") : null;
+  const uploadedPdfName = isHydrated ? window.sessionStorage.getItem("ndl_uploaded_pdf_name") : null;
+  const uploadedPdfPages = isHydrated ? window.sessionStorage.getItem("ndl_uploaded_pdf_pages") : null;
+  const uploadedPdfId = isHydrated ? window.sessionStorage.getItem("ndl_uploaded_pdf_id") : null;
   // Explicit AND — requires both the URL's stated intent (?source=upload)
   // and the data actually being present, so a stale/bad link (or leftover
   // sessionStorage from a previous session) never silently hijacks a
   // normal library-book visit.
-  const isUploadedBook = Boolean(uploadedSource && uploadedPdfData && uploadedPdfId);
+  const isUploadedBook = Boolean(isHydrated && uploadedSource && uploadedPdfData && uploadedPdfId);
 
   const bookId = isUploadedBook ? (uploadedPdfId as string) : (searchParams.get("book") || "nalanda");
   const currentBook = isUploadedBook
@@ -404,6 +420,109 @@ export default function PremiumReaderPreviewContent() {
       return [l, r].filter(Boolean).join("\n\n--- Next Page ---\n\n");
     }
     return pageTexts[readerPage] || "";
+  }
+
+  // ══════════════════════════════════════════════════════════════════
+  // ENTIRE BOOK scope — full-book text extraction with a graceful
+  // metadata-based fallback for image-heavy/scanned books (e.g. Nalanda),
+  // where per-page extraction yields little or no real text. This is
+  // self-contained (its own pdfjs-dist load, independent of
+  // PdfBookSpread's own rendering pipeline) so it never touches or risks
+  // the existing page-rendering code.
+  // ══════════════════════════════════════════════════════════════════
+  const MAX_FULL_BOOK_CHARS = 12000;
+  const WEAK_BOOK_TEXT_THRESHOLD = 300;
+
+  async function extractFullBookText(): Promise<{ text: string; weak: boolean }> {
+    try {
+      const pdfjsLib = await import("pdfjs-dist");
+      pdfjsLib.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
+      const pdf = await pdfjsLib.getDocument(currentBook.pdf).promise;
+      const numPages = pdf.numPages || totalPages;
+
+      let combined = "";
+      let pagesWithText = 0;
+
+      for (let i = 1; i <= numPages; i++) {
+        if (combined.length >= MAX_FULL_BOOK_CHARS) break;
+        try {
+          const page = await pdf.getPage(i);
+          const textContent = await page.getTextContent();
+          const pageText = (textContent.items as any[])
+            .map((item: any) => item.str)
+            .join(" ")
+            .replace(/\s+/g, " ")
+            .trim();
+          if (pageText.length > 10) {
+            pagesWithText++;
+            combined += `\n\n[Page ${i}]\n${pageText}`;
+          }
+        } catch {
+          // One unreadable page shouldn't abort the whole extraction —
+          // skip it and keep going.
+        }
+      }
+
+      const trimmed = combined.trim().slice(0, MAX_FULL_BOOK_CHARS);
+      // "Weak" covers both a mostly-empty extraction AND a book where only
+      // a handful of pages produced any real text at all (e.g. an
+      // illustrated/scanned book where embedded text is sparse or absent) —
+      // either way, page-by-page extraction alone isn't a reliable basis
+      // for a whole-book quiz.
+      const weak = trimmed.length < WEAK_BOOK_TEXT_THRESHOLD || pagesWithText < Math.max(1, Math.ceil(numPages * 0.15));
+      return { text: trimmed, weak };
+    } catch (err) {
+      console.error("[EntireBookQuiz] Full-book extraction failed:", err);
+      return { text: "", weak: true };
+    }
+  }
+
+  // Fallback grounding for weak/scanned books: book metadata (title,
+  // author, description, language) plus any page text ALREADY cached
+  // from pages the user has actually viewed (pageTexts) — every bit of
+  // real content helps ground the quiz rather than relying purely on
+  // guesswork from the title alone.
+  function buildBookMetadataContext(): string {
+    const metaLines = [
+      `Book Title: ${currentBook.title}`,
+      currentBook.author ? `Author: ${currentBook.author}` : "",
+      currentBook.description ? `Description: ${currentBook.description}` : "",
+      currentBook.language ? `Language: ${currentBook.language}` : "",
+    ].filter(Boolean).join("\n");
+
+    const cachedPages = Object.entries(pageTexts)
+      .filter(([, txt]) => txt && txt.trim().length > 10)
+      .map(([pageNum, txt]) => `[Page ${pageNum}]\n${txt.trim()}`)
+      .join("\n\n");
+
+    return [metaLines, cachedPages].filter(Boolean).join("\n\n");
+  }
+
+  // The "entire book" quiz action, wired from AICompanion's Quick Actions.
+  // Distinct from the existing page-scoped Quiz action (unchanged) — this
+  // is the new fourth scope alongside current page / visible pages /
+  // selected text.
+  async function runEntireBookQuiz() {
+    resetInteractionState();
+    setAiLoading(true);
+    setAiResponse("Reading the entire book…");
+
+    const { text, weak } = await extractFullBookText();
+
+    const context = weak
+      ? buildBookMetadataContext()
+      : `Full text extracted from "${book}" (may be capped for length):\n\n${text}`;
+
+    // Explicit, hard instruction: never refuse, never ask the user for
+    // page content, never cite "I only have page X" — always produce a
+    // complete quiz from whatever context is actually available.
+    const scopeInstruction = weak
+      ? `IMPORTANT: Page-by-page text extraction for this book was limited or unavailable — it is likely an illustrated or scanned book. You have been given the book's title, description, and any available page context instead. Using ONLY this context, generate a broad, useful quiz based on the book's known theme and content. Do NOT say you only have access to one page, do NOT ask the user to provide more page content, and do NOT refuse to generate the quiz — always produce a complete quiz. Begin your response with exactly this sentence: "Here is a broad quiz based on the available book context and visible content."`
+      : `You have been given text extracted from across the entire book (possibly capped for length). Create a quiz that draws from the WHOLE book, not just one page — never say you only have access to a single page.`;
+
+    const prompt = `${scopeInstruction} Create exactly 8 multiple-choice quiz questions covering the entire book "${book}". Respond ONLY in: ${language}.`;
+
+    await runAI(prompt, context, undefined, "Entire Book Quiz");
   }
 
   // ── Navigation ──────────────────────────────────────────────────────
@@ -1412,7 +1531,16 @@ export default function PremiumReaderPreviewContent() {
           aiQuestion={aiQuestion}
           setAiQuestion={setAiQuestion}
           onAsk={askPremiumAI}
-          onQuickAction={(label, prompt) => {
+          onQuickAction={(label, prompt, scope) => {
+            // NEW: "entire book" scope, alongside the existing current
+            // page / visible pages / selected text scopes. Routed to its
+            // own function since it needs full-book extraction (with a
+            // metadata fallback for weak/scanned books) instead of
+            // getVisiblePageText().
+            if (scope === "book") {
+              runEntireBookQuiz();
+              return;
+            }
             // Quick actions in the sidebar always use VISIBLE PAGE TEXT —
             // not activeSelection. If user wants selection-specific AI,
             // they use the floating toolbar buttons.

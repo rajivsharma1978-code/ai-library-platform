@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import StudyWorkspace, { RevisionAction } from "./study/StudyWorkspace";
 import type { StoredHighlight, StoredNote, StoredBookmark } from "./study/studyData";
 
@@ -17,7 +18,7 @@ type AICompanionProps = {
    *  so parent can call runAI(prompt, pageContent) with the right context.
    *  Removing AICompanion's internal callAskAI/localResponse eliminates the
    *  competing pipeline that was hiding floating-toolbar results. */
-  onQuickAction: (label: string, prompt: string) => void;
+  onQuickAction: (label: string, prompt: string, scope: QuickActionScope) => void;
   bookTitle?: string;
   pageNumber?: number;
   pageText?: string;
@@ -37,13 +38,21 @@ type AICompanionProps = {
   studyGeneratingId: string | null;
 };
 
-const QUICK_ACTIONS = [
-  { label: "🧠 Explain",    prompt: (lang: string) => `Explain this page/spread clearly for a student in simple language. Respond ONLY in: ${lang}.` },
-  { label: "📝 Summarize",  prompt: (lang: string) => `Summarize this page/spread in at most 8 concise bullet points. Respond ONLY in: ${lang}.` },
-  { label: "🌍 Translate",  prompt: (lang: string) => `Rewrite and explain the content of this page/spread in ${lang}. Write entirely in ${lang}. Respond ONLY in: ${lang}.` },
-  { label: "❓ Quiz",       prompt: (lang: string) => `Create exactly 5 multiple-choice quiz questions from this page/spread. Respond ONLY in: ${lang}.` },
-  { label: "🎴 Flashcards", prompt: (lang: string) => `Create 5 flashcards (FRONT: / BACK: format) from this page/spread. Respond ONLY in: ${lang}.` },
-  { label: "📌 Notes",      prompt: (lang: string) => `Create clean, structured study notes from this page/spread. Respond ONLY in: ${lang}.` },
+type QuickActionScope = "page" | "book";
+
+const QUICK_ACTIONS: { label: string; scope: QuickActionScope; prompt: (lang: string) => string }[] = [
+  { label: "🧠 Explain",    scope: "page", prompt: (lang: string) => `Explain this page/spread clearly for a student in simple language. Respond ONLY in: ${lang}.` },
+  { label: "📝 Summarize",  scope: "page", prompt: (lang: string) => `Summarize this page/spread in at most 8 concise bullet points. Respond ONLY in: ${lang}.` },
+  { label: "🌍 Translate",  scope: "page", prompt: (lang: string) => `Rewrite and explain the content of this page/spread in ${lang}. Write entirely in ${lang}. Respond ONLY in: ${lang}.` },
+  { label: "❓ Quiz",       scope: "page", prompt: (lang: string) => `Create exactly 5 multiple-choice quiz questions from this page/spread. Respond ONLY in: ${lang}.` },
+  { label: "🎴 Flashcards", scope: "page", prompt: (lang: string) => `Create 5 flashcards (FRONT: / BACK: format) from this page/spread. Respond ONLY in: ${lang}.` },
+  { label: "📌 Notes",      scope: "page", prompt: (lang: string) => `Create clean, structured study notes from this page/spread. Respond ONLY in: ${lang}.` },
+  // NEW — fourth scope alongside current page / visible pages / selected
+  // text (the floating toolbar already covers selected text). The parent
+  // builds this prompt itself (with full-book extraction + a weak-text
+  // fallback), so the prompt function here is unused for this entry —
+  // kept only so every QUICK_ACTIONS item has the same shape.
+  { label: "📚 Quiz (Entire Book)", scope: "book", prompt: (lang: string) => `Create a quiz covering the entire book. Respond ONLY in: ${lang}.` },
 ];
 
 // ── Lightweight markdown renderer ────────────────────────────────────
@@ -121,12 +130,32 @@ export default function AICompanion({
   // branch below was modified from the original implementation.
   const [outerTab, setOuterTab] = useState<"companion" | "study">("companion");
 
+  // ── Layout refinement state ────────────────────────────────────────
+  // Shortcuts: collapsed by default — a compact escape hatch to the rest
+  // of the app, not something that should compete for space every time.
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  // Quick Actions: expanded by default (per the brief), but the section
+  // itself is collapsible and rendered much tighter than before, so the
+  // AI response area below it — the thing that should actually get
+  // priority — has far more room by default.
+  const [quickActionsOpen, setQuickActionsOpen] = useState(true);
+
+  const SHORTCUTS: { href: string; icon: string; label: string }[] = [
+    { href: "/", icon: "🏠", label: "Home" },
+    { href: "/library", icon: "🏛️", label: "Library" },
+    { href: "/my-space", icon: "🧠", label: "My Space" },
+    { href: "/my-library", icon: "📚", label: "My Library" },
+    { href: "/notes", icon: "📝", label: "Notes" },
+    { href: "/revision", icon: "🔄", label: "Revision" },
+    { href: "/ai-tutor", icon: "🤖", label: "AI Tutor" },
+  ];
+
   return (
     <div className="flex h-full flex-col p-5">
       {/* Header */}
-      <div className="border-b border-white/10 pb-4">
-        <h2 className="text-2xl font-black">🤖 AI Learning Companion</h2>
-        <p className="mt-1 text-xs font-semibold text-green-400">Active beside the book</p>
+      <div className="border-b border-white/10 pb-3">
+        <h2 className="text-xl font-black">🤖 AI Learning Companion</h2>
+        <p className="mt-1 text-[11px] font-semibold text-green-400">Active beside the book</p>
       </div>
 
       {/* Outer tab bar — Phase 2 addition. Switching tabs never touches
@@ -165,24 +194,52 @@ export default function AICompanion({
           />
         </div>
       ) : (
-      <>
-      {/* Language selector */}
-      <div className="mt-3 border-b border-white/10 pb-3">
-        <label className="mb-1 block text-[10px] font-bold uppercase tracking-widest text-slate-400">
-          Response Language
+      <div className="flex flex-1 min-h-0 flex-col">
+      {/* Shortcuts — collapsed by default, tiny footprint when closed.
+          Compact escape hatch to the rest of the app from inside the
+          Reader, without competing for space with the AI response area. */}
+      <div className="mt-2 flex-shrink-0 border-b border-white/10 pb-2">
+        <button
+          onClick={() => setShortcutsOpen(o => !o)}
+          className="flex w-full items-center justify-between text-[10px] font-bold uppercase tracking-widest text-slate-400 hover:text-slate-300"
+        >
+          <span>🔗 Shortcuts</span>
+          <span>{shortcutsOpen ? "▾" : "▸"}</span>
+        </button>
+        {shortcutsOpen && (
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {SHORTCUTS.map(s => (
+              <Link
+                key={s.href}
+                href={s.href}
+                className="flex items-center gap-1 rounded-full bg-slate-900 px-2.5 py-1 text-[10px] font-bold text-slate-200 hover:bg-slate-800"
+              >
+                <span>{s.icon}</span><span>{s.label}</span>
+              </Link>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Language selector — compact single-line row instead of a
+          stacked label + full-width select. */}
+      <div className="mt-2 flex flex-shrink-0 items-center gap-2 border-b border-white/10 pb-2">
+        <label className="flex-shrink-0 text-[10px] font-bold uppercase tracking-widest text-slate-400">
+          Language
         </label>
         <select
           value={language}
           onChange={(e) => onLanguageChange(e.target.value as Lang)}
-          className="w-full rounded-xl bg-slate-900 px-3 py-2 text-xs font-semibold text-white outline-none"
+          className="flex-1 rounded-lg bg-slate-900 px-2 py-1.5 text-xs font-semibold text-white outline-none"
         >
           {LANGUAGES.map(l => <option key={l} value={l}>{l}</option>)}
         </select>
       </div>
 
-      {/* Response — single display, no localResponse cache */}
-      <div className="mt-4 flex-1 overflow-auto">
-        <div className="rounded-3xl bg-slate-900 p-4 text-sm text-slate-200">
+      {/* Response — gets priority: flex-1 + min-h-0 so it claims all
+          space the (now much smaller) sections above/below don't need. */}
+      <div className="mt-3 flex-1 min-h-0 overflow-auto">
+        <div className="h-full rounded-3xl bg-slate-900 p-4 text-sm text-slate-200">
           {isLoading ? (
             <span className="animate-pulse text-slate-400">AI is thinking…</span>
           ) : (
@@ -191,23 +248,45 @@ export default function AICompanion({
         </div>
       </div>
 
-      {/* Quick actions — call parent's runAI via onQuickAction(label, prompt) */}
-      <div className="border-t border-white/10 pt-4">
-        <p className="mb-3 text-xs font-bold uppercase tracking-widest text-slate-400">
-          Quick Actions (visible page)
-        </p>
-        <div className="grid grid-cols-2 gap-2">
-          {QUICK_ACTIONS.map(a => (
-            <button key={a.label} disabled={isLoading}
-              onClick={() => onQuickAction(a.label, a.prompt(language))}
-              className="rounded-2xl bg-slate-900 px-3 py-3 text-xs font-bold hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed">
-              {a.label}
-            </button>
-          ))}
-        </div>
+      {/* Quick actions — collapsible, tighter 3-column grid, smaller
+          buttons. Expanded by default per the brief, but takes
+          meaningfully less vertical space than before even when open. */}
+      <div className="mt-3 flex-shrink-0 border-t border-white/10 pt-3">
+        <button
+          onClick={() => setQuickActionsOpen(o => !o)}
+          className="mb-2 flex w-full items-center justify-between text-[10px] font-bold uppercase tracking-widest text-slate-400 hover:text-slate-300"
+        >
+          <span>Quick Actions</span>
+          <span>{quickActionsOpen ? "▾ Collapse" : "▸ Expand"}</span>
+        </button>
 
-        {/* Ask AI input */}
-        <div className="mt-4 flex gap-2">
+        {quickActionsOpen && (
+          <>
+            <div className="grid grid-cols-3 gap-1.5">
+              {QUICK_ACTIONS.filter(a => a.scope === "page").map(a => (
+                <button key={a.label} disabled={isLoading}
+                  onClick={() => onQuickAction(a.label, a.prompt(language), a.scope)}
+                  className="rounded-lg bg-slate-900 px-1.5 py-1.5 text-[10px] font-bold leading-tight hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed">
+                  {a.label}
+                </button>
+              ))}
+            </div>
+
+            {/* Entire-book scope — visually distinct since it covers the
+                whole book rather than just what's currently on screen. */}
+            {QUICK_ACTIONS.filter(a => a.scope === "book").map(a => (
+              <button key={a.label} disabled={isLoading}
+                onClick={() => onQuickAction(a.label, a.prompt(language), a.scope)}
+                className="mt-1.5 w-full rounded-lg bg-purple-700 px-2 py-1.5 text-[10px] font-bold hover:bg-purple-600 disabled:opacity-50 disabled:cursor-not-allowed">
+                {a.label}
+              </button>
+            ))}
+          </>
+        )}
+
+        {/* Ask AI input — stays visible regardless of Quick Actions
+            collapse state. */}
+        <div className="mt-3 flex gap-2">
           <input
             value={aiQuestion}
             onChange={(e) => setAiQuestion(e.target.value)}
@@ -221,7 +300,7 @@ export default function AICompanion({
           </button>
         </div>
       </div>
-      </>
+      </div>
       )}
     </div>
   );

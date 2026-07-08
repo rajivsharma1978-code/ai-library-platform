@@ -2,25 +2,35 @@
 
 import Link from "next/link";
 import { directorBooks } from "@/lib/directorBooks";
+import RealBookCover from "./RealBookCover";
+import { UI_TEXT } from "@/lib/i18n";
+import { useLanguage } from "@/lib/useLanguage";
+
+type DirectorBook = { id: string; title: string; author?: string; language?: string; description?: string; [k: string]: any };
 
 export default function DirectorCollection() {
+  const { language } = useLanguage();
+  const t = UI_TEXT[language];
+  const isEn = t.navLibrary === "Library";
+  const books = directorBooks as DirectorBook[];
+
   return (
     <section className="bg-[#fff8ed] px-6 py-16">
       <div className="mx-auto max-w-7xl rounded-[2rem] border border-amber-200 bg-gradient-to-br from-white via-amber-50 to-orange-100 p-8 shadow-xl">
         <div className="mb-8 flex items-end justify-between gap-6">
           <div>
             <p className="text-xs font-black uppercase tracking-[0.35em] text-amber-700">
-              Director Demo Collection
+              {isEn ? "Director Demo Collection" : "डायरेक्टर डेमो संग्रह"}
             </p>
 
             <h2 className="mt-3 text-4xl font-black text-slate-950">
-              Featured Books for NDL AI Experience
+              {isEn ? "Featured Books for NDL AI Experience" : "एनडीएल एआई अनुभव के लिए विशेष पुस्तकें"}
             </h2>
 
             <p className="mt-3 max-w-3xl text-slate-600">
-              Demonstrating how real National Digital Library content can become
-              an AI-powered reading, learning, translation, revision, and
-              assessment experience.
+              {isEn
+                ? "Demonstrating how real National Digital Library content can become an AI-powered reading, learning, translation, revision, and assessment experience."
+                : "यह दिखाते हुए कि राष्ट्रीय डिजिटल पुस्तकालय की वास्तविक सामग्री कैसे एक एआई-संचालित पठन, शिक्षण, अनुवाद, पुनरीक्षण और मूल्यांकन अनुभव बन सकती है।"}
             </p>
           </div>
 
@@ -28,33 +38,19 @@ export default function DirectorCollection() {
             href="/reader-premium"
             className="hidden rounded-full bg-slate-950 px-6 py-3 text-sm font-black text-white shadow-lg hover:bg-slate-800 md:inline-block"
           >
-            Open Premium Reader →
+            {isEn ? "Open Premium Reader →" : "प्रीमियम रीडर खोलें →"}
           </Link>
         </div>
 
         <div className="grid gap-6 md:grid-cols-2">
-          {directorBooks.map((book) => (
+          {books.map((book) => (
             <Link
               key={book.id}
               href={`/reader-premium?book=${book.id}`}
               className="group grid gap-6 rounded-[2rem] border border-amber-200 bg-white p-6 shadow-lg transition hover:-translate-y-1 hover:shadow-2xl md:grid-cols-[180px_1fr]"
             >
-              <div className="relative mx-auto h-64 w-44 rounded-r-3xl rounded-l-lg bg-gradient-to-br from-slate-900 via-blue-900 to-slate-950 p-5 text-white shadow-2xl">
-                <div className="absolute inset-y-0 left-4 w-1 rounded-full bg-white/15" />
-
-                <div className="relative z-10 flex h-full flex-col justify-between">
-                  <div>
-                    <p className="text-[10px] font-black uppercase tracking-[0.25em] text-amber-300">
-                      NDL AI
-                    </p>
-
-                    <h3 className="mt-8 text-xl font-black leading-tight">
-                      {book.title}
-                    </h3>
-                  </div>
-
-                  <p className="text-xs text-blue-100">{book.author}</p>
-                </div>
+              <div className="relative mx-auto h-64 w-44 overflow-hidden rounded-r-3xl rounded-l-lg shadow-2xl">
+                <RealBookCover book={book} className="h-full w-full" />
               </div>
 
               <div className="flex flex-col justify-center">
@@ -75,7 +71,7 @@ export default function DirectorCollection() {
                 </p>
 
                 <div className="mt-6 inline-flex w-fit rounded-full bg-amber-500 px-5 py-3 text-sm font-black text-white shadow">
-                  Click to open AI book experience →
+                  {isEn ? "Click to open AI book experience →" : "एआई बुक अनुभव खोलने के लिए क्लिक करें →"}
                 </div>
               </div>
             </Link>

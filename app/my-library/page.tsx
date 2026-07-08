@@ -1,10 +1,15 @@
 "use client";
 
-import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { UI_TEXT } from "@/lib/i18n";
 import { useLanguage } from "@/lib/useLanguage";
 import { directorBooks } from "@/lib/directorBooks";
+import PageHeader from "@/components/ui/PageHeader";
+import StatCard from "@/components/ui/StatCard";
+import InfoCard from "@/components/ui/InfoCard";
+import SearchBar from "@/components/ui/SearchBar";
+import FilterBar from "@/components/ui/FilterBar";
+import AppButton from "@/components/ui/AppButton";
 
 // ── Local, read-only types mirroring Reader/Study Workspace/My Space data
 // shapes. Not imported from those modules — this page only reads the same
@@ -21,14 +26,7 @@ interface LearningActivityEntry { type: string; bookId: string; timestamp: numbe
 type DirectorBook = {
   id: string; title: string; author?: string; language?: string;
   description?: string; pages?: number | string;
-  /** Confirmed field in lib/directorBooks.ts — used by CoverThumb as a
-   *  fallback source (first PDF page rendered as the cover) when no
-   *  static cover image resolves. */
   pdf?: string;
-  /** The confirmed field in lib/directorBooks.ts today — a public-folder
-   *  path like "/director-books/nalanda-cover.jpg". The three below are
-   *  checked defensively in case that ever changes or a second book
-   *  source with different naming gets merged in. */
   cover?: string;
   coverUrl?: string;
   image?: string;
@@ -57,10 +55,6 @@ function findBookByTitle(title: string): DirectorBook | undefined {
   return (directorBooks as DirectorBook[]).find(b => b.title?.trim().toLowerCase() === q);
 }
 function bookCover(book?: DirectorBook): string | undefined {
-  // "cover" is the confirmed field lib/directorBooks.ts uses today. The
-  // others are checked defensively (any future field rename, or a second
-  // book source with different naming, still resolves correctly) without
-  // needing another code change. First non-empty value wins.
   const candidate = book?.cover || book?.coverUrl || book?.image || book?.thumbnail;
   return candidate && candidate.trim() ? candidate : undefined;
 }
@@ -113,7 +107,7 @@ function PdfFirstPageCover({ pdfPath, onFail }: { pdfPath: string; onFail: () =>
         const pdf = await pdfjsLib.getDocument(pdfPath).promise;
         const page = await pdf.getPage(1);
         const baseViewport = page.getViewport({ scale: 1 });
-        const targetWidth = 400; // plenty for a shelf/grid thumbnail
+        const targetWidth = 400;
         const scale = targetWidth / baseViewport.width;
         const viewport = page.getViewport({ scale });
         const canvas = canvasRef.current;
@@ -146,8 +140,6 @@ function CoverThumb({ book, className = "" }: { book?: DirectorBook; className?:
   const [pdfFailed, setPdfFailed] = useState(false);
   const initials = (book?.title ?? "?").split(" ").slice(0, 2).map(w => w[0]).join("").toUpperCase();
 
-  // Reset per-book so switching between books (e.g. filtered grid re-render)
-  // doesn't get stuck on a previous book's failure state.
   useEffect(() => { setStaticFailed(false); setPdfFailed(false); }, [book?.id]);
 
   const canUseStatic = !!staticCover && !staticFailed;
@@ -189,7 +181,6 @@ type FilterKey = "all" | "continue" | "completed" | "bookmarked" | "notes" | "hi
 export default function MyLibraryPage() {
   const { language } = useLanguage();
   const t = UI_TEXT[language];
-  const isEn = t.navLibrary === "Library";
 
   const [mounted, setMounted] = useState(false);
   const [rawLibrary, setRawLibrary] = useState<RawLibraryEntry[]>([]);
@@ -218,7 +209,7 @@ export default function MyLibraryPage() {
     : resolvedLibrary.map(r => r.book);
 
   function removeBook(bookId: string) {
-    if (usingDemoShelf) return; // demo shelf isn't real saved data
+    if (usingDemoShelf) return;
     function resolveId(entry: RawLibraryEntry): string | undefined {
       if (typeof entry === "string") return (findBookById(entry) ?? findBookByTitle(entry))?.id;
       if (entry.bookId) { const b = findBookById(entry.bookId); if (b) return b.id; }
@@ -240,7 +231,6 @@ export default function MyLibraryPage() {
   function hasHighlights(bookId: string) { return highlights.some(h => h.bookId === bookId); }
   function hasBookmark(bookId: string) { return bookmarks.some(b => b.bookId === bookId); }
 
-  // ── Overview cards ───────────────────────────────────────────────────
   const continueReadingCount = shelfBooks.filter(b => {
     const p = progressFor(b.id);
     return p && p.pct > 0 && p.pct < 100;
@@ -254,7 +244,6 @@ export default function MyLibraryPage() {
     bookmarks: bookmarks.length,
   };
 
-  // ── Continue Reading section ─────────────────────────────────────────
   const continueReadingList = useMemo(() => {
     const real = progress
       .map(p => ({ book: findBookById(p.bookId), progress: p }))
@@ -262,7 +251,6 @@ export default function MyLibraryPage() {
       .sort((a, b) => b.progress.lastReadAt - a.progress.lastReadAt)
       .slice(0, 3);
     if (real.length > 0) return real;
-    // Demo fallback — first couple of catalog books with plausible progress.
     return (directorBooks as DirectorBook[]).slice(0, 2).map((b, i) => {
       const total = bookTotalPages(b);
       const pct = [58, 30][i] ?? 40;
@@ -274,7 +262,6 @@ export default function MyLibraryPage() {
   }, [progress]);
   const usingDemoContinueReading = progress.length === 0;
 
-  // ── Filters + search ──────────────────────────────────────────────────
   const visibleBooks = useMemo(() => {
     let list = shelfBooks;
     if (filter === "continue") list = list.filter(b => { const p = progressFor(b.id); return p && p.pct > 0 && p.pct < 100; });
@@ -295,11 +282,20 @@ export default function MyLibraryPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [shelfBooks, filter, search, progress, notes, highlights, bookmarks]);
 
+  const filterOptions = [
+    { key: "all" as FilterKey, label: t.myLibraryFilterAll },
+    { key: "continue" as FilterKey, label: t.myLibraryFilterContinue },
+    { key: "completed" as FilterKey, label: t.myLibraryFilterCompleted },
+    { key: "bookmarked" as FilterKey, label: `🔖 ${t.myLibraryFilterBookmarked}` },
+    { key: "notes" as FilterKey, label: `📝 ${t.myLibraryFilterHasNotes}` },
+    { key: "highlights" as FilterKey, label: `⭐ ${t.myLibraryFilterHasHighlights}` },
+  ];
+
   if (!mounted) {
     return (
       <main className="min-h-screen bg-slate-50 p-6">
         <div className="mx-auto max-w-6xl animate-pulse text-sm font-semibold text-slate-400">
-          {isEn ? "Loading your library…" : "आपकी लाइब्रेरी लोड हो रही है…"}
+          {t.commonLoading}
         </div>
       </main>
     );
@@ -309,113 +305,72 @@ export default function MyLibraryPage() {
     <main className="min-h-screen bg-slate-50 p-6">
       <div className="mx-auto max-w-6xl">
 
-        <div className="mb-6 flex items-center justify-between">
-          <div>
-            <h1 className="text-4xl font-bold text-slate-900">{isEn ? "My Library" : "मेरी लाइब्रेरी"}</h1>
-            <p className="mt-2 text-slate-600">
-              {isEn ? "Your personal bookshelf, connected to everything you've read and studied." : "आपकी व्यक्तिगत पुस्तक अलमारी, आपके सभी पठन और अध्ययन से जुड़ी हुई।"}
-            </p>
-          </div>
-          <Link href="/" className="rounded-xl bg-black px-4 py-2 text-white">{isEn ? "← Home" : "← होम"}</Link>
-        </div>
+        <PageHeader title={t.myLibraryTitle} subtitle={t.myLibrarySubtitle} homeLabel={t.commonHome} />
 
         {usingDemoShelf && (
-          <div className="mb-6 rounded-2xl bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-800 ring-1 ring-amber-200">
-            {isEn
-              ? "📌 Your shelf is empty — showing demo recommendations from the library catalog. Add books to see your real shelf here."
-              : "📌 आपकी अलमारी खाली है — लाइब्रेरी कैटलॉग से डेमो सिफारिशें दिखाई जा रही हैं। अपनी असली अलमारी देखने के लिए किताबें जोड़ें।"}
-          </div>
+          <InfoCard tone="amber" className="mb-6 py-3 text-sm font-semibold">
+            📌 {t.myLibraryEmptyBanner}
+          </InfoCard>
         )}
 
-        {/* 1. Library overview cards */}
+        {/* 1. Library overview cards — equal-height grid, StatCard keeps
+            every card the same shape regardless of label length. */}
         <div className="grid gap-6 md:grid-cols-5 mb-8">
-          <div className="rounded-3xl bg-white p-6 shadow">
-            <p className="text-slate-500">📚 {isEn ? "Books Saved" : "सहेजी गई किताबें"}</p>
-            <h2 className="mt-2 text-4xl font-bold">{stats.booksSaved}</h2>
-          </div>
-          <div className="rounded-3xl bg-white p-6 shadow">
-            <p className="text-slate-500">📖 {isEn ? "Continue Reading" : "पढ़ना जारी रखें"}</p>
-            <h2 className="mt-2 text-4xl font-bold">{stats.continueReading}</h2>
-          </div>
-          <div className="rounded-3xl bg-white p-6 shadow">
-            <p className="text-slate-500">⭐ {isEn ? "Highlights" : "हाइलाइट्स"}</p>
-            <h2 className="mt-2 text-4xl font-bold">{stats.highlights}</h2>
-          </div>
-          <div className="rounded-3xl bg-white p-6 shadow">
-            <p className="text-slate-500">📝 {isEn ? "Notes" : "नोट्स"}</p>
-            <h2 className="mt-2 text-4xl font-bold">{stats.notes}</h2>
-          </div>
-          <div className="rounded-3xl bg-white p-6 shadow">
-            <p className="text-slate-500">🔖 {isEn ? "Bookmarks" : "बुकमार्क"}</p>
-            <h2 className="mt-2 text-4xl font-bold">{stats.bookmarks}</h2>
-          </div>
+          <StatCard icon="📚" label={t.myLibraryBooksSaved} value={stats.booksSaved} />
+          <StatCard icon="📖" label={t.continueReading} value={stats.continueReading} />
+          <StatCard icon="⭐" label={t.myLibraryHighlights} value={stats.highlights} />
+          <StatCard icon="📝" label={t.navNotes} value={stats.notes} />
+          <StatCard icon="🔖" label={t.myLibraryBookmarks} value={stats.bookmarks} />
         </div>
 
         {/* 2. Continue Reading */}
-        <div className="mb-10 rounded-3xl bg-white p-6 shadow">
+        <InfoCard className="mb-10">
           <div className="mb-5 flex items-center justify-between">
-            <h2 className="text-2xl font-bold">{isEn ? "Continue Reading" : "पढ़ना जारी रखें"}</h2>
-            {usingDemoContinueReading && <span className="rounded-full bg-amber-100 px-3 py-1 text-[10px] font-bold uppercase text-amber-700">demo</span>}
+            <h2 className="text-2xl font-bold">{t.continueReading}</h2>
+            {usingDemoContinueReading && <span className="rounded-full bg-amber-100 px-3 py-1 text-[10px] font-bold uppercase text-amber-700">{t.commonDemo}</span>}
           </div>
           <div className="grid gap-4 md:grid-cols-3">
             {continueReadingList.map(({ book, progress: p }) => {
               const total = p.totalPages || bookTotalPages(book);
               const pct = Math.min(100, Math.round((p.currentPage / Math.max(1, total)) * 100));
               return (
-                <div key={book.id} className="flex gap-4 rounded-2xl border border-slate-100 p-4 hover:shadow-md">
+                <div key={book.id} className="flex h-full gap-4 rounded-2xl border border-slate-100 p-4 hover:shadow-md">
                   <div className="h-28 w-20 flex-shrink-0 overflow-hidden rounded-xl shadow">
                     <CoverThumb book={book} className="h-full w-full" />
                   </div>
-                  <div className="min-w-0 flex-1">
+                  <div className="flex min-w-0 flex-1 flex-col">
                     <p className="truncate font-bold text-slate-900">{book.title}</p>
                     {book.author && <p className="truncate text-xs text-slate-500">{book.author}</p>}
-                    <p className="mt-1 text-xs text-slate-400">{isEn ? "Page" : "पृष्ठ"} {p.currentPage} / {total}</p>
+                    <p className="mt-1 text-xs text-slate-400">{t.commonPage} {p.currentPage} / {total}</p>
                     <div className="mt-2 h-2 rounded-full bg-slate-100">
                       <div className="h-2 rounded-full bg-amber-500" style={{ width: `${pct}%` }} />
                     </div>
-                    <Link href={`/reader-premium?book=${book.id}`} className="mt-3 inline-block rounded-full bg-slate-900 px-3 py-1.5 text-xs font-bold text-white hover:bg-slate-700">
-                      {isEn ? "Continue Reading" : "पढ़ना जारी रखें"}
-                    </Link>
+                    <div className="mt-auto flex gap-2 pt-3">
+                      <AppButton href={`/read?book=${book.id}`} variant="secondary" size="sm">
+                        📖 {t.myLibraryNormal}
+                      </AppButton>
+                      <AppButton href={`/reader-premium?book=${book.id}`} variant="primary" size="sm">
+                        🤖 {t.myLibraryContinueWithAi}
+                      </AppButton>
+                    </div>
                   </div>
                 </div>
               );
             })}
           </div>
-        </div>
+        </InfoCard>
 
         {/* Search */}
-        <input
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder={isEn ? "Search by title, author, or language…" : "शीर्षक, लेखक या भाषा से खोजें…"}
-          className="mb-4 w-full rounded-2xl border border-slate-200 bg-white p-4 shadow-sm outline-none focus:border-slate-400"
-        />
+        <SearchBar value={search} onChange={setSearch} placeholder={t.myLibrarySearchPlaceholder} className="mb-4" />
 
         {/* 4. Filters */}
-        <div className="mb-6 flex flex-wrap gap-2">
-          {([
-            ["all", isEn ? "All" : "सभी"],
-            ["continue", isEn ? "Continue Reading" : "पढ़ना जारी रखें"],
-            ["completed", isEn ? "Completed" : "पूर्ण"],
-            ["bookmarked", isEn ? "🔖 Bookmarked" : "🔖 बुकमार्क"],
-            ["notes", isEn ? "📝 Has Notes" : "📝 नोट्स वाली"],
-            ["highlights", isEn ? "⭐ Has Highlights" : "⭐ हाइलाइट वाली"],
-          ] as [FilterKey, string][]).map(([key, label]) => (
-            <button
-              key={key}
-              onClick={() => setFilter(key)}
-              className={`rounded-full px-4 py-2 text-sm font-bold transition-colors ${
-                filter === key ? "bg-slate-900 text-white" : "bg-white text-slate-600 ring-1 ring-slate-200 hover:bg-slate-100"
-              }`}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
+        <FilterBar options={filterOptions} active={filter} onChange={setFilter} className="mb-6" />
 
-        {/* 3. My Bookshelf */}
-        <div className="rounded-3xl bg-white p-6 shadow">
-          <h2 className="mb-6 text-2xl font-bold">📚 {isEn ? "My Bookshelf" : "मेरी पुस्तक अलमारी"}</h2>
+        {/* 3. My Bookshelf — equal-height cards, actions pinned to the
+            bottom via mt-auto so every card's buttons line up regardless
+            of title/author length. */}
+        <InfoCard>
+          <h2 className="mb-6 text-2xl font-bold">📚 {t.myLibraryBookshelf}</h2>
 
           {visibleBooks.length === 0 ? (
             <p className="text-slate-600">{t.searchNoResults}</p>
@@ -425,7 +380,7 @@ export default function MyLibraryPage() {
                 const p = progressFor(book.id);
                 const pct = p?.pct ?? 0;
                 return (
-                  <div key={book.id} className="rounded-2xl border p-4 hover:shadow-lg">
+                  <div key={book.id} className="flex h-full flex-col rounded-2xl border p-4 hover:shadow-lg">
                     <div className="h-52 w-full overflow-hidden rounded-xl shadow">
                       <CoverThumb book={book} className="h-full w-full" />
                     </div>
@@ -447,16 +402,21 @@ export default function MyLibraryPage() {
                       </div>
                     )}
 
-                    <div className="mt-4 flex gap-2">
-                      <Link href={`/reader-premium?book=${book.id}`} className="flex-1 rounded-xl bg-black px-3 py-2 text-center text-sm font-semibold text-white hover:bg-slate-800">
-                        {isEn ? "Read" : "पढ़ें"}
-                      </Link>
+                    <div className="mt-auto flex flex-col gap-2 pt-4">
+                      <div className="flex gap-2">
+                        <AppButton href={`/read?book=${book.id}`} variant="secondary" size="sm" fullWidth>
+                          📖 {t.myLibraryNormal}
+                        </AppButton>
+                        <AppButton href={`/reader-premium?book=${book.id}`} variant="primary" size="sm" fullWidth>
+                          🤖 {t.myLibraryAiTutor}
+                        </AppButton>
+                      </div>
                       {!usingDemoShelf && (
                         <button
                           onClick={() => removeBook(book.id)}
-                          className="rounded-xl bg-red-50 px-3 py-2 text-sm font-semibold text-red-600 hover:bg-red-100"
+                          className="rounded-xl bg-red-50 px-3 py-1.5 text-xs font-semibold text-red-600 hover:bg-red-100"
                         >
-                          {isEn ? "Remove" : "हटाएं"}
+                          {t.commonRemove}
                         </button>
                       )}
                     </div>
@@ -465,7 +425,7 @@ export default function MyLibraryPage() {
               })}
             </div>
           )}
-        </div>
+        </InfoCard>
       </div>
     </main>
   );

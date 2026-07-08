@@ -1,10 +1,16 @@
 "use client";
 
-import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { UI_TEXT } from "@/lib/i18n";
 import { useLanguage } from "@/lib/useLanguage";
 import { directorBooks } from "@/lib/directorBooks";
+import PageHeader from "@/components/ui/PageHeader";
+import StatCard from "@/components/ui/StatCard";
+import InfoCard from "@/components/ui/InfoCard";
+import SearchBar from "@/components/ui/SearchBar";
+import FilterBar from "@/components/ui/FilterBar";
+import AppButton from "@/components/ui/AppButton";
+import QuickLinks from "@/components/ui/QuickLinks";
 
 // ── Local, read-only types mirroring Reader/Study Workspace/My Space/My
 // Library data shapes. This page is self-contained on purpose — it does
@@ -126,7 +132,6 @@ type Collection = "all" | "continue" | "completed" | "favorites" | "uploaded";
 export default function MyBooksPage() {
   const { language } = useLanguage();
   const t = UI_TEXT[language];
-  const isEn = t.navLibrary === "Library";
 
   const [mounted, setMounted] = useState(false);
   const [rawLibrary, setRawLibrary] = useState<RawLibraryEntry[]>([]);
@@ -177,7 +182,6 @@ export default function MyBooksPage() {
     };
   }
 
-  // ── Overview cards ───────────────────────────────────────────────────
   const stats = useMemo(() => {
     const inProgress = allBooks.filter(b => { const p = progressFor(b.id); return p && p.pct > 0 && p.pct < 100; }).length;
     const completed = allBooks.filter(b => { const p = progressFor(b.id); return p && p.pct >= 100; }).length;
@@ -195,7 +199,6 @@ export default function MyBooksPage() {
     [allBooks]
   );
 
-  // ── Collections + filters + search ───────────────────────────────────
   const visibleBooks = useMemo(() => {
     let list = allBooks;
     if (collection === "continue") list = list.filter(b => { const p = progressFor(b.id); return p && p.pct > 0 && p.pct < 100; });
@@ -217,102 +220,79 @@ export default function MyBooksPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [allBooks, collection, languageFilter, search, progress, bookmarks]);
 
+  const collectionOptions = [
+    { key: "all" as Collection, label: t.myBooksCollectionAll },
+    { key: "continue" as Collection, label: t.myBooksCollectionContinue },
+    { key: "completed" as Collection, label: t.myBooksCollectionCompleted },
+    { key: "favorites" as Collection, label: `⭐ ${t.myBooksCollectionFavorites}` },
+    { key: "uploaded" as Collection, label: t.myBooksCollectionUploaded },
+  ];
+
+  const quickLinks = [
+    { href: "/reader-premium", icon: "📖", label: t.navReader },
+    { href: "/library", icon: "🏛️", label: t.navLibrary },
+    { href: "/my-library", icon: "📚", label: t.myLibraryTitle },
+    { href: "/notes", icon: "📝", label: t.navNotes },
+    { href: "/revision", icon: "🧠", label: t.navRevision },
+  ];
+
   if (!mounted) {
     return (
       <main className="min-h-screen bg-slate-50 p-6">
         <div className="mx-auto max-w-6xl animate-pulse text-sm font-semibold text-slate-400">
-          {isEn ? "Loading your books…" : "आपकी किताबें लोड हो रही हैं…"}
+          {t.commonLoading}
         </div>
       </main>
     );
   }
 
-  const COLLECTIONS: [Collection, string][] = [
-    ["all", isEn ? "All Books" : "सभी किताबें"],
-    ["continue", isEn ? "Continue Reading" : "पढ़ना जारी रखें"],
-    ["completed", isEn ? "Completed" : "पूर्ण"],
-    ["favorites", isEn ? "⭐ Favorites" : "⭐ पसंदीदा"],
-    ["uploaded", isEn ? "Uploaded Books" : "अपलोड की गई किताबें"],
-  ];
-
   return (
     <main className="min-h-screen bg-slate-50 p-6">
       <div className="mx-auto max-w-6xl">
 
-        {/* Header */}
-        <div className="mb-6 flex items-center justify-between">
-          <div>
-            <h1 className="text-4xl font-bold text-slate-900">{isEn ? "My Books" : "मेरी किताबें"}</h1>
-            <p className="mt-2 text-slate-600">
-              {isEn ? "Every book you own, in progress, or have studied — all in one place." : "आपकी सभी स्वामित्व वाली, प्रगति में और अध्ययन की गई किताबें, एक ही जगह।"}
-            </p>
-          </div>
-          <Link href="/" className="rounded-xl bg-black px-4 py-2 text-white">{isEn ? "← Home" : "← होम"}</Link>
-        </div>
+        <PageHeader title={t.myBooksTitle} subtitle={t.myBooksSubtitle} homeLabel={t.commonHome} />
 
         {usingDemoShelf && (
-          <div className="mb-6 rounded-2xl bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-800 ring-1 ring-amber-200">
-            {isEn
-              ? "📌 You haven't saved any books yet — showing demo recommendations from the library catalog."
-              : "📌 आपने अभी तक कोई किताब सहेजी नहीं है — लाइब्रेरी कैटलॉग से डेमो सिफारिशें दिखाई जा रही हैं।"}
-          </div>
+          <InfoCard tone="amber" className="mb-6 py-3 text-sm font-semibold">
+            📌 {t.myBooksEmptyBanner}
+          </InfoCard>
         )}
 
-        {/* 2. Overview cards */}
+        {/* 2. Overview cards — equal-height, consistent StatCard grid */}
         <div className="mb-8 grid grid-cols-2 gap-4 md:grid-cols-5">
-          <div className="rounded-3xl bg-white p-6 shadow"><p className="text-slate-500">📚 {isEn ? "Saved Books" : "सहेजी किताबें"}</p><h2 className="mt-2 text-4xl font-bold">{stats.saved}</h2></div>
-          <div className="rounded-3xl bg-white p-6 shadow"><p className="text-slate-500">📖 {isEn ? "In Progress" : "प्रगति में"}</p><h2 className="mt-2 text-4xl font-bold">{stats.inProgress}</h2></div>
-          <div className="rounded-3xl bg-white p-6 shadow"><p className="text-slate-500">✅ {isEn ? "Completed" : "पूर्ण"}</p><h2 className="mt-2 text-4xl font-bold">{stats.completed}</h2></div>
-          <div className="rounded-3xl bg-white p-6 shadow"><p className="text-slate-500">📝 {isEn ? "With Notes" : "नोट्स सहित"}</p><h2 className="mt-2 text-4xl font-bold">{stats.withNotes}</h2></div>
-          <div className="rounded-3xl bg-white p-6 shadow"><p className="text-slate-500">🔖 {isEn ? "With Bookmarks" : "बुकमार्क सहित"}</p><h2 className="mt-2 text-4xl font-bold">{stats.withBookmarks}</h2></div>
+          <StatCard icon="📚" label={t.myBooksSaved} value={stats.saved} />
+          <StatCard icon="📖" label={t.myBooksInProgress} value={stats.inProgress} />
+          <StatCard icon="✅" label={t.myBooksCompleted} value={stats.completed} />
+          <StatCard icon="📝" label={t.myBooksWithNotes} value={stats.withNotes} />
+          <StatCard icon="🔖" label={t.myBooksWithBookmarks} value={stats.withBookmarks} />
         </div>
 
         {/* 3. Collections */}
-        <div className="mb-6 flex flex-wrap gap-2">
-          {COLLECTIONS.map(([key, label]) => (
-            <button
-              key={key}
-              onClick={() => setCollection(key)}
-              className={`rounded-full px-4 py-2 text-sm font-bold transition-colors ${
-                collection === key ? "bg-slate-900 text-white" : "bg-white text-slate-600 ring-1 ring-slate-200 hover:bg-slate-100"
-              }`}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
+        <FilterBar options={collectionOptions} active={collection} onChange={setCollection} className="mb-6" />
 
         {/* 5. Search + filters */}
         <div className="mb-6 flex flex-col gap-3 sm:flex-row">
-          <input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder={isEn ? "Search by title, author, or language…" : "शीर्षक, लेखक या भाषा से खोजें…"}
-            className="flex-1 rounded-2xl border border-slate-200 bg-white p-3.5 shadow-sm outline-none focus:border-slate-400"
-          />
+          <SearchBar value={search} onChange={setSearch} placeholder={t.myLibrarySearchPlaceholder} className="flex-1" />
           {uniqueLanguages.length > 0 && (
             <select
               value={languageFilter}
               onChange={(e) => setLanguageFilter(e.target.value)}
               className="rounded-2xl border border-slate-200 bg-white px-4 py-3.5 text-sm font-semibold text-slate-700 shadow-sm outline-none"
             >
-              <option value="">{isEn ? "All Languages" : "सभी भाषाएं"}</option>
+              <option value="">{t.commonAllLanguages}</option>
               {uniqueLanguages.map(l => <option key={l} value={l}>{l}</option>)}
             </select>
           )}
         </div>
 
-        {/* 4. Book cards */}
-        <div className="rounded-3xl bg-white p-6 shadow">
+        {/* 4. Book cards — equal-height, actions pinned to the bottom via
+            mt-auto so buttons line up regardless of title/author length. */}
+        <InfoCard>
           {collection === "uploaded" ? (
             uploadedBooks.length === 0 ? (
-              <p className="text-slate-600">
-                {isEn
-                  ? "No uploaded books yet. Books you upload directly (rather than open from the library catalog) will appear here."
-                  : "अभी तक कोई अपलोड की गई किताब नहीं। सीधे अपलोड की गई किताबें यहां दिखाई देंगी।"}
-              </p>
+              <p className="text-slate-600">{t.myBooksNoUploads}</p>
             ) : (
-              <p className="text-slate-600">{isEn ? `${uploadedBooks.length} uploaded item(s) found, but could not be matched to catalog metadata.` : `${uploadedBooks.length} अपलोड आइटम मिले।`}</p>
+              <p className="text-slate-600">{t.myBooksUploadedMatchFailed.replace("{count}", String(uploadedBooks.length))}</p>
             )
           ) : visibleBooks.length === 0 ? (
             <p className="text-slate-600">{t.searchNoResults}</p>
@@ -322,7 +302,7 @@ export default function MyBooksPage() {
                 const p = progressFor(book.id);
                 const counts = countsFor(book.id);
                 return (
-                  <div key={book.id} className="rounded-2xl border p-4 hover:shadow-lg">
+                  <div key={book.id} className="flex h-full flex-col rounded-2xl border p-4 hover:shadow-lg">
                     <div className="h-52 w-full overflow-hidden rounded-xl shadow">
                       <CoverThumb book={book} className="h-full w-full" />
                     </div>
@@ -333,7 +313,7 @@ export default function MyBooksPage() {
                     {p && (
                       <div className="mt-2">
                         <div className="mb-1 flex justify-between text-[11px] font-semibold text-slate-400">
-                          <span>{isEn ? "Progress" : "प्रगति"}</span><span>{p.pct}%</span>
+                          <span>{t.progress}</span><span>{p.pct}%</span>
                         </div>
                         <div className="h-2 rounded-full bg-slate-100">
                           <div className="h-2 rounded-full bg-blue-600" style={{ width: `${p.pct}%` }} />
@@ -347,33 +327,23 @@ export default function MyBooksPage() {
                       <span>🔖 {counts.bookmarks}</span>
                     </div>
 
-                    <Link href={`/reader-premium?book=${book.id}`} className="mt-4 block rounded-xl bg-black px-3 py-2 text-center text-sm font-semibold text-white hover:bg-slate-800">
-                      {isEn ? "Read" : "पढ़ें"}
-                    </Link>
+                    <div className="mt-auto flex gap-2 pt-4">
+                      <AppButton href={`/read?book=${book.id}`} variant="secondary" size="sm" fullWidth>
+                        📖 {t.myLibraryNormal}
+                      </AppButton>
+                      <AppButton href={`/reader-premium?book=${book.id}`} variant="primary" size="sm" fullWidth>
+                        🤖 {t.myLibraryAiTutor}
+                      </AppButton>
+                    </div>
                   </div>
                 );
               })}
             </div>
           )}
-        </div>
+        </InfoCard>
 
         {/* Quick links */}
-        <div className="mt-10">
-          <h2 className="mb-4 text-lg font-black text-slate-900">{isEn ? "Quick Links" : "त्वरित लिंक"}</h2>
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
-            {[
-              ["/reader-premium", "📖", isEn ? "Reader" : "रीडर"],
-              ["/library", "🏛️", isEn ? "Library" : "पुस्तकालय"],
-              ["/my-library", "📚", isEn ? "My Library" : "मेरी लाइब्रेरी"],
-              ["/notes", "📝", isEn ? "Notes" : "नोट्स"],
-              ["/revision", "🧠", isEn ? "Revision" : "पुनरीक्षण"],
-            ].map(([href, icon, label]) => (
-              <Link key={href} href={href} className="flex items-center gap-2 rounded-2xl bg-slate-900 px-4 py-3 text-white shadow hover:bg-slate-800">
-                <span>{icon}</span><span className="text-sm font-bold">{label}</span>
-              </Link>
-            ))}
-          </div>
-        </div>
+        <QuickLinks title={t.myBooksQuickLinks} links={quickLinks} className="mt-10" />
       </div>
     </main>
   );
