@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import AdminSidebar from "@/components/admin/AdminSidebar";
 import { UI_TEXT } from "@/lib/i18n";
@@ -42,7 +42,7 @@ function upsertOverride(overrides: AdminBookOverride[], id: string, patch: Parti
   return next;
 }
 
-export default function BookManagementPage() {
+function BookManagementContent() {
   const { language } = useLanguage();
   const t = UI_TEXT[language];
   const router = useRouter();
@@ -65,7 +65,7 @@ export default function BookManagementPage() {
     const overrides = loadBookOverrides();
     setBooks(buildDisplayBooks(directorBooks as any[], overrides));
   }
-
+ 
   useEffect(() => {
     if (localStorage.getItem("ndlAdminAccess") !== "granted") {
       router.push("/admin-login");
@@ -330,5 +330,12 @@ export default function BookManagementPage() {
         </div>
       </section>
     </main>
+  );
+}
+export default function BookManagementPage() {
+  return (
+    <Suspense fallback={<div className="p-8">Loading...</div>}>
+      <BookManagementContent />
+    </Suspense>
   );
 }

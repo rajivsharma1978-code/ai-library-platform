@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useRef, useState, type ChangeEvent } from "react";
+import { Suspense, useEffect, useRef, useState, type ChangeEvent } from "react";
 import { directorBooks } from "@/lib/directorBooks";
 import { UI_TEXT } from "@/lib/i18n";
 import { useLanguage } from "@/lib/useLanguage";
@@ -39,7 +39,7 @@ const AI_UPLOAD_KEYS = {
 
 const THUMBNAIL_LIMIT = 30;
 
-export default function ReadPage() {
+function ReadPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { language } = useLanguage();
@@ -366,5 +366,12 @@ export default function ReadPage() {
         }
       `}</style>
     </div>
+  );
+}
+export default function ReadPage() {
+  return (
+    <Suspense fallback={<div className="p-8">Loading reader...</div>}>
+      <ReadPageContent />
+    </Suspense>
   );
 }
