@@ -94,10 +94,17 @@ type FilterTab = "all" | "ai" | "book" | "recent";
 
 export default function NotesPage() {
   const { language } = useLanguage();
-  const t = UI_TEXT[language];
-  const isEn = t.navLibrary === "Library";
 
   const [mounted, setMounted] = useState(false);
+  // isHydrated is false during SSR and the client's first (hydration) render,
+  // so t always resolves to English then — matching the server markup exactly.
+  // It only flips true in a useEffect, strictly after hydration completes.
+  const [hydrated, setHydrated] = useState(false);
+  useEffect(() => {
+    setHydrated(true);
+  }, []);
+  const t = UI_TEXT[hydrated ? language : "en"];
+  const isEn = t.navLibrary === "Library";
   const [notes, setNotes] = useState<StoredNoteLite[]>([]);
   const [highlights, setHighlights] = useState<StoredHighlightLite[]>([]);
   const [bookmarks, setBookmarks] = useState<StoredBookmarkLite[]>([]);
@@ -185,7 +192,7 @@ export default function NotesPage() {
     return (
       <main className="min-h-screen bg-slate-50 p-6">
         <div className="mx-auto max-w-6xl animate-pulse text-sm font-semibold text-slate-400">
-          {isEn ? "Loading your notes…" : "आपके नोट्स लोड हो रहे हैं…"}
+          {t.commonLoading}
         </div>
       </main>
     );
