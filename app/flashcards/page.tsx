@@ -1,10 +1,13 @@
 "use client";
 
-import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { UI_TEXT } from "@/lib/i18n";
 import { useLanguage } from "@/lib/useLanguage";
 import { directorBooks } from "@/lib/directorBooks";
+import PageHeader from "@/components/ui/PageHeader";
+import InfoCard from "@/components/ui/InfoCard";
+import SearchBar from "@/components/ui/SearchBar";
+import FilterBar from "@/components/ui/FilterBar";
 
 // ── Local, read-only types mirroring Reader/Study Workspace data shapes.
 // Not imported from those modules — this page only reads the same
@@ -29,9 +32,9 @@ type Card = {
 
 const SOURCE_META: Record<CardSource, { label: string; classes: string }> = {
   highlight: { label: "Highlight",   classes: "bg-amber-100 text-amber-700" },
-  note:      { label: "Note",        classes: "bg-purple-100 text-purple-700" },
+  note:      { label: "Note",        classes: "bg-blue-100 text-blue-700" },
   legacy:    { label: "Legacy Note", classes: "bg-slate-200 text-slate-600" },
-  demo:      { label: "Demo",        classes: "bg-blue-100 text-blue-700" },
+  demo:      { label: "Demo",        classes: "bg-amber-100 text-amber-700" },
 };
 
 function readArray<T>(key: string): T[] {
@@ -164,7 +167,7 @@ export default function FlashcardsPage() {
 
   if (!mounted) {
     return (
-      <main className="min-h-screen bg-slate-50 p-6">
+      <main className="min-h-screen bg-[radial-gradient(circle_at_top,#fff8e8_0%,#f3e6c8_45%,#eaddc0_100%)] p-6">
         <div className="mx-auto max-w-4xl animate-pulse text-sm font-semibold text-slate-400">
           {isEn ? "Loading flashcards…" : "फ्लैशकार्ड लोड हो रहे हैं…"}
         </div>
@@ -172,59 +175,47 @@ export default function FlashcardsPage() {
     );
   }
 
+  const sourceOptions: { key: SourceFilter; label: string }[] = [
+    { key: "all", label: isEn ? "All Sources" : "सभी स्रोत" },
+    { key: "highlight", label: "⭐ " + SOURCE_META.highlight.label },
+    { key: "note", label: "📝 " + SOURCE_META.note.label },
+    { key: "legacy", label: "🗂 " + SOURCE_META.legacy.label },
+    { key: "demo", label: "✨ " + SOURCE_META.demo.label },
+  ];
+
   return (
-    <main className="min-h-screen bg-slate-50 p-6">
+    <main className="min-h-screen bg-[radial-gradient(circle_at_top,#fff8e8_0%,#f3e6c8_45%,#eaddc0_100%)] p-6">
       <div className="mx-auto max-w-4xl">
-        <div className="mb-6 flex items-center justify-between">
-          <div>
-            <h1 className="text-4xl font-bold text-slate-900">{isEn ? "Flashcards" : "फ्लैशकार्ड"}</h1>
-            <p className="mt-2 text-slate-600">
-              {isEn ? "Click a card to reveal the answer." : "उत्तर देखने के लिए कार्ड पर क्लिक करें।"}
-            </p>
-          </div>
-          <Link href="/" className="rounded-xl bg-black px-4 py-2 text-white">{isEn ? "← Home" : "← होम"}</Link>
-        </div>
+        <PageHeader
+          title={isEn ? "Flashcards" : "फ्लैशकार्ड"}
+          subtitle={isEn ? "Click a card to reveal the answer." : "उत्तर देखने के लिए कार्ड पर क्लिक करें।"}
+          homeLabel={isEn ? "Home" : "होम"}
+        />
 
         {usingDemo && (
-          <div className="mb-6 rounded-2xl bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-800 ring-1 ring-amber-200">
+          <InfoCard tone="amber" className="mb-6 py-3 text-sm font-semibold">
             {isEn
               ? "📌 Showing demo flashcards — highlight text or add notes in the Reader to generate your own."
               : "📌 डेमो फ्लैशकार्ड दिखाए जा रहे हैं — अपने खुद के बनाने के लिए रीडर में टेक्स्ट हाइलाइट करें या नोट्स जोड़ें।"}
-          </div>
+          </InfoCard>
         )}
 
         {/* Search */}
-        <input
+        <SearchBar
           value={search}
-          onChange={(e) => setSearch(e.target.value)}
+          onChange={setSearch}
           placeholder={isEn ? "Search flashcards, book title…" : "फ्लैशकार्ड, पुस्तक शीर्षक खोजें…"}
-          className="mb-4 w-full rounded-2xl border border-slate-200 bg-white p-3.5 shadow-sm outline-none focus:border-slate-400"
+          className="mb-4"
         />
 
         {/* Filters */}
         <div className="mb-6 flex flex-wrap items-center gap-2">
-          {([
-            ["all", isEn ? "All Sources" : "सभी स्रोत"],
-            ["highlight", "⭐ " + SOURCE_META.highlight.label],
-            ["note", "📝 " + SOURCE_META.note.label],
-            ["legacy", "🗂 " + SOURCE_META.legacy.label],
-            ["demo", "✨ " + SOURCE_META.demo.label],
-          ] as [SourceFilter, string][]).map(([key, label]) => (
-            <button
-              key={key}
-              onClick={() => setSourceFilter(key)}
-              className={`rounded-full px-4 py-2 text-sm font-bold transition-colors ${
-                sourceFilter === key ? "bg-slate-900 text-white" : "bg-white text-slate-600 ring-1 ring-slate-200 hover:bg-slate-100"
-              }`}
-            >
-              {label}
-            </button>
-          ))}
+          <FilterBar options={sourceOptions} active={sourceFilter} onChange={setSourceFilter} />
           {uniqueBooks.length > 1 && (
             <select
               value={bookFilter}
               onChange={(e) => setBookFilter(e.target.value)}
-              className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm outline-none"
+              className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm outline-none focus:ring-2 focus:ring-amber-400"
             >
               <option value="">{isEn ? "All Books" : "सभी किताबें"}</option>
               {uniqueBooks.map(b => <option key={b} value={b}>{b}</option>)}
@@ -234,9 +225,9 @@ export default function FlashcardsPage() {
 
         {/* Study card */}
         {!current ? (
-          <div className="rounded-3xl bg-white p-10 text-center shadow-sm ring-1 ring-black/5">
+          <InfoCard className="p-10 text-center">
             <p className="text-slate-600">{t.searchNoResults}</p>
-          </div>
+          </InfoCard>
         ) : (
           <>
             <div className="mb-3 flex items-center justify-between text-xs font-bold text-slate-400">
@@ -248,7 +239,7 @@ export default function FlashcardsPage() {
 
             <button
               onClick={() => setFlipped(f => !f)}
-              className="min-h-64 w-full rounded-3xl bg-white p-8 text-left shadow-lg ring-1 ring-black/5 hover:shadow-xl transition-shadow"
+              className="min-h-64 w-full rounded-3xl bg-white p-8 text-left shadow-[0_20px_60px_rgba(75,45,12,0.10)] ring-1 ring-black/5 hover:shadow-[0_20px_60px_rgba(75,45,12,0.16)] transition-shadow"
             >
               <p className="text-xs font-semibold text-slate-400">
                 📖 {current.bookTitle}{current.page ? ` · ${isEn ? "Page" : "पृष्ठ"} ${current.page}` : ""}
@@ -278,14 +269,14 @@ export default function FlashcardsPage() {
               <button
                 onClick={goPrev}
                 disabled={cursor === 0}
-                className="rounded-full bg-slate-900 px-6 py-2.5 text-sm font-bold text-white disabled:opacity-30"
+                className="rounded-full bg-slate-950 px-6 py-2.5 text-sm font-bold text-white disabled:opacity-30"
               >
                 ← {isEn ? "Previous" : "पिछला"}
               </button>
               <button
                 onClick={goNext}
                 disabled={cursor >= visibleCards.length - 1}
-                className="rounded-full bg-slate-900 px-6 py-2.5 text-sm font-bold text-white disabled:opacity-30"
+                className="rounded-full bg-slate-950 px-6 py-2.5 text-sm font-bold text-white disabled:opacity-30"
               >
                 {isEn ? "Next" : "अगला"} →
               </button>

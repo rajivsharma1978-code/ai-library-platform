@@ -1,10 +1,12 @@
 "use client";
 
-import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { UI_TEXT } from "@/lib/i18n";
 import { useLanguage } from "@/lib/useLanguage";
 import { directorBooks } from "@/lib/directorBooks";
+import PageHeader from "@/components/ui/PageHeader";
+import StatCard from "@/components/ui/StatCard";
+import InfoCard from "@/components/ui/InfoCard";
 
 // ── Local, read-only types mirroring the Reader's Study Workspace data
 // shapes. Not imported from the Reader/Study Workspace modules — this
@@ -196,7 +198,7 @@ export default function RevisionPage() {
 
   if (!mounted) {
     return (
-      <main className="min-h-screen bg-slate-50 p-6">
+      <main className="min-h-screen bg-[radial-gradient(circle_at_top,#fff8e8_0%,#f3e6c8_45%,#eaddc0_100%)] p-6">
         <div className="mx-auto max-w-6xl animate-pulse text-sm font-semibold text-slate-400">
           {t.commonLoading}
         </div>
@@ -205,52 +207,31 @@ export default function RevisionPage() {
   }
 
   return (
-    <main className="min-h-screen bg-slate-50 p-6">
+    <main className="min-h-screen bg-[radial-gradient(circle_at_top,#fff8e8_0%,#f3e6c8_45%,#eaddc0_100%)] p-6">
       <div className="mx-auto max-w-6xl">
 
-        {/* Header */}
-        <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
-          <div>
-            <h1 className="text-4xl font-bold text-slate-900">
-              {isEn ? "AI Revision Center" : "एआई पुनरीक्षण केंद्र"}
-            </h1>
-            <p className="mt-2 text-slate-600">
-              {isEn
-                ? "Everything you've highlighted and noted, turned into a focused revision plan."
-                : "आपके सभी हाइलाइट्स और नोट्स से बना एक केंद्रित पुनरीक्षण योजना।"}
-            </p>
-          </div>
-          <Link href="/" className="rounded-xl bg-black px-4 py-2 text-white">
-            ← {isEn ? "Home" : "होम"}
-          </Link>
-        </div>
+        <PageHeader
+          title={isEn ? "AI Revision Center" : "एआई पुनरीक्षण केंद्र"}
+          subtitle={isEn
+            ? "Everything you've highlighted and noted, turned into a focused revision plan."
+            : "आपके सभी हाइलाइट्स और नोट्स से बना एक केंद्रित पुनरीक्षण योजना।"}
+          homeLabel={isEn ? "Home" : "होम"}
+        />
 
         {!hasRealData && (
-          <div className="mb-6 rounded-2xl bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-800 ring-1 ring-amber-200">
+          <InfoCard tone="amber" className="mb-6 py-3 text-sm font-semibold">
             {isEn
               ? "📌 Showing a polished demo revision plan — highlight text or add notes in the Reader to build your real one."
               : "📌 डेमो पुनरीक्षण योजना दिखाई जा रही है — अपनी असली योजना बनाने के लिए रीडर में टेक्स्ट हाइलाइट करें या नोट्स जोड़ें।"}
-          </div>
+          </InfoCard>
         )}
 
         {/* 1. Revision overview cards */}
         <div className="mb-8 grid grid-cols-2 gap-4 md:grid-cols-4">
-          <div className="rounded-3xl bg-white p-6 shadow ring-1 ring-black/5">
-            <p className="text-slate-500">⭐ {isEn ? "Highlights to Revise" : "पुनरीक्षण हेतु हाइलाइट्स"}</p>
-            <h2 className="mt-2 text-4xl font-bold text-slate-900">{stats.highlightsToRevise}</h2>
-          </div>
-          <div className="rounded-3xl bg-white p-6 shadow ring-1 ring-black/5">
-            <p className="text-slate-500">📝 {isEn ? "Notes to Review" : "समीक्षा हेतु नोट्स"}</p>
-            <h2 className="mt-2 text-4xl font-bold text-slate-900">{stats.notesToReview}</h2>
-          </div>
-          <div className="rounded-3xl bg-white p-6 shadow ring-1 ring-black/5">
-            <p className="text-slate-500">🔖 {isEn ? "Bookmarked Pages" : "बुकमार्क किए पृष्ठ"}</p>
-            <h2 className="mt-2 text-4xl font-bold text-slate-900">{stats.bookmarkedPages}</h2>
-          </div>
-          <div className="rounded-3xl bg-white p-6 shadow ring-1 ring-black/5">
-            <p className="text-slate-500">🧩 {isEn ? "Weak Topics" : "कमजोर विषय"}</p>
-            <h2 className="mt-2 text-4xl font-bold text-slate-900">{stats.weakTopics}</h2>
-          </div>
+          <StatCard label={`⭐ ${isEn ? "Highlights to Revise" : "पुनरीक्षण हेतु हाइलाइट्स"}`} value={stats.highlightsToRevise} />
+          <StatCard label={`📝 ${isEn ? "Notes to Review" : "समीक्षा हेतु नोट्स"}`} value={stats.notesToReview} />
+          <StatCard label={`🔖 ${isEn ? "Bookmarked Pages" : "बुकमार्क किए पृष्ठ"}`} value={stats.bookmarkedPages} />
+          <StatCard label={`🧩 ${isEn ? "Weak Topics" : "कमजोर विषय"}`} value={stats.weakTopics} />
         </div>
 
         <div className="grid gap-8 lg:grid-cols-3">
@@ -266,7 +247,7 @@ export default function RevisionPage() {
                   <span className="rounded-full bg-amber-100 px-3 py-1 text-[10px] font-bold uppercase tracking-wide text-amber-700">demo</span>
                 )}
               </div>
-              <div className="rounded-3xl bg-white p-3 shadow ring-1 ring-black/5">
+              <InfoCard className="p-3">
                 {todaysItems.map((item, i) => {
                   const book = findBook(item.bookId);
                   return (
@@ -279,7 +260,7 @@ export default function RevisionPage() {
                     </div>
                   );
                 })}
-              </div>
+              </InfoCard>
             </section>
 
             {/* 3. Weak Concepts */}
@@ -292,13 +273,13 @@ export default function RevisionPage() {
                   <span className="rounded-full bg-amber-100 px-3 py-1 text-[10px] font-bold uppercase tracking-wide text-amber-700">demo</span>
                 )}
               </div>
-              <div className="flex flex-wrap gap-2 rounded-3xl bg-white p-5 shadow ring-1 ring-black/5">
+              <InfoCard className="flex flex-wrap gap-2 p-5">
                 {topics.map(topic => (
                   <span key={topic} className="rounded-full bg-red-50 px-4 py-2 text-sm font-bold text-red-700">
                     🧩 {topic}
                   </span>
                 ))}
-              </div>
+              </InfoCard>
             </section>
 
             {/* 4. Revision Actions */}
@@ -312,8 +293,8 @@ export default function RevisionPage() {
                     key={action}
                     onClick={() => runAction(action)}
                     disabled={loading}
-                    className={`rounded-2xl px-4 py-4 text-center shadow transition-colors disabled:opacity-50 ${
-                      activeAction === action ? "bg-slate-900 text-white" : "bg-white text-slate-800 ring-1 ring-black/5 hover:bg-slate-50"
+                    className={`rounded-2xl px-4 py-4 text-center shadow-[0_10px_30px_rgba(75,45,12,0.08)] transition-colors disabled:opacity-50 ${
+                      activeAction === action ? "bg-slate-950 text-white" : "bg-white text-slate-800 ring-1 ring-black/5 hover:bg-slate-50"
                     }`}
                   >
                     <div className="text-xl">{ACTION_META[action].icon}</div>
@@ -323,14 +304,14 @@ export default function RevisionPage() {
               </div>
 
               {(loading || aiOutput) && (
-                <div className="mt-4 rounded-3xl bg-white p-6 shadow ring-1 ring-black/5">
+                <InfoCard className="mt-4">
                   <div className="mb-3 flex items-center justify-between">
                     <h3 className="text-lg font-bold text-slate-900">
                       {activeAction ? `${ACTION_META[activeAction].icon} ${ACTION_META[activeAction].label}` : ""}
                     </h3>
                     <div className="flex gap-2">
-                      <button onClick={speak} className="rounded-xl bg-blue-600 px-3 py-1.5 text-xs font-bold text-white">🔊 {isEn ? "Read Aloud" : "पढ़ें"}</button>
-                      <button onClick={stopSpeaking} className="rounded-xl bg-red-600 px-3 py-1.5 text-xs font-bold text-white">{isEn ? "Stop" : "रोकें"}</button>
+                      <button onClick={speak} className="rounded-xl bg-blue-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-blue-700">🔊 {isEn ? "Read Aloud" : "पढ़ें"}</button>
+                      <button onClick={stopSpeaking} className="rounded-xl bg-red-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-red-700">{isEn ? "Stop" : "रोकें"}</button>
                     </div>
                   </div>
                   {loading ? (
@@ -338,7 +319,7 @@ export default function RevisionPage() {
                   ) : (
                     <div className="whitespace-pre-line text-slate-700">{aiOutput}</div>
                   )}
-                </div>
+                </InfoCard>
               )}
             </section>
           </div>
@@ -349,36 +330,36 @@ export default function RevisionPage() {
               {isEn ? "Study Plan" : "अध्ययन योजना"}
             </h2>
             <div className="flex flex-col gap-4">
-              <div className="rounded-3xl bg-white p-5 shadow ring-1 ring-black/5">
+              <InfoCard className="p-5">
                 <p className="text-xs font-bold uppercase tracking-wide text-slate-400">{isEn ? "Today" : "आज"}</p>
                 <p className="mt-2 text-sm text-slate-700">
                   {isEn
                     ? `${todayCount} item${todayCount === 1 ? "" : "s"} added today. Review them with a quick Practice Quiz.`
                     : `आज ${todayCount} आइटम जोड़े गए। एक त्वरित क्विज़ के साथ उनकी समीक्षा करें।`}
                 </p>
-              </div>
-              <div className="rounded-3xl bg-white p-5 shadow ring-1 ring-black/5">
+              </InfoCard>
+              <InfoCard className="p-5">
                 <p className="text-xs font-bold uppercase tracking-wide text-slate-400">{isEn ? "This Week" : "इस सप्ताह"}</p>
                 <p className="mt-2 text-sm text-slate-700">
                   {isEn
                     ? `${weekCount} item${weekCount === 1 ? "" : "s"} from the last 7 days. Generate Flashcards to lock them in.`
                     : `पिछले 7 दिनों से ${weekCount} आइटम। उन्हें याद रखने के लिए फ्लैशकार्ड बनाएं।`}
                 </p>
-              </div>
-              <div className="rounded-3xl bg-white p-5 shadow ring-1 ring-black/5">
+              </InfoCard>
+              <InfoCard className="p-5">
                 <p className="text-xs font-bold uppercase tracking-wide text-slate-400">{isEn ? "Before Exam" : "परीक्षा से पहले"}</p>
                 <p className="mt-2 text-sm text-slate-700">
                   {isEn
                     ? `Run a full Generate Revision Notes pass across all ${stats.highlightsToRevise + stats.notesToReview} saved items, then clear your ${stats.weakTopics} weak topic(s) with MCQs.`
                     : `सभी ${stats.highlightsToRevise + stats.notesToReview} सहेजे गए आइटम पर पुनरीक्षण नोट्स बनाएं, फिर MCQ से अपने ${stats.weakTopics} कमजोर विषय दूर करें।`}
                 </p>
-              </div>
-              <div className="rounded-3xl bg-slate-50 p-5 ring-1 ring-black/5">
-                <p className="text-xs font-bold uppercase tracking-wide text-slate-400">{isEn ? "Quiz Track Record" : "क्विज़ रिकॉर्ड"}</p>
-                <p className="mt-2 text-sm text-slate-700">
+              </InfoCard>
+              <InfoCard tone="amber" className="p-5">
+                <p className="text-xs font-bold uppercase tracking-wide text-amber-700">{isEn ? "Quiz Track Record" : "क्विज़ रिकॉर्ड"}</p>
+                <p className="mt-2 text-sm text-amber-900">
                   {isEn ? "Score" : "स्कोर"}: <span className="font-bold">{quizScore}</span> · {isEn ? "Completed" : "पूर्ण"}: <span className="font-bold">{completedQuizzes}</span>
                 </p>
-              </div>
+              </InfoCard>
             </div>
           </div>
         </div>

@@ -1,8 +1,8 @@
 "use client";
 
-import Link from "next/link";
 import { UI_TEXT } from "@/lib/i18n";
 import { useLanguage } from "@/lib/useLanguage";
+import PageHeader from "@/components/ui/PageHeader";
 
 const categories = [
   "Artificial Intelligence",
@@ -38,28 +38,16 @@ export default function ExplorePage() {
   const t = UI_TEXT[language];
 
   return (
-    <main className="min-h-screen bg-slate-100">
-      <div className="max-w-7xl mx-auto p-10">
-        <Link
-          href="/"
-          className="text-blue-600 font-semibold"
-        >
-          ← Back to Library
-        </Link>
+    <main className="min-h-screen bg-[radial-gradient(circle_at_top,#fff8e8_0%,#f3e6c8_45%,#eaddc0_100%)] px-6 py-10">
+      <div className="max-w-6xl mx-auto">
+        <PageHeader
+          title="Explore Knowledge"
+          subtitle="Discover books, learning paths, research material, exam preparation content, and AI-curated recommendations."
+          homeLabel="Back to Library"
+        />
 
-        <div className="mt-8 bg-gradient-to-r from-blue-700 to-purple-700 text-white rounded-3xl p-10 shadow-xl">
-          <h1 className="text-5xl font-bold">
-            Explore Knowledge
-          </h1>
-
-          <p className="mt-4 text-lg text-blue-100 max-w-3xl">
-            Discover books, learning paths, research material,
-            exam preparation content, and AI-curated recommendations.
-          </p>
-        </div>
-
-        <section className="mt-10">
-          <h2 className="text-2xl font-bold mb-5">
+        <section className="mt-4">
+          <h2 className="text-lg font-black text-slate-900 mb-4">
             Browse Categories
           </h2>
 
@@ -67,9 +55,9 @@ export default function ExplorePage() {
             {categories.map((category) => (
               <div
                 key={category}
-                className="bg-white rounded-2xl p-6 shadow hover:shadow-xl transition"
+                className="bg-white rounded-3xl p-6 shadow-[0_10px_30px_rgba(75,45,12,0.08)] ring-1 ring-black/5 hover:-translate-y-0.5 transition"
               >
-                <h3 className="font-bold text-lg">
+                <h3 className="font-black text-lg text-slate-900">
                   {category}
                 </h3>
 
@@ -81,8 +69,8 @@ export default function ExplorePage() {
           </div>
         </section>
 
-        <section className="mt-12">
-          <h2 className="text-2xl font-bold mb-5">
+        <section className="mt-10">
+          <h2 className="text-lg font-black text-slate-900 mb-4">
             AI Recommended Learning Paths
           </h2>
 
@@ -90,9 +78,9 @@ export default function ExplorePage() {
             {learningPaths.map((path) => (
               <div
                 key={path.title}
-                className="bg-white rounded-3xl p-8 shadow-lg"
+                className="bg-white rounded-[2rem] p-8 shadow-[0_20px_60px_rgba(75,45,12,0.10)] ring-1 ring-black/5"
               >
-                <h3 className="font-bold text-xl">
+                <h3 className="font-black text-xl text-slate-950">
                   {path.title}
                 </h3>
 
@@ -104,7 +92,7 @@ export default function ExplorePage() {
                   Duration: {path.duration}
                 </p>
 
-                <button className="mt-6 bg-black text-white px-5 py-3 rounded-xl">
+                <button className="mt-6 bg-orange-600 text-white px-5 py-3 rounded-xl font-bold shadow-md shadow-orange-500/25 transition hover:bg-orange-700">
                   Start Path
                 </button>
               </div>
@@ -112,9 +100,9 @@ export default function ExplorePage() {
           </div>
         </section>
 
-        <section className="mt-12">
-          <div className="bg-white rounded-3xl p-10 shadow-lg">
-            <h2 className="text-2xl font-bold">
+        <section className="mt-10 pb-6">
+          <div className="bg-white rounded-[2rem] p-10 shadow-[0_20px_60px_rgba(75,45,12,0.10)] ring-1 ring-black/5">
+            <h2 className="text-lg font-black text-slate-900">
               Trending Topics
             </h2>
 
@@ -131,7 +119,7 @@ export default function ExplorePage() {
               ].map((topic) => (
                 <span
                   key={topic}
-                  className="bg-slate-100 px-4 py-2 rounded-full"
+                  className="bg-amber-50 text-amber-800 font-semibold px-4 py-2 rounded-full"
                 >
                   {topic}
                 </span>

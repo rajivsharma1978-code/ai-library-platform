@@ -106,7 +106,7 @@ function CoverThumb({ book, className = "" }: { book?: DirectorBook; className?:
 // inconsistency across book cards.
 function BookCard({ book, t }: { book: DirectorBook; t: UIText }) {
   return (
-    <div className="flex h-full flex-col rounded-3xl border border-slate-200 bg-white p-4 shadow-sm transition-shadow hover:shadow-lg">
+    <div className="flex h-full flex-col rounded-3xl bg-white p-4 shadow-[0_10px_30px_rgba(75,45,12,0.08)] ring-1 ring-black/5 transition-shadow hover:shadow-[0_20px_60px_rgba(75,45,12,0.12)]">
       <div className="relative h-56 w-full overflow-hidden rounded-2xl shadow">
         <CoverThumb book={book} className="h-full w-full" />
       </div>
@@ -175,7 +175,7 @@ export default function AiTutorPage() {
 
   if (!mounted) {
     return (
-      <main className="min-h-screen bg-slate-50 p-6">
+      <main className="min-h-screen bg-[radial-gradient(circle_at_top,#fff8e8_0%,#f3e6c8_45%,#eaddc0_100%)] p-6">
         <div className="mx-auto max-w-6xl animate-pulse text-sm font-semibold text-slate-400">
           {t.commonLoading}
         </div>
@@ -184,7 +184,7 @@ export default function AiTutorPage() {
   }
 
   return (
-    <main className="min-h-screen bg-slate-50 p-6">
+    <main className="min-h-screen bg-[radial-gradient(circle_at_top,#fff8e8_0%,#f3e6c8_45%,#eaddc0_100%)] p-6">
       <div className="mx-auto max-w-6xl">
 
         <PageHeader title={t.navAiTutor} subtitle={t.aiTutorSubtitle} homeLabel={t.commonHome} />
@@ -200,7 +200,7 @@ export default function AiTutorPage() {
                 </span>
               )}
             </div>
-            <div className="flex flex-col gap-5 rounded-[2rem] bg-white p-6 shadow ring-1 ring-black/5 sm:flex-row sm:items-center">
+            <div className="flex flex-col gap-5 rounded-[2rem] bg-white p-6 shadow-[0_20px_60px_rgba(75,45,12,0.10)] ring-1 ring-black/5 sm:flex-row sm:items-center">
               <div className="mx-auto h-40 w-28 flex-shrink-0 overflow-hidden rounded-2xl shadow-lg sm:mx-0">
                 <CoverThumb book={continueBook} className="h-full w-full" />
               </div>
@@ -248,7 +248,7 @@ export default function AiTutorPage() {
         <section className="grid gap-5 sm:grid-cols-2">
           <Link
             href="/read"
-            className="rounded-3xl bg-slate-900 p-8 text-white shadow-lg transition-transform hover:-translate-y-0.5"
+            className="rounded-3xl bg-slate-950 p-8 text-white shadow-[0_20px_60px_rgba(75,45,12,0.14)] transition-transform hover:-translate-y-0.5"
           >
             <div className="text-3xl">📤</div>
             <h3 className="mt-3 text-xl font-black">{t.aiTutorUploadTitle}</h3>
@@ -256,7 +256,7 @@ export default function AiTutorPage() {
           </Link>
           <Link
             href="/library"
-            className="rounded-3xl bg-white p-8 shadow-lg ring-1 ring-black/5 transition-transform hover:-translate-y-0.5"
+            className="rounded-3xl bg-white p-8 shadow-[0_20px_60px_rgba(75,45,12,0.10)] ring-1 ring-black/5 transition-transform hover:-translate-y-0.5"
           >
             <div className="text-3xl">🏛️</div>
             <h3 className="mt-3 text-xl font-black text-slate-900">{t.aiTutorBrowseTitle}</h3>

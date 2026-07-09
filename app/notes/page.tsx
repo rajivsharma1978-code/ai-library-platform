@@ -1,10 +1,15 @@
 "use client";
 
-import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { UI_TEXT } from "@/lib/i18n";
 import { useLanguage } from "@/lib/useLanguage";
 import { directorBooks } from "@/lib/directorBooks";
+import PageHeader from "@/components/ui/PageHeader";
+import StatCard from "@/components/ui/StatCard";
+import InfoCard from "@/components/ui/InfoCard";
+import SearchBar from "@/components/ui/SearchBar";
+import FilterBar from "@/components/ui/FilterBar";
+import AppButton from "@/components/ui/AppButton";
 
 // ── Local, read-only types mirroring the Reader's Study Workspace data
 // shapes (ndl_notes / ndl_highlights / ndl_bookmarks). Deliberately NOT
@@ -190,7 +195,7 @@ export default function NotesPage() {
 
   if (!mounted) {
     return (
-      <main className="min-h-screen bg-slate-50 p-6">
+      <main className="min-h-screen bg-[radial-gradient(circle_at_top,#fff8e8_0%,#f3e6c8_45%,#eaddc0_100%)] p-6">
         <div className="mx-auto max-w-6xl animate-pulse text-sm font-semibold text-slate-400">
           {t.commonLoading}
         </div>
@@ -198,84 +203,57 @@ export default function NotesPage() {
     );
   }
 
+  const filterOptions: { key: FilterTab; label: string }[] = [
+    { key: "all", label: isEn ? "All Notes" : "सभी नोट्स" },
+    { key: "ai", label: isEn ? "✨ AI-Improved" : "✨ एआई-सुधारित" },
+    { key: "book", label: isEn ? "📚 By Book" : "📚 पुस्तक अनुसार" },
+    { key: "recent", label: isEn ? "🕐 Recent" : "🕐 हाल के" },
+  ];
+
   return (
-    <main className="min-h-screen bg-slate-50 p-6">
+    <main className="min-h-screen bg-[radial-gradient(circle_at_top,#fff8e8_0%,#f3e6c8_45%,#eaddc0_100%)] p-6">
       <div className="mx-auto max-w-6xl">
 
-        {/* Header */}
-        <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
-          <div>
-            <h1 className="text-3xl font-bold text-slate-900">{t.aiF2Title}</h1>
-            <p className="mt-1 text-slate-600">
-              {isEn
-                ? "Every note you've saved from the Reader, in one polished place."
-                : "रीडर से सहेजे गए आपके सभी नोट्स, एक ही जगह पर।"}
-            </p>
-          </div>
-          <Link href="/" className="rounded-xl bg-slate-900 px-4 py-2 text-white hover:bg-slate-700">
-            {isEn ? "← Home" : "← होम"}
-          </Link>
-        </div>
+        <PageHeader
+          title={t.aiF2Title}
+          subtitle={isEn
+            ? "Every note you've saved from the Reader, in one polished place."
+            : "रीडर से सहेजे गए आपके सभी नोट्स, एक ही जगह पर।"}
+          homeLabel={isEn ? "Home" : "होम"}
+        />
 
         {usingDemo && (
-          <div className="mb-6 rounded-2xl bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-800 ring-1 ring-amber-200">
+          <InfoCard tone="amber" className="mb-6 py-3 text-sm font-semibold">
             {isEn
               ? "📌 Showing polished demo notes — select text in the Reader and tap 📝 Add Note to create your own."
               : "📌 डेमो नोट्स दिखाए जा रहे हैं — रीडर में टेक्स्ट चुनें और अपना नोट बनाने के लिए 📝 पर टैप करें।"}
-          </div>
+          </InfoCard>
         )}
 
         {/* 1. Notes overview cards */}
         <div className="mb-8 grid grid-cols-2 gap-4 md:grid-cols-4">
-          <div className="rounded-3xl bg-white p-6 shadow ring-1 ring-black/5">
-            <p className="text-slate-500">{isEn ? "Total Notes" : "कुल नोट्स"}</p>
-            <h2 className="mt-2 text-4xl font-bold text-slate-900">{stats.total}</h2>
-          </div>
-          <div className="rounded-3xl bg-white p-6 shadow ring-1 ring-black/5">
-            <p className="text-slate-500">{isEn ? "✨ AI-Improved" : "✨ एआई-सुधारित"}</p>
-            <h2 className="mt-2 text-4xl font-bold text-slate-900">{stats.aiImproved}</h2>
-          </div>
-          <div className="rounded-3xl bg-white p-6 shadow ring-1 ring-black/5">
-            <p className="text-slate-500">{isEn ? "📚 Books with Notes" : "📚 नोट्स वाली किताबें"}</p>
-            <h2 className="mt-2 text-4xl font-bold text-slate-900">{stats.booksWithNotes}</h2>
-          </div>
-          <div className="rounded-3xl bg-white p-6 shadow ring-1 ring-black/5">
-            <p className="text-slate-500">{isEn ? "🕐 Recent (7 days)" : "🕐 हाल के (7 दिन)"}</p>
-            <h2 className="mt-2 text-4xl font-bold text-slate-900">{stats.recent}</h2>
-          </div>
+          <StatCard label={isEn ? "Total Notes" : "कुल नोट्स"} value={stats.total} />
+          <StatCard label={isEn ? "✨ AI-Improved" : "✨ एआई-सुधारित"} value={stats.aiImproved} />
+          <StatCard label={isEn ? "📚 Books with Notes" : "📚 नोट्स वाली किताबें"} value={stats.booksWithNotes} />
+          <StatCard label={isEn ? "🕐 Recent (7 days)" : "🕐 हाल के (7 दिन)"} value={stats.recent} />
         </div>
 
         {/* 3. Search */}
-        <input
+        <SearchBar
           value={search}
-          onChange={(e) => setSearch(e.target.value)}
+          onChange={setSearch}
           placeholder={isEn ? "Search by book, highlighted text, or your note…" : "किताब, हाइलाइट किए गए टेक्स्ट या नोट से खोजें…"}
-          className="mb-4 w-full rounded-2xl border border-slate-200 bg-white p-4 shadow-sm outline-none focus:border-slate-400"
+          className="mb-4"
         />
 
         {/* 4. Filters */}
         <div className="mb-6 flex flex-wrap items-center gap-2">
-          {([
-            ["all", isEn ? "All Notes" : "सभी नोट्स"],
-            ["ai", isEn ? "✨ AI-Improved" : "✨ एआई-सुधारित"],
-            ["book", isEn ? "📚 By Book" : "📚 पुस्तक अनुसार"],
-            ["recent", isEn ? "🕐 Recent" : "🕐 हाल के"],
-          ] as [FilterTab, string][]).map(([key, label]) => (
-            <button
-              key={key}
-              onClick={() => setTab(key)}
-              className={`rounded-full px-4 py-2 text-sm font-bold transition-colors ${
-                tab === key ? "bg-slate-900 text-white" : "bg-white text-slate-600 ring-1 ring-slate-200 hover:bg-slate-100"
-              }`}
-            >
-              {label}
-            </button>
-          ))}
+          <FilterBar options={filterOptions} active={tab} onChange={setTab} />
           {tab === "book" && (
             <select
               value={bookFilter}
               onChange={(e) => setBookFilter(e.target.value)}
-              className="rounded-full bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm ring-1 ring-slate-200 outline-none"
+              className="rounded-full bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm ring-1 ring-slate-200 outline-none focus:ring-2 focus:ring-amber-400"
             >
               <option value="">{isEn ? "Choose a book…" : "एक किताब चुनें…"}</option>
               {uniqueBooks.map(b => (
@@ -287,9 +265,9 @@ export default function NotesPage() {
 
         {/* 2. Notes list */}
         {visibleNotes.length === 0 ? (
-          <div className="rounded-3xl bg-white p-10 text-center shadow-sm ring-1 ring-black/5">
+          <InfoCard className="p-10 text-center">
             <h2 className="text-xl font-semibold text-slate-800">{t.searchNoResults}</h2>
-          </div>
+          </InfoCard>
         ) : (
           <div className="grid gap-4">
             {visibleNotes.map((n) => {
@@ -300,13 +278,13 @@ export default function NotesPage() {
               const isDemo = usingDemo;
 
               return (
-                <div key={n.id} className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+                <InfoCard key={n.id} className="p-5">
                   <div className="mb-2 flex flex-wrap items-start justify-between gap-3">
                     <div>
                       <div className="flex flex-wrap items-center gap-2">
                         <h2 className="text-lg font-bold text-slate-900">{book?.title ?? n.bookId}</h2>
                         {n.aiImproved && (
-                          <span className="rounded-full bg-purple-100 px-2.5 py-0.5 text-[11px] font-bold text-purple-700">
+                          <span className="rounded-full bg-blue-100 px-2.5 py-0.5 text-[11px] font-bold text-blue-700">
                             ✨ {isEn ? "AI-Improved" : "एआई-सुधारित"}
                           </span>
                         )}
@@ -337,21 +315,15 @@ export default function NotesPage() {
                         value={editDraft}
                         onChange={(e) => setEditDraft(e.target.value)}
                         rows={4}
-                        className="w-full rounded-2xl border border-slate-300 p-3 text-sm outline-none focus:border-slate-500"
+                        className="w-full rounded-2xl border border-slate-300 p-3 text-sm outline-none focus:border-transparent focus:ring-2 focus:ring-amber-400"
                       />
                       <div className="mt-2 flex gap-2">
-                        <button
-                          onClick={() => saveEdit(n.id)}
-                          className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-bold text-white hover:bg-slate-700"
-                        >
+                        <AppButton onClick={() => saveEdit(n.id)} size="sm">
                           {isEn ? "Save" : "सहेजें"}
-                        </button>
-                        <button
-                          onClick={() => setEditingId(null)}
-                          className="rounded-xl bg-slate-100 px-4 py-2 text-sm font-bold text-slate-600 hover:bg-slate-200"
-                        >
+                        </AppButton>
+                        <AppButton onClick={() => setEditingId(null)} variant="secondary" size="sm">
                           {isEn ? "Cancel" : "रद्द करें"}
-                        </button>
+                        </AppButton>
                       </div>
                     </div>
                   ) : (
@@ -360,31 +332,30 @@ export default function NotesPage() {
 
                   {!isEditing && (
                     <div className="mt-4 flex flex-wrap gap-2">
-                      <Link
-                        href={`/reader-premium?book=${n.bookId}`}
-                        className="rounded-xl bg-black px-3 py-2 text-sm font-semibold text-white hover:bg-slate-800"
-                      >
+                      <AppButton href={`/reader-premium?book=${n.bookId}`} size="sm">
                         📖 {isEn ? "Open Page" : "पेज खोलें"}
-                      </Link>
-                      <button
+                      </AppButton>
+                      <AppButton
                         onClick={() => startEdit(n)}
                         disabled={isDemo}
                         title={isDemo ? (isEn ? "Demo note — not editable" : "डेमो नोट — संपादन योग्य नहीं") : undefined}
-                        className="rounded-xl border px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+                        variant="secondary"
+                        size="sm"
                       >
                         ✏️ {isEn ? "Edit Note" : "नोट संपादित करें"}
-                      </button>
-                      <button
+                      </AppButton>
+                      <AppButton
                         onClick={() => deleteNote(n.id)}
                         disabled={isDemo}
                         title={isDemo ? (isEn ? "Demo note — not deletable" : "डेमो नोट — हटाने योग्य नहीं") : undefined}
-                        className="rounded-xl bg-red-50 px-3 py-2 text-sm font-semibold text-red-600 hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-40"
+                        variant="danger"
+                        size="sm"
                       >
                         🗑 {isEn ? "Delete" : "हटाएं"}
-                      </button>
+                      </AppButton>
                     </div>
                   )}
-                </div>
+                </InfoCard>
               );
             })}
           </div>

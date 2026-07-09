@@ -222,12 +222,12 @@ function ReadPageContent() {
   // ── No book loaded yet: choose a library book or upload one ──────────
   if (!pdfSource) {
     return (
-      <main className="min-h-screen bg-slate-100 p-6">
+      <main className="min-h-screen bg-[radial-gradient(circle_at_top,#fff8e8_0%,#f3e6c8_45%,#eaddc0_100%)] p-6">
         <div className="mx-auto max-w-4xl">
           <PageHeader title={t.readerTagline} badge={t.readerBadge} homeLabel={t.commonHome} />
 
           <InfoCard>
-            <h2 className="text-lg font-bold text-slate-900">{t.readerChooseBook}</h2>
+            <h2 className="text-lg font-black text-slate-950">{t.readerChooseBook}</h2>
             {/* Equal-height, aligned book cards — flex column with the
                 button pinned via mt-auto so every card's CTA lines up on
                 the same row regardless of title length. */}
@@ -240,7 +240,7 @@ function ReadPageContent() {
                 >
                   <p className="font-bold text-slate-900">{b.title}</p>
                   {b.author && <p className="mt-1 text-xs text-slate-500">{b.author}</p>}
-                  <span className="mt-auto pt-3 inline-block rounded-full bg-slate-900 px-4 py-1.5 text-xs font-bold text-white">
+                  <span className="mt-auto pt-3 inline-block rounded-full bg-slate-950 px-4 py-1.5 text-xs font-bold text-white">
                     📖 {t.readerReadNormally}
                   </span>
                 </Link>
@@ -250,10 +250,10 @@ function ReadPageContent() {
 
           <div className="mt-6 grid gap-6 sm:grid-cols-2">
             <InfoCard className="flex flex-col">
-              <h2 className="text-lg font-bold text-slate-900">{t.readerUploadNormalTitle}</h2>
+              <h2 className="text-lg font-black text-slate-950">{t.readerUploadNormalTitle}</h2>
               <p className="mt-2 text-sm text-slate-500">{t.readerUploadNormalDesc}</p>
               <label className="mt-5 inline-block w-fit cursor-pointer">
-                <span className="inline-block rounded-2xl bg-slate-900 px-6 py-3 text-sm font-bold text-white hover:bg-slate-800">
+                <span className="inline-block rounded-2xl bg-slate-950 px-6 py-3 text-sm font-bold text-white hover:bg-slate-800">
                   {t.readerChoosePdf}
                 </span>
                 <input type="file" accept="application/pdf" onChange={handleNormalUpload} className="hidden" />
@@ -261,10 +261,10 @@ function ReadPageContent() {
             </InfoCard>
 
             <InfoCard className="flex flex-col">
-              <h2 className="text-lg font-bold text-slate-900">{t.readerUploadAiTitle}</h2>
+              <h2 className="text-lg font-black text-slate-950">{t.readerUploadAiTitle}</h2>
               <p className="mt-2 text-sm text-slate-500">{t.readerUploadAiDesc}</p>
               <label className="mt-5 inline-block w-fit cursor-pointer">
-                <span className="inline-block rounded-2xl bg-blue-600 px-6 py-3 text-sm font-bold text-white hover:bg-blue-700">
+                <span className="inline-block rounded-2xl bg-orange-600 px-6 py-3 text-sm font-bold text-white hover:bg-orange-700">
                   {aiUploadStatus === "preparing" ? t.readerPreparing : t.readerChoosePdf}
                 </span>
                 <input type="file" accept="application/pdf" onChange={handleAiUpload} disabled={aiUploadStatus === "preparing"} className="hidden" />

@@ -42,15 +42,15 @@ export default function SignInPage() {
   }
 
   return (
-    <main className="min-h-screen bg-slate-100 flex items-center justify-center p-8">
-      <div className="bg-white rounded-3xl p-10 shadow-2xl w-full max-w-xl">
-        <Link href="/" className="text-blue-600 font-semibold">
+    <main className="min-h-screen bg-[radial-gradient(circle_at_top,#fff8e8_0%,#f3e6c8_45%,#eaddc0_100%)] flex items-center justify-center p-8">
+      <div className="bg-white rounded-[2rem] p-10 shadow-[0_20px_60px_rgba(75,45,12,0.12)] ring-1 ring-black/5 w-full max-w-xl">
+        <Link href="/" className="text-blue-600 font-semibold hover:text-blue-700">
           ← {t.navLibrary}
         </Link>
 
-        <h1 className="text-4xl font-bold mt-8">{t.signIn} — NDL AI</h1>
+        <h1 className="text-4xl font-black text-slate-950 mt-8">{t.signIn} — NDL AI</h1>
 
-        <p className="text-slate-500 mt-3">
+        <p className="text-slate-600 mt-3">
           {t.chatSubtitle}
         </p>
 
@@ -58,7 +58,7 @@ export default function SignInPage() {
           value={userId}
           onChange={(e) => setUserId(e.target.value)}
           placeholder={t.searchPlaceholder.includes("Search") ? "User ID" : "उपयोगकर्ता आईडी"}
-          className="w-full border rounded-2xl px-5 py-4 mt-8"
+          className="w-full border border-slate-200 rounded-2xl px-5 py-4 mt-8 focus:outline-none focus:ring-2 focus:ring-amber-400"
         />
 
         <input
@@ -66,19 +66,19 @@ export default function SignInPage() {
           value={password}
           onChange={(e) => setPassword(e.target.value)}
           placeholder={t.searchPlaceholder.includes("Search") ? "Password" : "पासवर्ड"}
-          className="w-full border rounded-2xl px-5 py-4 mt-4"
+          className="w-full border border-slate-200 rounded-2xl px-5 py-4 mt-4 focus:outline-none focus:ring-2 focus:ring-amber-400"
         />
 
         {error && <p className="text-red-600 text-sm mt-3">{error}</p>}
 
         <button
           onClick={signIn}
-          className="w-full bg-black text-white py-4 rounded-2xl mt-6 font-semibold"
+          className="w-full bg-orange-600 text-white py-4 rounded-2xl mt-6 font-bold shadow-md shadow-orange-500/25 transition hover:bg-orange-700"
         >
           {t.signIn}
         </button>
 
-        <div className="mt-8 bg-blue-50 border border-blue-200 rounded-2xl p-5 text-sm">
+        <div className="mt-8 bg-blue-50 ring-1 ring-blue-200 rounded-2xl p-5 text-sm">
           <p className="font-bold text-blue-900">Demo Credentials</p>
           <p className="mt-2">Student: student / student123</p>
           <p>Teacher: teacher / teacher123</p>

@@ -238,7 +238,7 @@ export default function MyBooksPage() {
 
   if (!mounted) {
     return (
-      <main className="min-h-screen bg-slate-50 p-6">
+      <main className="min-h-screen bg-[radial-gradient(circle_at_top,#fff8e8_0%,#f3e6c8_45%,#eaddc0_100%)] p-6">
         <div className="mx-auto max-w-6xl animate-pulse text-sm font-semibold text-slate-400">
           {t.commonLoading}
         </div>
@@ -247,7 +247,7 @@ export default function MyBooksPage() {
   }
 
   return (
-    <main className="min-h-screen bg-slate-50 p-6">
+    <main className="min-h-screen bg-[radial-gradient(circle_at_top,#fff8e8_0%,#f3e6c8_45%,#eaddc0_100%)] p-6">
       <div className="mx-auto max-w-6xl">
 
         <PageHeader title={t.myBooksTitle} subtitle={t.myBooksSubtitle} homeLabel={t.commonHome} />
@@ -277,7 +277,7 @@ export default function MyBooksPage() {
             <select
               value={languageFilter}
               onChange={(e) => setLanguageFilter(e.target.value)}
-              className="rounded-2xl border border-slate-200 bg-white px-4 py-3.5 text-sm font-semibold text-slate-700 shadow-sm outline-none"
+              className="rounded-2xl border border-slate-200 bg-white px-4 py-3.5 text-sm font-semibold text-slate-700 shadow-sm outline-none focus:border-transparent focus:ring-2 focus:ring-amber-400"
             >
               <option value="">{t.commonAllLanguages}</option>
               {uniqueLanguages.map(l => <option key={l} value={l}>{l}</option>)}
@@ -316,7 +316,7 @@ export default function MyBooksPage() {
                           <span>{t.progress}</span><span>{p.pct}%</span>
                         </div>
                         <div className="h-2 rounded-full bg-slate-100">
-                          <div className="h-2 rounded-full bg-blue-600" style={{ width: `${p.pct}%` }} />
+                          <div className="h-2 rounded-full bg-amber-500" style={{ width: `${p.pct}%` }} />
                         </div>
                       </div>
                     )}

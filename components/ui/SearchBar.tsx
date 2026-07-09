@@ -13,7 +13,7 @@ export interface SearchBarProps {
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
-        className={`w-full rounded-2xl border border-slate-200 bg-white p-3.5 text-sm shadow-sm outline-none focus:border-slate-400 ${className}`}
+        className={`w-full rounded-2xl border border-slate-200 bg-white p-3.5 text-sm shadow-sm outline-none focus:border-transparent focus:ring-2 focus:ring-amber-400 ${className}`}
       />
     );
   }

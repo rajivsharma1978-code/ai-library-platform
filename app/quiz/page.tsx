@@ -1,10 +1,12 @@
 "use client";
 
-import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { UI_TEXT } from "@/lib/i18n";
 import { useLanguage } from "@/lib/useLanguage";
 import { directorBooks } from "@/lib/directorBooks";
+import PageHeader from "@/components/ui/PageHeader";
+import InfoCard from "@/components/ui/InfoCard";
+import FilterBar from "@/components/ui/FilterBar";
 
 // ══════════════════════════════════════════════════════════════════════
 // Data layer — read-only, mirrors Reader/Study Workspace shapes. Not
@@ -384,7 +386,7 @@ export default function QuizPage() {
 
   if (!mounted) {
     return (
-      <main className="min-h-screen bg-slate-50 p-6">
+      <main className="min-h-screen bg-[radial-gradient(circle_at_top,#fff8e8_0%,#f3e6c8_45%,#eaddc0_100%)] p-6">
         <div className="mx-auto max-w-4xl animate-pulse text-sm font-semibold text-slate-400">
           {isEn ? "Loading quiz workspace…" : "क्विज़ वर्कस्पेस लोड हो रहा है…"}
         </div>
@@ -395,55 +397,48 @@ export default function QuizPage() {
   const current = questions[cursor];
   const currentAnswer = answers[cursor];
 
+  const sourceOptions: { key: QuizSourceKey; label: string }[] = [
+    { key: "all", label: isEn ? "📚 Entire Study Material" : "📚 संपूर्ण अध्ययन सामग्री" },
+    { key: "highlights", label: isEn ? "⭐ Highlights" : "⭐ हाइलाइट्स" },
+    { key: "notes", label: isEn ? "📝 Notes" : "📝 नोट्स" },
+    { key: "current", label: isEn ? "📖 Current Book" : "📖 वर्तमान पुस्तक" },
+  ];
+  const difficultyOptions: { key: Difficulty; label: string }[] = [
+    { key: "easy", label: isEn ? "🟢 Easy" : "🟢 आसान" },
+    { key: "medium", label: isEn ? "🟡 Medium" : "🟡 मध्यम" },
+    { key: "hard", label: isEn ? "🔴 Hard" : "🔴 कठिन" },
+  ];
+
   return (
-    <main className="min-h-screen bg-slate-50 p-6">
+    <main className="min-h-screen bg-[radial-gradient(circle_at_top,#fff8e8_0%,#f3e6c8_45%,#eaddc0_100%)] p-6">
       <div className="mx-auto max-w-4xl">
-        <div className="mb-6 flex items-center justify-between">
-          <div>
-            <h1 className="text-4xl font-bold text-slate-900">{isEn ? "Quiz" : "क्विज़"}</h1>
-            <p className="mt-2 text-slate-600">
-              {isEn ? "A premium AI-powered assessment, built from your study material." : "आपकी अध्ययन सामग्री से बना एक प्रीमियम एआई-संचालित मूल्यांकन।"}
-            </p>
-          </div>
-          <Link href="/" className="rounded-xl bg-black px-4 py-2 text-white">{isEn ? "← Home" : "← होम"}</Link>
-        </div>
+        <PageHeader
+          title={isEn ? "Quiz" : "क्विज़"}
+          subtitle={isEn ? "A premium AI-powered assessment, built from your study material." : "आपकी अध्ययन सामग्री से बना एक प्रीमियम एआई-संचालित मूल्यांकन।"}
+          homeLabel={isEn ? "Home" : "होम"}
+        />
 
         {/* ── SETUP ─────────────────────────────────────────────────── */}
         {stage === "setup" && (
-          <div className="rounded-3xl bg-white p-8 shadow-lg ring-1 ring-black/5">
+          <InfoCard className="p-8">
             {studyItems.length === 0 && (
-              <div className="mb-6 rounded-2xl bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-800 ring-1 ring-amber-200">
+              <InfoCard tone="amber" className="mb-6 py-3 text-sm font-semibold">
                 {isEn
                   ? "📌 No study data yet — Start Quiz will show a polished demo quiz. Highlight text or add notes in the Reader to build your own."
                   : "📌 अभी तक कोई अध्ययन डेटा नहीं — क्विज़ शुरू करने पर डेमो क्विज़ दिखेगा। अपनी खुद की सामग्री बनाने के लिए रीडर में हाइलाइट करें या नोट्स जोड़ें।"}
-              </div>
+              </InfoCard>
             )}
 
-            <h2 className="text-lg font-black text-slate-900">{isEn ? "Quiz Source" : "क्विज़ स्रोत"}</h2>
-            <div className="mt-3 flex flex-wrap gap-2">
-              {([
-                ["all", isEn ? "📚 Entire Study Material" : "📚 संपूर्ण अध्ययन सामग्री"],
-                ["highlights", isEn ? "⭐ Highlights" : "⭐ हाइलाइट्स"],
-                ["notes", isEn ? "📝 Notes" : "📝 नोट्स"],
-                ["current", isEn ? "📖 Current Book" : "📖 वर्तमान पुस्तक"],
-              ] as [QuizSourceKey, string][]).map(([key, label]) => (
-                <button
-                  key={key}
-                  onClick={() => setSourceKey(key)}
-                  className={`rounded-full px-4 py-2 text-sm font-bold transition-colors ${
-                    sourceKey === key ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"
-                  }`}
-                >
-                  {label}
-                </button>
-              ))}
+            <h2 className="text-lg font-black text-slate-950">{isEn ? "Quiz Source" : "क्विज़ स्रोत"}</h2>
+            <div className="mt-3">
+              <FilterBar options={sourceOptions} active={sourceKey} onChange={setSourceKey} />
             </div>
             {sourceKey === "current" && catalogBooks.length > 0 && (
               <>
                 <select
                   value={currentBookId || catalogBooks[0].id}
                   onChange={(e) => setCurrentBookId(e.target.value)}
-                  className="mt-3 rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 shadow-sm outline-none"
+                  className="mt-3 rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 shadow-sm outline-none focus:ring-2 focus:ring-amber-400"
                 >
                   {catalogBooks.map(b => <option key={b.id} value={b.id}>{b.title}</option>)}
                 </select>
@@ -457,27 +452,13 @@ export default function QuizPage() {
               </>
             )}
 
-            <h2 className="mt-8 text-lg font-black text-slate-900">{isEn ? "Difficulty" : "कठिनाई"}</h2>
-            <div className="mt-3 flex flex-wrap gap-2">
-              {([
-                ["easy", isEn ? "🟢 Easy" : "🟢 आसान"],
-                ["medium", isEn ? "🟡 Medium" : "🟡 मध्यम"],
-                ["hard", isEn ? "🔴 Hard" : "🔴 कठिन"],
-              ] as [Difficulty, string][]).map(([key, label]) => (
-                <button
-                  key={key}
-                  onClick={() => setDifficulty(key)}
-                  className={`rounded-full px-4 py-2 text-sm font-bold transition-colors ${
-                    difficulty === key ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"
-                  }`}
-                >
-                  {label}
-                </button>
-              ))}
+            <h2 className="mt-8 text-lg font-black text-slate-950">{isEn ? "Difficulty" : "कठिनाई"}</h2>
+            <div className="mt-3">
+              <FilterBar options={difficultyOptions} active={difficulty} onChange={setDifficulty} />
             </div>
 
             <label className="mt-8 flex items-center gap-3">
-              <input type="checkbox" checked={timerEnabled} onChange={(e) => setTimerEnabled(e.target.checked)} className="h-5 w-5 rounded" />
+              <input type="checkbox" checked={timerEnabled} onChange={(e) => setTimerEnabled(e.target.checked)} className="h-5 w-5 rounded accent-amber-500" />
               <span className="text-sm font-semibold text-slate-700">
                 {isEn ? `⏱ Timer (${TIMER_SECONDS_PER_QUESTION}s per question)` : `⏱ टाइमर (${TIMER_SECONDS_PER_QUESTION} सेकंड प्रति प्रश्न)`}
               </span>
@@ -485,20 +466,20 @@ export default function QuizPage() {
 
             <button
               onClick={() => startQuiz()}
-              className="mt-8 w-full rounded-2xl bg-blue-600 px-8 py-4 text-lg font-bold text-white shadow hover:bg-blue-700"
+              className="mt-8 w-full rounded-2xl bg-orange-600 px-8 py-4 text-lg font-bold text-white shadow-md shadow-orange-500/25 hover:bg-orange-700"
             >
               {isEn ? "🚀 Start Quiz" : "🚀 क्विज़ शुरू करें"}
             </button>
-          </div>
+          </InfoCard>
         )}
 
         {/* ── TAKING ────────────────────────────────────────────────── */}
         {stage === "taking" && current && (
           <div>
             {usingDemo && (
-              <div className="mb-4 rounded-2xl bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-800 ring-1 ring-amber-200">
+              <InfoCard tone="amber" className="mb-4 py-3 text-sm font-semibold">
                 {isEn ? "📌 Demo quiz — not enough study material for a full quiz from this source yet." : "📌 डेमो क्विज़ — इस स्रोत से पूर्ण क्विज़ हेतु अभी पर्याप्त सामग्री नहीं है।"}
-              </div>
+              </InfoCard>
             )}
             <div className="mb-3 flex items-center justify-between text-xs font-bold text-slate-400">
               <span>{isEn ? "Question" : "प्रश्न"} {cursor + 1} {isEn ? "of" : "में से"} {questions.length}</span>
@@ -509,7 +490,7 @@ export default function QuizPage() {
               )}
             </div>
 
-            <div className="rounded-3xl bg-white p-8 shadow-lg ring-1 ring-black/5">
+            <InfoCard className="p-8">
               <p className="text-xs font-semibold text-slate-400">📖 {current.item.bookTitle}{current.item.page ? ` · ${isEn ? "Page" : "पृष्ठ"} ${current.item.page}` : ""}</p>
 
               <QuestionBody
@@ -518,18 +499,18 @@ export default function QuizPage() {
                 onChange={(a) => updateAnswer(cursor, a)}
                 isEn={isEn}
               />
-            </div>
+            </InfoCard>
 
             <div className="mt-5 flex items-center justify-between gap-3">
               <button onClick={goPrev} disabled={cursor === 0} className="rounded-full bg-slate-200 px-6 py-2.5 text-sm font-bold text-slate-700 disabled:opacity-30">
                 ← {isEn ? "Previous" : "पिछला"}
               </button>
               {cursor < questions.length - 1 ? (
-                <button onClick={goNext} className="rounded-full bg-slate-900 px-6 py-2.5 text-sm font-bold text-white">
+                <button onClick={goNext} className="rounded-full bg-slate-950 px-6 py-2.5 text-sm font-bold text-white hover:bg-slate-800">
                   {isEn ? "Next" : "अगला"} →
                 </button>
               ) : (
-                <button onClick={submitQuiz} className="rounded-full bg-emerald-600 px-8 py-2.5 text-sm font-bold text-white hover:bg-emerald-700">
+                <button onClick={submitQuiz} className="rounded-full bg-orange-600 px-8 py-2.5 text-sm font-bold text-white hover:bg-orange-700">
                   ✅ {isEn ? "Submit" : "सबमिट करें"}
                 </button>
               )}
@@ -540,22 +521,22 @@ export default function QuizPage() {
         {/* ── RESULTS ───────────────────────────────────────────────── */}
         {stage === "results" && (
           <div>
-            <div className="rounded-3xl bg-gradient-to-r from-indigo-700 to-purple-700 p-8 text-center text-white shadow-xl">
-              <p className="text-sm font-bold uppercase tracking-widest text-indigo-200">{isEn ? "Your Score" : "आपका स्कोर"}</p>
+            <InfoCard tone="dark" className="p-8 text-center">
+              <p className="text-sm font-bold uppercase tracking-widest text-slate-400">{isEn ? "Your Score" : "आपका स्कोर"}</p>
               <h2 className="mt-2 text-5xl font-black">{score} / {questions.length}</h2>
-              <p className="mt-2 text-lg font-bold text-indigo-100">{percentage}%</p>
-            </div>
+              <p className="mt-2 text-lg font-bold text-amber-400">{percentage}%</p>
+            </InfoCard>
 
             <div className="mt-6 flex flex-wrap gap-3">
-              <button onClick={() => startQuiz()} className="rounded-full bg-blue-600 px-6 py-2.5 text-sm font-bold text-white hover:bg-blue-700">
+              <button onClick={() => startQuiz()} className="rounded-full bg-slate-950 px-6 py-2.5 text-sm font-bold text-white hover:bg-slate-800">
                 🔄 {isEn ? "Generate New Quiz" : "नई क्विज़ बनाएं"}
               </button>
               {score < questions.length && (
-                <button onClick={retryIncorrect} className="rounded-full bg-red-600 px-6 py-2.5 text-sm font-bold text-white hover:bg-red-700">
+                <button onClick={retryIncorrect} className="rounded-full bg-white px-6 py-2.5 text-sm font-bold text-slate-700 ring-1 ring-slate-200 hover:bg-slate-50">
                   🔁 {isEn ? "Retry Incorrect" : "गलत प्रश्न फिर से करें"}
                 </button>
               )}
-              <button onClick={() => setStage("setup")} className="rounded-full bg-slate-200 px-6 py-2.5 text-sm font-bold text-slate-700 hover:bg-slate-300">
+              <button onClick={() => setStage("setup")} className="rounded-full bg-white px-6 py-2.5 text-sm font-bold text-slate-700 ring-1 ring-slate-200 hover:bg-slate-50">
                 ⚙️ {isEn ? "Change Settings" : "सेटिंग्स बदलें"}
               </button>
             </div>
@@ -564,7 +545,7 @@ export default function QuizPage() {
               {questions.map((q, i) => {
                 const correct = isCorrect(q, answers[i]);
                 return (
-                  <div key={q.id} className={`rounded-3xl bg-white p-6 shadow ring-1 ${correct ? "ring-emerald-200" : "ring-red-200"}`}>
+                  <div key={q.id} className={`rounded-3xl bg-white p-6 shadow-[0_20px_60px_rgba(75,45,12,0.10)] ring-1 ${correct ? "ring-emerald-200" : "ring-red-200"}`}>
                     <div className="flex items-start justify-between gap-3">
                       <p className="text-xs font-semibold text-slate-400">📖 {q.item.bookTitle}{q.item.page ? ` · ${isEn ? "Page" : "पृष्ठ"} ${q.item.page}` : ""}</p>
                       <span className={`flex-shrink-0 rounded-full px-3 py-1 text-xs font-bold ${correct ? "bg-emerald-100 text-emerald-700" : "bg-red-100 text-red-700"}`}>
@@ -582,12 +563,12 @@ export default function QuizPage() {
                           <button
                             onClick={() => explainAnswer(q)}
                             disabled={explaining === q.id}
-                            className="rounded-full bg-purple-100 px-4 py-1.5 text-xs font-bold text-purple-700 hover:bg-purple-200 disabled:opacity-50"
+                            className="rounded-full bg-blue-100 px-4 py-1.5 text-xs font-bold text-blue-700 hover:bg-blue-200 disabled:opacity-50"
                           >
                             {explaining === q.id ? (isEn ? "Thinking…" : "सोच रहा है…") : `✨ ${isEn ? "AI Explanation" : "एआई स्पष्टीकरण"}`}
                           </button>
                         ) : (
-                          <p className="rounded-2xl bg-purple-50 p-3 text-sm text-purple-900">{explanations[q.id]}</p>
+                          <p className="rounded-2xl bg-blue-50 p-3 text-sm text-blue-900">{explanations[q.id]}</p>
                         )}
                       </div>
                     )}

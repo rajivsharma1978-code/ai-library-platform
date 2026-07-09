@@ -293,7 +293,7 @@ export default function MyLibraryPage() {
 
   if (!mounted) {
     return (
-      <main className="min-h-screen bg-slate-50 p-6">
+      <main className="min-h-screen bg-[radial-gradient(circle_at_top,#fff8e8_0%,#f3e6c8_45%,#eaddc0_100%)] p-6">
         <div className="mx-auto max-w-6xl animate-pulse text-sm font-semibold text-slate-400">
           {t.commonLoading}
         </div>
@@ -302,7 +302,7 @@ export default function MyLibraryPage() {
   }
 
   return (
-    <main className="min-h-screen bg-slate-50 p-6">
+    <main className="min-h-screen bg-[radial-gradient(circle_at_top,#fff8e8_0%,#f3e6c8_45%,#eaddc0_100%)] p-6">
       <div className="mx-auto max-w-6xl">
 
         <PageHeader title={t.myLibraryTitle} subtitle={t.myLibrarySubtitle} homeLabel={t.commonHome} />
@@ -326,7 +326,7 @@ export default function MyLibraryPage() {
         {/* 2. Continue Reading */}
         <InfoCard className="mb-10">
           <div className="mb-5 flex items-center justify-between">
-            <h2 className="text-2xl font-bold">{t.continueReading}</h2>
+            <h2 className="text-2xl font-black text-slate-950">{t.continueReading}</h2>
             {usingDemoContinueReading && <span className="rounded-full bg-amber-100 px-3 py-1 text-[10px] font-bold uppercase text-amber-700">{t.commonDemo}</span>}
           </div>
           <div className="grid gap-4 md:grid-cols-3">
@@ -370,7 +370,7 @@ export default function MyLibraryPage() {
             bottom via mt-auto so every card's buttons line up regardless
             of title/author length. */}
         <InfoCard>
-          <h2 className="mb-6 text-2xl font-bold">📚 {t.myLibraryBookshelf}</h2>
+          <h2 className="mb-6 text-2xl font-black text-slate-950">📚 {t.myLibraryBookshelf}</h2>
 
           {visibleBooks.length === 0 ? (
             <p className="text-slate-600">{t.searchNoResults}</p>
@@ -392,13 +392,13 @@ export default function MyLibraryPage() {
 
                     <div className="mt-2 flex items-center gap-1.5 text-xs">
                       {hasHighlights(book.id) && <span className="rounded-full bg-amber-100 px-2 py-0.5 font-bold text-amber-700">⭐</span>}
-                      {hasNotes(book.id) && <span className="rounded-full bg-purple-100 px-2 py-0.5 font-bold text-purple-700">📝</span>}
+                      {hasNotes(book.id) && <span className="rounded-full bg-blue-100 px-2 py-0.5 font-bold text-blue-700">📝</span>}
                       {hasBookmark(book.id) && <span className="rounded-full bg-slate-100 px-2 py-0.5 font-bold text-slate-600">🔖</span>}
                     </div>
 
                     {p && (
                       <div className="mt-2 h-2 rounded-full bg-slate-100">
-                        <div className="h-2 rounded-full bg-blue-600" style={{ width: `${pct}%` }} />
+                        <div className="h-2 rounded-full bg-amber-500" style={{ width: `${pct}%` }} />
                       </div>
                     )}
 
