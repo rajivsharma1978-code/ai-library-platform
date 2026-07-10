@@ -8,6 +8,7 @@ import { trackAIUsage, logActivity } from "@/components/admin/adminData";
 import PageHeader from "@/components/ui/PageHeader";
 import InfoCard from "@/components/ui/InfoCard";
 import FilterBar from "@/components/ui/FilterBar";
+import AccessibilityToolbar from "@/components/ui/AccessibilityToolbar";
 
 // ══════════════════════════════════════════════════════════════════════
 // Data layer — read-only, mirrors Reader/Study Workspace shapes. Not
@@ -582,6 +583,7 @@ export default function QuizPage() {
           </div>
         )}
       </div>
+      <AccessibilityToolbar />
     </main>
   );
 }

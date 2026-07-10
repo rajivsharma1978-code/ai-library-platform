@@ -3,6 +3,7 @@
 import { UI_TEXT } from "@/lib/i18n";
 import { useLanguage } from "@/lib/useLanguage";
 import PageHeader from "@/components/ui/PageHeader";
+import AccessibilityToolbar from "@/components/ui/AccessibilityToolbar";
 
 const categories = [
   "Artificial Intelligence",
@@ -128,6 +129,7 @@ export default function ExplorePage() {
           </div>
         </section>
       </div>
+      <AccessibilityToolbar />
     </main>
   );
 }

@@ -10,6 +10,7 @@ import InfoCard from "@/components/ui/InfoCard";
 import SearchBar from "@/components/ui/SearchBar";
 import FilterBar from "@/components/ui/FilterBar";
 import AppButton from "@/components/ui/AppButton";
+import AccessibilityToolbar from "@/components/ui/AccessibilityToolbar";
 
 // ── Local, read-only types mirroring the Reader's Study Workspace data
 // shapes (ndl_notes / ndl_highlights / ndl_bookmarks). Deliberately NOT
@@ -361,6 +362,7 @@ export default function NotesPage() {
           </div>
         )}
       </div>
+      <AccessibilityToolbar />
     </main>
   );
 }

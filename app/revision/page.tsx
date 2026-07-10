@@ -8,6 +8,7 @@ import { trackAIUsage, logActivity, type AIFeature } from "@/components/admin/ad
 import PageHeader from "@/components/ui/PageHeader";
 import StatCard from "@/components/ui/StatCard";
 import InfoCard from "@/components/ui/InfoCard";
+import AccessibilityToolbar from "@/components/ui/AccessibilityToolbar";
 
 const ACTION_TO_AI_FEATURE: Record<RevisionAction, AIFeature> = {
   notes: "revision", quiz: "quiz", flashcards: "flashcards", mcqs: "quiz",
@@ -371,6 +372,7 @@ export default function RevisionPage() {
           </div>
         </div>
       </div>
+      <AccessibilityToolbar />
     </main>
   );
 }

@@ -11,6 +11,7 @@ import SearchBar from "@/components/ui/SearchBar";
 import FilterBar from "@/components/ui/FilterBar";
 import AppButton from "@/components/ui/AppButton";
 import QuickLinks from "@/components/ui/QuickLinks";
+import AccessibilityToolbar from "@/components/ui/AccessibilityToolbar";
 
 // ── Local, read-only types mirroring Reader/Study Workspace/My Space/My
 // Library data shapes. This page is self-contained on purpose — it does
@@ -346,6 +347,7 @@ export default function MyBooksPage() {
         {/* Quick links */}
         <QuickLinks title={t.myBooksQuickLinks} links={quickLinks} className="mt-10" />
       </div>
+      <AccessibilityToolbar />
     </main>
   );
 }

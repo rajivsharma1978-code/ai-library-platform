@@ -9,6 +9,7 @@ import { useLanguage } from "@/lib/useLanguage";
 import PageHeader from "@/components/ui/PageHeader";
 import AppButton from "@/components/ui/AppButton";
 import InfoCard from "@/components/ui/InfoCard";
+import AccessibilityToolbar from "@/components/ui/AccessibilityToolbar";
 
 // ══════════════════════════════════════════════════════════════════════
 // Normal PDF Reader — /read
@@ -171,6 +172,81 @@ function ReadPageContent() {
   function zoomIn() { setFitMode("custom"); setZoom(z => Math.min(3, z + 0.15)); }
   function zoomOut() { setFitMode("custom"); setZoom(z => Math.max(0.3, z - 0.15)); }
 
+  // ── Voice commands ────────────────────────────────────────────────
+  // This reader has no extracted page text (pages are canvas-rendered by
+  // pdf.js, not a text layer), so "Read this page" speaks a short,
+  // deterministic description instead of dumping arbitrary DOM text —
+  // a separate, purpose-built utility from AccessibilityToolbar's own
+  // generic Read Aloud, which keeps working unchanged.
+  const [voiceSpeaking, setVoiceSpeaking] = useState(false);
+  function voiceReadPage() {
+    if (typeof window === "undefined") return;
+    const utt = new SpeechSynthesisUtterance(
+      `Reading page ${page} of ${numPages || "unknown"} of ${displayTitle || "this book"}.`
+    );
+    utt.rate = 0.95;
+    utt.onend = () => setVoiceSpeaking(false);
+    utt.onerror = () => setVoiceSpeaking(false);
+    window.speechSynthesis.cancel();
+    window.speechSynthesis.speak(utt);
+    setVoiceSpeaking(true);
+  }
+  function voicePauseReading() { window.speechSynthesis?.pause(); }
+  function voiceResumeReading() { window.speechSynthesis?.resume(); }
+  function voiceStopReading() { window.speechSynthesis?.cancel(); setVoiceSpeaking(false); }
+
+  // Ref kept fresh every render so the ONE voice-command listener below
+  // (registered once, on mount) always acts on the LATEST page/zoom/etc
+  // instead of whatever was current when the listener was first attached
+  // — the same stale-closure pitfall fixed in AccessibilityToolbar.
+  const voiceStateRef = useRef({
+    page, numPages, isTransitioning, voiceSpeaking,
+    goNext, goPrev, changePage, zoomIn, zoomOut, setFitMode, toggleFullscreen,
+    voiceReadPage, voicePauseReading, voiceResumeReading, voiceStopReading,
+  });
+  useEffect(() => {
+    voiceStateRef.current = {
+      page, numPages, isTransitioning, voiceSpeaking,
+      goNext, goPrev, changePage, zoomIn, zoomOut, setFitMode, toggleFullscreen,
+      voiceReadPage, voicePauseReading, voiceResumeReading, voiceStopReading,
+    };
+  });
+
+  // VoiceAssistant (rendered inside AccessibilityToolbar) never imports
+  // this page's internals — it only ever broadcasts a "ndl-voice-command"
+  // CustomEvent. This is the ONLY place that turns that event into calls
+  // to this reader's own existing goNext/goPrev/zoom/fullscreen functions.
+  useEffect(() => {
+    function onVoiceCommand(e: Event) {
+      const detail = (e as CustomEvent).detail;
+      if (!detail || detail.kind !== "reader") return;
+      const v = voiceStateRef.current;
+      switch (detail.action) {
+        case "nextPage": v.goNext(); break;
+        case "prevPage": v.goPrev(); break;
+        case "goToPage":
+          if (detail.page && !v.isTransitioning) {
+            v.changePage(Math.min(v.numPages || 1, Math.max(1, detail.page)));
+          }
+          break;
+        case "zoomIn": v.zoomIn(); break;
+        case "zoomOut": v.zoomOut(); break;
+        case "fitPage": v.setFitMode("page"); break;
+        case "fullscreen": if (!document.fullscreenElement) v.toggleFullscreen(); break;
+        case "exitFullscreen": if (document.fullscreenElement) document.exitFullscreen(); break;
+        case "read": if (!v.voiceSpeaking) v.voiceReadPage(); break;
+        case "pause": v.voicePauseReading(); break;
+        case "resume": v.voiceResumeReading(); break;
+        case "stop": v.voiceStopReading(); break;
+      }
+    }
+    window.addEventListener("ndl-voice-command", onVoiceCommand);
+    return () => window.removeEventListener("ndl-voice-command", onVoiceCommand);
+  }, []);
+  useEffect(() => {
+    return () => { window.speechSynthesis?.cancel(); };
+  }, []);
+
   // ── Upload path 1: Read Normally (stays on this page, no AI) ─────────
   function handleNormalUpload(e: ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -275,6 +351,7 @@ function ReadPageContent() {
 
           <p className="mt-6 text-center text-[11px] text-slate-400">{t.readerStoredTemporarily}</p>
         </div>
+        <AccessibilityToolbar />
       </main>
     );
   }
@@ -310,7 +387,7 @@ function ReadPageContent() {
 
       <div className="flex flex-1 min-h-0">
         {showThumbnails && (
-          <aside className="w-40 flex-shrink-0 overflow-y-auto border-r border-slate-200 bg-white p-3">
+          <aside data-a11y-focus-hide className="w-40 flex-shrink-0 overflow-y-auto border-r border-slate-200 bg-white p-3">
             <p className="mb-2 text-[10px] font-black uppercase tracking-widest text-slate-400">{t.readerPages}</p>
             <div className="flex flex-col gap-1.5">
               {thumbnailPages.map(p => (
@@ -365,6 +442,7 @@ function ReadPageContent() {
           .ndl-page-fade { transition: none !important; }
         }
       `}</style>
+      <AccessibilityToolbar />
     </div>
   );
 }

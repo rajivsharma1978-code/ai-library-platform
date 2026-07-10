@@ -10,6 +10,7 @@ import InfoCard from "@/components/ui/InfoCard";
 import SearchBar from "@/components/ui/SearchBar";
 import FilterBar from "@/components/ui/FilterBar";
 import AppButton from "@/components/ui/AppButton";
+import AccessibilityToolbar from "@/components/ui/AccessibilityToolbar";
 
 // ── Local, read-only types mirroring Reader/Study Workspace/My Space data
 // shapes. Not imported from those modules — this page only reads the same
@@ -428,6 +429,7 @@ export default function MyLibraryPage() {
           )}
         </InfoCard>
       </div>
+      <AccessibilityToolbar />
     </main>
   );
 }

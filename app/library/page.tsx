@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { UI_TEXT } from "@/lib/i18n";
 import { useLanguage } from "@/lib/useLanguage";
+import AccessibilityToolbar from "@/components/ui/AccessibilityToolbar";
 
 const uploadedItems = [
   "Uploaded Biology PDF",
@@ -182,6 +183,7 @@ export default function LibraryPage() {
           </div>
         </section>
       </div>
+      <AccessibilityToolbar />
     </main>
   );
 }

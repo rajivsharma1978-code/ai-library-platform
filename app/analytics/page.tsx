@@ -9,6 +9,7 @@ import PageHeader from "@/components/ui/PageHeader";
 import StatCard from "@/components/ui/StatCard";
 import InfoCard from "@/components/ui/InfoCard";
 import AppButton from "@/components/ui/AppButton";
+import AccessibilityToolbar from "@/components/ui/AccessibilityToolbar";
 
 // ── Local, read-only types mirroring Reader/Study Workspace/My Space data
 // shapes. Not imported from those modules — this page only reads the same
@@ -345,6 +346,7 @@ export default function AnalyticsPage() {
           </div>
         </div>
       </div>
+      <AccessibilityToolbar />
     </main>
   );
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import StudyWorkspace, { RevisionAction } from "./study/StudyWorkspace";
 import type { StoredHighlight, StoredNote, StoredBookmark } from "./study/studyData";
@@ -37,6 +37,13 @@ type AICompanionProps = {
   onStudyDeleteBookmark: (id: string) => void;
   onStudyGenerateFromHighlight: (highlight: StoredHighlight, action: RevisionAction) => void;
   studyGeneratingId: string | null;
+
+  // ── Voice Assistant: "Open Study tab" ──────────────────────────────
+  // A monotonically increasing counter, not a controlled tab value — the
+  // parent bumps it on each voice command; this component just reacts by
+  // switching to Study, same as clicking the tab itself. Optional so
+  // every other AICompanion usage is unaffected.
+  openStudyTabSignal?: number;
 };
 
 type QuickActionScope = "page" | "book";
@@ -124,12 +131,19 @@ export default function AICompanion({
   language, onLanguageChange,
   studyHighlights, studyNotes, studyBookmarks,
   onStudyJumpToPage, onStudyDeleteHighlight, onStudyDeleteNote, onStudyDeleteBookmark,
-  onStudyGenerateFromHighlight, studyGeneratingId,
+  onStudyGenerateFromHighlight, studyGeneratingId, openStudyTabSignal,
 }: AICompanionProps) {
   // Outer tab — "companion" is the ENTIRE original component, unchanged.
   // "study" is the new Phase 2 workspace. Nothing inside the "companion"
   // branch below was modified from the original implementation.
   const [outerTab, setOuterTab] = useState<"companion" | "study">("companion");
+
+  // Voice command "Open Study tab" — reacts to the signal changing, never
+  // on mount (skip the initial value so this never fires on first render).
+  useEffect(() => {
+    if (openStudyTabSignal !== undefined) setOuterTab("study");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openStudyTabSignal]);
   const enabledLanguageCodes = useEnabledLanguages();
   const availableLanguages = LANGUAGES.filter(l => enabledLanguageCodes.includes(LANGUAGE_NAME_TO_CODE[l]));
 

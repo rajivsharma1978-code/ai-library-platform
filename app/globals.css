@@ -79,3 +79,106 @@ body {
   color: var(--foreground);
   font-family: var(--font-geist-sans), system-ui, sans-serif;
 }
+
+/* ── Universal Accessibility Toolbar ─────────────────────────────────
+   Applied globally via attributes on <html>, set by
+   components/ui/AccessibilityToolbar.tsx. Deliberately CSS-only (no
+   per-component classes to add/maintain) so it works identically on
+   every page the toolbar is dropped onto. Font-size scaling itself is
+   applied as an inline style directly on <html>, not here. */
+
+/* High Contrast + Dark Mode + Visual Comfort (brightness/contrast/
+   grayscale/sepia) all resolve to ONE combined `filter` value, computed
+   in lib/accessibilitySettings.ts (computeFilter) and applied as an
+   inline style on <html> — two independent CSS rules can't both set
+   `filter` and have them compose, so there's deliberately no `filter`
+   declaration keyed off data-a11y-contrast/dark here anymore. This rule
+   only owns the non-filter dark-mode background swap. */
+html[data-a11y-dark="true"] {
+  background: #0b1120;
+}
+html[data-a11y-dark="true"] img,
+html[data-a11y-dark="true"] video,
+html[data-a11y-dark="true"] canvas,
+html[data-a11y-dark="true"] svg image,
+html[data-a11y-dark="true"] [data-a11y-no-invert] {
+  filter: invert(1) hue-rotate(180deg);
+}
+
+/* Reading Mode — roomier line/letter spacing on running text. */
+html[data-a11y-reading="true"] p,
+html[data-a11y-reading="true"] li,
+html[data-a11y-reading="true"] span {
+  line-height: 1.9 !important;
+  letter-spacing: 0.01em !important;
+}
+
+/* Focus Mode — hides site-wide chrome (the homepage's sticky header);
+   each page's own PageHeader (title/back link) is left alone since it's
+   page content, not navigation chrome. */
+html[data-a11y-focus="true"] header {
+  display: none !important;
+}
+/* Focus Mode (Phase B3) — reader sidebars/floating panels opt in via
+   data-a11y-focus-hide (see ReaderLayout.tsx and app/read/page.tsx).
+   Keeps only the book, page navigation, and the accessibility toolbar
+   itself (already exempt via [data-a11y-no-invert]'s fixed positioning). */
+html[data-a11y-focus="true"] [data-a11y-focus-hide] {
+  display: none !important;
+}
+/* Premium Reader's 3-column grid (rail / book / AI panel) collapses to a
+   single column once both side rails are hidden above, so the book fills
+   the freed-up width instead of leaving two empty grid tracks. */
+html[data-a11y-focus="true"] .ndl-reader-grid {
+  grid-template-columns: 1fr !important;
+}
+
+/* ── Dyslexia Mode (Phase B3) ─────────────────────────────────────────
+   OpenDyslexic isn't bundled (no local font asset in this project), so
+   the stack falls through to it if the user happens to have it
+   installed, otherwise the next-closest widely-available open
+   alternatives. Spacing values are set as CSS custom properties by
+   applyA11ySettings() so they stay in sync with the toolbar's sliders. */
+html[data-a11y-dyslexia="true"] {
+  --a11y-letter-spacing: 0px;
+  --a11y-word-spacing: 0px;
+  --a11y-line-height: 1.5;
+  --a11y-paragraph-spacing: 12px;
+}
+html[data-a11y-dyslexia="true"] body {
+  font-family: "OpenDyslexic", "Comic Sans MS", Verdana, Tahoma, sans-serif !important;
+}
+/* Most running text renders via a Tailwind font-* utility class, which
+   sets font-family directly on that element rather than relying on
+   inheritance from <body> — so it wins over the rule above unless
+   overridden here too, same as the body-wide rule intends. */
+html[data-a11y-dyslexia="true"] p,
+html[data-a11y-dyslexia="true"] li,
+html[data-a11y-dyslexia="true"] span,
+html[data-a11y-dyslexia="true"] div,
+html[data-a11y-dyslexia="true"] h1,
+html[data-a11y-dyslexia="true"] h2,
+html[data-a11y-dyslexia="true"] h3,
+html[data-a11y-dyslexia="true"] a,
+html[data-a11y-dyslexia="true"] button {
+  font-family: "OpenDyslexic", "Comic Sans MS", Verdana, Tahoma, sans-serif !important;
+}
+html[data-a11y-dyslexia="true"] p,
+html[data-a11y-dyslexia="true"] li,
+html[data-a11y-dyslexia="true"] span,
+html[data-a11y-dyslexia="true"] div {
+  letter-spacing: var(--a11y-letter-spacing) !important;
+  word-spacing: var(--a11y-word-spacing) !important;
+  line-height: var(--a11y-line-height) !important;
+}
+html[data-a11y-dyslexia="true"] p {
+  margin-bottom: var(--a11y-paragraph-spacing) !important;
+}
+
+/* ── Paper Mode (Phase B3) ────────────────────────────────────────────
+   A warm, low-glare page tint — distinct from Dark Mode/Sepia, styled
+   after e-reader "paper white" themes. CSS-only, same pattern as Reading
+   Mode/Focus Mode above; never touches the PDF canvas itself. */
+html[data-a11y-paper="true"] body {
+  background: #f6ecd9 !important;
+}

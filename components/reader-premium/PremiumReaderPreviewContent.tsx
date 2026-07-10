@@ -10,6 +10,7 @@ import { directorBooks } from "@/lib/directorBooks";
 import { getPublicCatalog } from "@/lib/catalog";
 import { trackAIUsage, logActivity, type AIFeature } from "@/components/admin/adminData";
 import ReaderLayout from "@/components/reader/ReaderLayout";
+import AccessibilityToolbar from "@/components/ui/AccessibilityToolbar";
 // ── Phase 2: AI Notes, Highlights, Bookmarks, Study Workspace ─────────
 // Additive only — nothing below touches page turning, zoom, fullscreen,
 // or the text/image selection engine above.
@@ -286,6 +287,11 @@ export default function PremiumReaderPreviewContent() {
 
   // ── Go To Page ────────────────────────────────────────────────────
   const [goToInput, setGoToInput] = useState("");
+
+  // ── Voice Assistant: "Open Study tab" signal — undefined until the
+  //    first voice command fires, so AICompanion's effect never forces
+  //    the tab on initial mount. ────────────────────────────────────
+  const [openStudyTabSignal, setOpenStudyTabSignal] = useState<number | undefined>(undefined);
 
   // ── Ask About Image — custom question UI state ────────────────────
   const [askImageInput, setAskImageInput] = useState("");
@@ -616,6 +622,25 @@ export default function PremiumReaderPreviewContent() {
     }
   }
 
+  // ── QUICK ACTION RUNNER — shared by AICompanion's sidebar buttons AND
+  //    Voice Assistant's "explain/summarize/translate/quiz/flashcards"
+  //    commands, so both paths produce identical behavior and AI-usage
+  //    tracking instead of two competing implementations. ────────────────
+  function runQuickAction(label: string, prompt: string, scope: "page" | "book") {
+    if (scope === "book") { runEntireBookQuiz(); return; }
+    const content = getVisiblePageText().length > 50
+      ? `Content from page ${readerPage} of "${book}":\n\n${getVisiblePageText()}`
+      : `Viewing page ${readerPage} of "${book}".`;
+    const quickAction = label.includes("Explain") ? "explain"
+      : label.includes("Summarize") ? "summarize"
+      : label.includes("Translate") ? "translate"
+      : label.includes("Quiz") ? "quiz"
+      : label.includes("Flashcards") ? "flashcards"
+      : label.includes("Notes") ? "notes"
+      : undefined;
+    runAI(prompt, content, undefined, undefined, quickAction);
+  }
+
   // ── TEXT-MODE ACTION RUNNER ───────────────────────────────────────────
   // Uses ONLY the selected text. Never touches imageData, even if an
   // image crop happens to exist internally alongside it.
@@ -714,6 +739,84 @@ export default function PremiumReaderPreviewContent() {
   function handleStopReadAloud() {
     window.speechSynthesis?.cancel(); setSpeechState("idle"); utteranceRef.current = null;
   }
+
+  // ── Voice Assistant integration ─────────────────────────────────────
+  // VoiceAssistant (rendered inside AccessibilityToolbar below) never
+  // imports anything from this file — it only ever broadcasts a
+  // "ndl-voice-command" CustomEvent on window. This is the ONLY place
+  // that turns that event into calls to this reader's OWN existing
+  // functions (goNext, fitScreen, handleReadAloud, runQuickAction, …).
+  // Nothing about page rendering or the page-turn engine itself changes.
+  //
+  // A ref kept fresh every render (rather than depending on these
+  // functions directly) means the listener below can be registered ONCE
+  // on mount without ever acting on stale state — the same stale-closure
+  // pitfall already fixed in AccessibilityToolbar's font-size buttons.
+  const voiceStateRef = useRef({
+    speechState, language,
+    goNext, goPrev, goToPage, setZoom, fitScreen,
+    handleReadAloud, handleStopReadAloud, runQuickAction, setLanguage,
+  });
+  useEffect(() => {
+    voiceStateRef.current = {
+      speechState, language,
+      goNext, goPrev, goToPage, setZoom, fitScreen,
+      handleReadAloud, handleStopReadAloud, runQuickAction, setLanguage,
+    };
+  });
+
+  useEffect(() => {
+    function onVoiceCommand(e: Event) {
+      const detail = (e as CustomEvent).detail;
+      if (!detail) return;
+      const v = voiceStateRef.current;
+
+      if (detail.kind === "reader") {
+        switch (detail.action) {
+          case "nextPage": v.goNext(); break;
+          case "prevPage": v.goPrev(); break;
+          case "goToPage": if (detail.page) v.goToPage(String(detail.page)); break;
+          case "zoomIn": v.setZoom(z => Math.min(ZOOM_MAX, z + ZOOM_STEP)); break;
+          case "zoomOut": v.setZoom(z => Math.max(ZOOM_MIN, z - ZOOM_STEP)); break;
+          case "fitPage": v.fitScreen(); break;
+          case "fullscreen": if (!document.fullscreenElement) document.documentElement.requestFullscreen?.(); break;
+          case "exitFullscreen": if (document.fullscreenElement) document.exitFullscreen(); break;
+          case "read": if (v.speechState === "idle") v.handleReadAloud(); break;
+          case "pause": if (v.speechState === "speaking") v.handleReadAloud(); break;
+          case "resume": if (v.speechState === "paused") v.handleReadAloud(); break;
+          case "stop": v.handleStopReadAloud(); break;
+        }
+      } else if (detail.kind === "ai") {
+        const lang = v.language;
+        switch (detail.action) {
+          case "explain":
+            v.runQuickAction("🧠 Explain", `Explain this page/spread clearly for a student in simple language. Respond ONLY in: ${lang}.`, "page");
+            break;
+          case "summarize":
+            v.runQuickAction("📝 Summarize", `Summarize this page/spread in at most 8 concise bullet points. Respond ONLY in: ${lang}.`, "page");
+            break;
+          case "translate": {
+            const target = LANGUAGES.find(l => l.toLowerCase() === (detail.language || "").toLowerCase());
+            const targetLang = target || lang;
+            if (target) v.setLanguage(target);
+            v.runQuickAction("🌍 Translate", `Rewrite and explain the content of this page/spread in ${targetLang}. Write entirely in ${targetLang}. Respond ONLY in: ${targetLang}.`, "page");
+            break;
+          }
+          case "quiz":
+            v.runQuickAction("❓ Quiz", `Create exactly 5 multiple-choice quiz questions from this page/spread. Respond ONLY in: ${lang}.`, "page");
+            break;
+          case "flashcards":
+            v.runQuickAction("🎴 Flashcards", `Create 5 flashcards (FRONT: / BACK: format) from this page/spread. Respond ONLY in: ${lang}.`, "page");
+            break;
+          case "studyTab":
+            setOpenStudyTabSignal(s => (s || 0) + 1);
+            break;
+        }
+      }
+    }
+    window.addEventListener("ndl-voice-command", onVoiceCommand);
+    return () => window.removeEventListener("ndl-voice-command", onVoiceCommand);
+  }, []);
 
   // ══════════════════════════════════════════════════════════════════
   // PHASE 2 — Highlights, Notes, Bookmarks, Study Workspace, Revision
@@ -1208,6 +1311,7 @@ export default function PremiumReaderPreviewContent() {
     : "🔊 Read";
 
   return (
+    <>
     <ReaderLayout
       leftPanel={
         <div>
@@ -1566,40 +1670,13 @@ export default function PremiumReaderPreviewContent() {
           aiQuestion={aiQuestion}
           setAiQuestion={setAiQuestion}
           onAsk={askPremiumAI}
-          onQuickAction={(label, prompt, scope) => {
-            // NEW: "entire book" scope, alongside the existing current
-            // page / visible pages / selected text scopes. Routed to its
-            // own function since it needs full-book extraction (with a
-            // metadata fallback for weak/scanned books) instead of
-            // getVisiblePageText().
-            if (scope === "book") {
-              runEntireBookQuiz();
-              return;
-            }
-            // Quick actions in the sidebar always use VISIBLE PAGE TEXT —
-            // not activeSelection. If user wants selection-specific AI,
-            // they use the floating toolbar buttons.
-            const content = getVisiblePageText().length > 50
-              ? `Content from page ${readerPage} of "${book}":\n\n${getVisiblePageText()}`
-              : `Viewing page ${readerPage} of "${book}".`;
-            // AICompanion's QUICK_ACTIONS labels are "🧠 Explain", "📝
-            // Summarize", etc. — derive the same action name the floating
-            // toolbar uses so this goes through the same AI-usage tracking
-            // in runAI, instead of duplicating the tracking logic here.
-            const quickAction = label.includes("Explain") ? "explain"
-              : label.includes("Summarize") ? "summarize"
-              : label.includes("Translate") ? "translate"
-              : label.includes("Quiz") ? "quiz"
-              : label.includes("Flashcards") ? "flashcards"
-              : label.includes("Notes") ? "notes"
-              : undefined;
-            runAI(prompt, content, undefined, undefined, quickAction);
-          }}
+          onQuickAction={runQuickAction}
           bookTitle={book}
           pageNumber={readerPage}
           pageText={getVisiblePageText()}
           language={language}
           onLanguageChange={setLanguage}
+          openStudyTabSignal={openStudyTabSignal}
           studyHighlights={highlights.filter(h => h.bookId === bookId)}
           studyNotes={notes.filter(n => n.bookId === bookId)}
           studyBookmarks={bookmarks.filter(b => b.bookId === bookId)}
@@ -1612,5 +1689,7 @@ export default function PremiumReaderPreviewContent() {
         />
       }
     />
+    <AccessibilityToolbar />
+    </>
   );
 }

@@ -7,6 +7,7 @@ import { NewArrivals } from "./NewArrivals";
 import { AiTutors } from "./AiTutors";
 import { Recommendations } from "./Recommendations";
 import { SiteFooter } from "./SiteFooter";
+import AccessibilityToolbar from "@/components/ui/AccessibilityToolbar";
 
 export function HomePage() {
   return (
@@ -22,6 +23,7 @@ export function HomePage() {
         <Recommendations />
       </main>
       <SiteFooter />
+      <AccessibilityToolbar />
     </>
   );
 }

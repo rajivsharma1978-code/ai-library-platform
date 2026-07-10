@@ -8,6 +8,7 @@ import PageHeader from "@/components/ui/PageHeader";
 import InfoCard from "@/components/ui/InfoCard";
 import SearchBar from "@/components/ui/SearchBar";
 import FilterBar from "@/components/ui/FilterBar";
+import AccessibilityToolbar from "@/components/ui/AccessibilityToolbar";
 
 // ── Local, read-only types mirroring Reader/Study Workspace data shapes.
 // Not imported from those modules — this page only reads the same
@@ -284,6 +285,7 @@ export default function FlashcardsPage() {
           </>
         )}
       </div>
+      <AccessibilityToolbar />
     </main>
   );
 }

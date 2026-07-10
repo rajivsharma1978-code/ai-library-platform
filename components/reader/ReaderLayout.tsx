@@ -41,15 +41,17 @@ export default function ReaderLayout({
       className="h-screen w-full overflow-hidden bg-[#f4ead7] text-slate-950"
     >
       <div
-        className={`grid h-full transition-[grid-template-columns] duration-300 ${
+        className={`ndl-reader-grid grid h-full transition-[grid-template-columns] duration-300 ${
           isFullscreen
             ? "grid-cols-[1fr_380px]"
             : "grid-cols-[64px_1fr_380px]"
         }`}
       >
-        {/* Collapsed info + fullscreen rail — hidden in fullscreen */}
+        {/* Collapsed info + fullscreen rail — hidden in fullscreen, and
+            also hidden under Focus Mode (Phase B3): it's "unnecessary
+            controls", not the book/navigation/toolbar Focus Mode keeps. */}
         {!isFullscreen && (
-          <aside className="flex flex-col border-r border-amber-200 bg-slate-950 text-white">
+          <aside data-a11y-focus-hide className="flex flex-col border-r border-amber-200 bg-slate-950 text-white">
             <button
               onClick={() => setInfoOpen(true)}
               className="m-3 rounded-2xl bg-white/10 px-3 py-3 text-xs font-black hover:bg-white/20"
@@ -83,8 +85,12 @@ export default function ReaderLayout({
           {center}
         </section>
 
-        {/* AI Companion panel — always visible, even in fullscreen */}
-        <aside className="h-screen overflow-hidden border-l border-slate-800 bg-black text-white">
+        {/* AI Companion panel — always visible, even in fullscreen, but
+            hidden under Focus Mode (Phase B3): it's a sidebar, and Focus
+            Mode's whole point is stripping those back to just the book +
+            navigation + accessibility toolbar. Voice commands still work
+            while it's hidden — they don't depend on this panel's UI. */}
+        <aside data-a11y-focus-hide className="h-screen overflow-hidden border-l border-slate-800 bg-black text-white">
           {rightPanel}
         </aside>
       </div>

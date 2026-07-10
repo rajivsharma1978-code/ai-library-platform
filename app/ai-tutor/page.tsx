@@ -8,6 +8,7 @@ import { usePublicCatalog } from "@/lib/catalog";
 import PageHeader from "@/components/ui/PageHeader";
 import QuickLinks from "@/components/ui/QuickLinks";
 import AppButton from "@/components/ui/AppButton";
+import AccessibilityToolbar from "@/components/ui/AccessibilityToolbar";
 
 // ── Local types + helpers, self-contained on purpose (same pattern as
 // app/my-books, app/my-library) — this page doesn't import from those
@@ -277,6 +278,7 @@ export default function AiTutorPage() {
             never competes with the hero/Continue Learning above. */}
         <QuickLinks title={t.aiTutorQuickLinks} links={quickLinks} className="mt-10" />
       </div>
+      <AccessibilityToolbar />
     </main>
   );
 }
