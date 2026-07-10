@@ -1,12 +1,14 @@
 "use client";
 
-import { UI_TEXT } from "@/lib/i18n";
+import { UI_TEXT, LANGUAGE_NAMES, type Language } from "@/lib/i18n";
 import { useLanguage } from "@/lib/useLanguage";
+import { useEnabledLanguages } from "@/lib/languageSettings";
 import PageHeader from "@/components/ui/PageHeader";
 
 export default function SettingsPage() {
   const { language } = useLanguage();
   const t = UI_TEXT[language];
+  const enabledLanguages = useEnabledLanguages();
 
   return (
     <main className="min-h-screen bg-[radial-gradient(circle_at_top,#fff8e8_0%,#f3e6c8_45%,#eaddc0_100%)] px-6 py-10">
@@ -22,14 +24,14 @@ export default function SettingsPage() {
             <h2 className="text-2xl font-black text-slate-900">Language Preferences</h2>
 
             <div className="mt-6 space-y-4">
-              {["English", "Hindi", "Tamil", "Bengali", "Marathi", "Telugu"].map(
-                (language) => (
-                  <div key={language} className="flex justify-between border-b border-slate-100 pb-3">
-                    <span className="text-slate-700">{language}</span>
+              {(Object.entries(LANGUAGE_NAMES) as [Language, string][])
+                .filter(([code]) => enabledLanguages.includes(code))
+                .map(([code, name]) => (
+                  <div key={code} className="flex justify-between border-b border-slate-100 pb-3">
+                    <span className="text-slate-700">{name}</span>
                     <span className="text-green-600 font-semibold">Available</span>
                   </div>
-                )
-              )}
+                ))}
             </div>
           </section>
 

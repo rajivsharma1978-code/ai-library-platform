@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { UI_TEXT } from "@/lib/i18n";
 import { useLanguage } from "@/lib/useLanguage";
 import { directorBooks } from "@/lib/directorBooks";
+import { trackAIUsage, logActivity } from "@/components/admin/adminData";
 import PageHeader from "@/components/ui/PageHeader";
 import InfoCard from "@/components/ui/InfoCard";
 import FilterBar from "@/components/ui/FilterBar";
@@ -377,6 +378,8 @@ export default function QuizPage() {
       });
       const data = await res.json();
       setExplanations(prev => ({ ...prev, [q.id]: data.answer || (isEn ? "No explanation available." : "कोई स्पष्टीकरण उपलब्ध नहीं।") }));
+      trackAIUsage("explain");
+      logActivity("ai", `AI explained a quiz answer for "${q.item.bookTitle}"`);
     } catch {
       setExplanations(prev => ({ ...prev, [q.id]: isEn ? "Could not fetch an explanation right now." : "अभी स्पष्टीकरण प्राप्त नहीं हो सका।" }));
     } finally {

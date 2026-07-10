@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useRef, useState, type ChangeEvent } from "react";
-import { directorBooks } from "@/lib/directorBooks";
+import { usePublicCatalog } from "@/lib/catalog";
 import { UI_TEXT } from "@/lib/i18n";
 import { useLanguage } from "@/lib/useLanguage";
 import PageHeader from "@/components/ui/PageHeader";
@@ -45,8 +45,9 @@ function ReadPageContent() {
   const { language } = useLanguage();
   const t = UI_TEXT[language];
 
+  const catalogChoices = usePublicCatalog();
   const bookId = searchParams.get("book");
-  const catalogBook = (directorBooks as DirectorBook[]).find(b => b.id === bookId) || null;
+  const catalogBook = catalogChoices.find(b => b.id === bookId) || null;
 
   // Locally-uploaded file for NORMAL (non-AI) reading — a plain blob: URL
   // is fine here since we never navigate away from this page for it.
@@ -216,7 +217,6 @@ function ReadPageContent() {
     }
   }
 
-  const catalogChoices = directorBooks as DirectorBook[];
   const thumbnailPages = Array.from({ length: Math.min(THUMBNAIL_LIMIT, numPages) }, (_, i) => i + 1);
 
   // ── No book loaded yet: choose a library book or upload one ──────────

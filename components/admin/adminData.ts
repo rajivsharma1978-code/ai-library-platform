@@ -22,10 +22,17 @@ export interface AdminBookOverride {
   status?: BookStatus;
   format?: string;
   pages?: number;
-  /** Demo-only — the upload UI never actually uploads a file, it just
-   *  remembers the chosen filename so the form/list feels real. */
+  /** Demo-only — the Book Management upload UI never actually uploads a
+   *  file, it just remembers the chosen filename so the form/list feels
+   *  real. */
   coverFileName?: string;
   pdfFileName?: string;
+  /** A REAL uploaded PDF, as a data: URL — set when this override came
+   *  from an Upload Queue approval (see app/admin/upload-queue), so the
+   *  public catalog can actually open/read the book instead of just
+   *  showing its metadata. Optional — Book Management's own mock upload
+   *  never sets this, so those books remain metadata-only as before. */
+  pdfDataUrl?: string;
   /** true = this book exists ONLY here (not in lib/directorBooks.ts). */
   isCustom?: boolean;
   /** true = "deleted" from the admin's point of view. Catalog books can't
@@ -57,9 +64,14 @@ export interface AdminActivityEntry {
   timestamp: number;
 }
 
+export type AIFeature = "explain" | "summarize" | "translate" | "quiz" | "flashcards" | "revision";
+
 export interface AIUsageStats {
   questionsAsked: number;
   lastUsedAt?: number;
+  /** Per-feature counts — optional so any pre-existing ndl_ai_usage_stats
+   *  value (just {questionsAsked, lastUsedAt}) keeps parsing unchanged. */
+  byFeature?: Partial<Record<AIFeature, number>>;
 }
 
 const KEYS = {
@@ -107,6 +119,24 @@ export function loadAIUsage(): AIUsageStats {
     const raw = window.localStorage.getItem(KEYS.aiUsage);
     return raw ? JSON.parse(raw) : { questionsAsked: 0 };
   } catch { return { questionsAsked: 0 }; }
+}
+
+/** Call this after a REAL AI response succeeds (Explain, Summarize,
+ *  Translate, Quiz, Flashcards, Revision) — increments the total count
+ *  used across the app, bumps that feature's own count, and stamps
+ *  lastUsedAt, so Admin → AI Usage reflects genuine usage instead of a
+ *  number nothing ever writes to. */
+export function trackAIUsage(feature: AIFeature) {
+  if (typeof window === "undefined") return;
+  const current = loadAIUsage();
+  const byFeature = { ...current.byFeature };
+  byFeature[feature] = (byFeature[feature] || 0) + 1;
+  const next: AIUsageStats = {
+    questionsAsked: (current.questionsAsked || 0) + 1,
+    lastUsedAt: Date.now(),
+    byFeature,
+  };
+  try { window.localStorage.setItem(KEYS.aiUsage, JSON.stringify(next)); } catch {}
 }
 
 export function newId(prefix: string): string {
@@ -225,6 +255,12 @@ export interface UploadQueueItem {
   bookTitleGuess: string;
   status: UploadQueueStatus;
   submittedAt: number;
+  /** Real uploaded PDF as a data: URL, plus its page count — both
+   *  optional so the seeded demo queue items (which never had a real
+   *  file) keep working unchanged. Set by a real file upload; carried
+   *  into the AdminBookOverride on Approve. */
+  pdfDataUrl?: string;
+  pages?: number;
 }
 const DEMO_UPLOAD_QUEUE: UploadQueueItem[] = [
   { id: "up-1", fileName: "cyber-security-basics.pdf", bookTitleGuess: "Cyber Security Basics",      status: "Ready for Review", submittedAt: Date.now() - 1000 * 60 * 60 * 2 },

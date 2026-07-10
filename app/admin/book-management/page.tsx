@@ -10,6 +10,11 @@ import {
   loadBookOverrides, saveBookOverrides, logActivity, buildDisplayBooks, newId,
   type AdminBookOverride, type DisplayBook, type BookStatus,
 } from "@/components/admin/adminData";
+import PageHeader from "@/components/ui/PageHeader";
+import StatCard from "@/components/ui/StatCard";
+import InfoCard from "@/components/ui/InfoCard";
+import SearchBar from "@/components/ui/SearchBar";
+import AppButton from "@/components/ui/AppButton";
 
 const statusColors: Record<BookStatus, string> = {
   Published: "bg-green-100 text-green-700",
@@ -153,83 +158,71 @@ function BookManagementContent() {
 
   if (!mounted || !checkedAccess) {
     return (
-      <main className="flex min-h-screen items-center justify-center bg-slate-100">
+      <main className="flex min-h-screen items-center justify-center bg-[radial-gradient(circle_at_top,#fff8e8_0%,#f3e6c8_45%,#eaddc0_100%)]">
         <p className="text-sm font-semibold text-slate-400">Checking admin access…</p>
       </main>
     );
   }
 
   return (
-    <main className="min-h-screen bg-slate-100 flex">
+    <main className="min-h-screen bg-[radial-gradient(circle_at_top,#fff8e8_0%,#f3e6c8_45%,#eaddc0_100%)] flex">
       <AdminSidebar />
 
       <section className="flex-1 p-8 overflow-auto">
-        <div className="bg-gradient-to-r from-blue-700 to-indigo-700 text-white rounded-3xl p-10 shadow-2xl">
-          <p className="uppercase tracking-widest text-sm opacity-80">Admin · Book Management</p>
-          <h2 className="text-4xl font-bold mt-2">Book Management</h2>
-          <p className="mt-3 text-blue-100">Add, edit, and manage every book in the National Digital Library catalog.</p>
-        </div>
+        <PageHeader
+          badge="Admin · Book Management"
+          title="Book Management"
+          subtitle="Add, edit, and manage every book in the National Digital Library catalog."
+          homeLabel="Library"
+        />
 
-        <div className="mt-6 rounded-2xl bg-amber-50 px-5 py-3 text-sm font-semibold text-amber-800 ring-1 ring-amber-200">
+        <InfoCard tone="amber" className="mb-6 py-3 text-sm font-semibold">
           📌 Demo admin actions are stored locally for this prototype — nothing here touches a real backend.
-        </div>
+        </InfoCard>
 
         {/* Stats row */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-6">
-          {[
-            [String(books.length), "Total Books", "text-blue-600"],
-            [String(books.filter(b => b.status === "Published").length), "Published", "text-green-600"],
-            [String(books.filter(b => b.status === "Draft").length), "Draft", "text-slate-600"],
-            [String(books.filter(b => b.status === "Pending" || b.status === "Under Review").length), "In Review", "text-yellow-600"],
-          ].map(([val, label, color]) => (
-            <div key={label} className="bg-white rounded-2xl p-5 shadow">
-              <p className={`text-3xl font-bold ${color}`}>{val}</p>
-              <p className="text-slate-500 text-sm mt-1">{label}</p>
-            </div>
-          ))}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <StatCard label="Total Books" value={books.length} valueClassName="text-blue-600" />
+          <StatCard label="Published" value={books.filter(b => b.status === "Published").length} valueClassName="text-green-600" />
+          <StatCard label="Draft" value={books.filter(b => b.status === "Draft").length} valueClassName="text-slate-600" />
+          <StatCard label="In Review" value={books.filter(b => b.status === "Pending" || b.status === "Under Review").length} valueClassName="text-yellow-600" />
         </div>
 
         {/* Filters */}
-        <div className="bg-white rounded-2xl p-5 shadow mt-6 flex flex-wrap gap-4 items-center">
-          <input
-            type="text"
-            placeholder="Search by title or author…"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="flex-1 min-w-[200px] border border-slate-200 rounded-xl px-4 py-2.5 outline-none text-sm focus:border-blue-400"
-          />
+        <InfoCard className="mt-6 flex flex-wrap gap-4 items-center">
+          <SearchBar value={search} onChange={setSearch} placeholder="Search by title or author…" className="flex-1 min-w-[200px]" />
           <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)}
-            className="border border-slate-200 rounded-xl px-4 py-2.5 outline-none text-sm">
+            className="border border-slate-200 rounded-xl px-4 py-2.5 outline-none text-sm focus:ring-2 focus:ring-amber-400">
             {["All", ...STATUS_OPTIONS].map((s) => <option key={s}>{s}</option>)}
           </select>
           <select value={filterLanguage} onChange={(e) => setFilterLanguage(e.target.value)}
-            className="border border-slate-200 rounded-xl px-4 py-2.5 outline-none text-sm">
+            className="border border-slate-200 rounded-xl px-4 py-2.5 outline-none text-sm focus:ring-2 focus:ring-amber-400">
             {["All", ...LANGUAGE_OPTIONS].map((l) => <option key={l}>{l}</option>)}
           </select>
-          <button onClick={openAddForm} className="bg-blue-600 text-white px-5 py-2.5 rounded-xl text-sm font-semibold hover:bg-blue-700 transition">
+          <AppButton onClick={openAddForm} variant="accent">
             + Add Book
-          </button>
-        </div>
+          </AppButton>
+        </InfoCard>
 
         {/* Add/Edit form */}
         {formOpen && (
-          <div className="bg-white rounded-3xl shadow mt-6 p-8">
-            <h3 className="text-xl font-bold text-slate-900">{formMode === "add" ? "Add New Book (Demo)" : "Edit Book Metadata (Demo)"}</h3>
+          <InfoCard className="mt-6 p-8">
+            <h3 className="text-xl font-black text-slate-950">{formMode === "add" ? "Add New Book (Demo)" : "Edit Book Metadata (Demo)"}</h3>
             <div className="mt-5 grid gap-4 md:grid-cols-2">
               <label className="block">
                 <span className="mb-1 block text-xs font-bold text-slate-500">Title</span>
                 <input value={form.title} onChange={(e) => setForm(f => ({ ...f, title: e.target.value }))}
-                  className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-400" />
+                  className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-amber-400 focus:border-transparent" />
               </label>
               <label className="block">
                 <span className="mb-1 block text-xs font-bold text-slate-500">Author</span>
                 <input value={form.author} onChange={(e) => setForm(f => ({ ...f, author: e.target.value }))}
-                  className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-400" />
+                  className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-amber-400 focus:border-transparent" />
               </label>
               <label className="block">
                 <span className="mb-1 block text-xs font-bold text-slate-500">Language</span>
                 <select value={form.language} onChange={(e) => setForm(f => ({ ...f, language: e.target.value }))}
-                  className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none">
+                  className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-amber-400">
                   {LANGUAGE_OPTIONS.map(l => <option key={l}>{l}</option>)}
                 </select>
               </label>
@@ -237,19 +230,19 @@ function BookManagementContent() {
                 <span className="mb-1 block text-xs font-bold text-slate-500">Category</span>
                 <input value={form.category} onChange={(e) => setForm(f => ({ ...f, category: e.target.value }))}
                   placeholder="e.g. Science, History, Fiction"
-                  className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-400" />
+                  className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-amber-400 focus:border-transparent" />
               </label>
               <label className="block">
                 <span className="mb-1 block text-xs font-bold text-slate-500">Status</span>
                 <select value={form.status} onChange={(e) => setForm(f => ({ ...f, status: e.target.value as BookStatus }))}
-                  className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none">
+                  className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-amber-400">
                   {STATUS_OPTIONS.map(s => <option key={s}>{s}</option>)}
                 </select>
               </label>
               <label className="block">
                 <span className="mb-1 block text-xs font-bold text-slate-500">Pages</span>
                 <input type="number" value={form.pages} onChange={(e) => setForm(f => ({ ...f, pages: e.target.value }))}
-                  className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-400" />
+                  className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-amber-400 focus:border-transparent" />
               </label>
 
               {/* Upload cover/PDF UI mock — remembers the filename only,
@@ -271,19 +264,18 @@ function BookManagementContent() {
             </div>
 
             <div className="mt-6 flex gap-3">
-              <button onClick={submitForm} disabled={!form.title.trim()}
-                className="rounded-xl bg-blue-600 px-6 py-2.5 text-sm font-bold text-white hover:bg-blue-700 disabled:opacity-40">
+              <AppButton onClick={submitForm} disabled={!form.title.trim()} variant="accent">
                 {formMode === "add" ? "Add Book" : "Save Changes"}
-              </button>
-              <button onClick={closeForm} className="rounded-xl bg-slate-100 px-6 py-2.5 text-sm font-bold text-slate-600 hover:bg-slate-200">
+              </AppButton>
+              <AppButton onClick={closeForm} variant="secondary">
                 Cancel
-              </button>
+              </AppButton>
             </div>
-          </div>
+          </InfoCard>
         )}
 
         {/* Table */}
-        <div className="bg-white rounded-3xl shadow mt-6 overflow-hidden overflow-x-auto">
+        <div className="bg-white rounded-3xl shadow-[0_20px_60px_rgba(75,45,12,0.10)] ring-1 ring-black/5 mt-6 overflow-hidden overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="bg-slate-50 border-b border-slate-200">
               <tr>
@@ -296,7 +288,7 @@ function BookManagementContent() {
               {filtered.map((book) => (
                 <tr key={book.id} className="border-b border-slate-100 hover:bg-slate-50 transition">
                   <td className="px-6 py-4 font-medium text-slate-800 max-w-[220px]">
-                    <p className="truncate">{book.title}{book.isCustom && <span className="ml-2 rounded-full bg-purple-100 px-2 py-0.5 text-[10px] font-bold text-purple-700">custom</span>}</p>
+                    <p className="truncate">{book.title}{book.isCustom && <span className="ml-2 rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-bold text-blue-700">custom</span>}</p>
                   </td>
                   <td className="px-6 py-4 text-slate-600">{book.author}</td>
                   <td className="px-6 py-4 text-slate-600">{book.language}</td>

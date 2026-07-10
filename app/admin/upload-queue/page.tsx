@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ChangeEvent } from "react";
 import { useRouter } from "next/navigation";
 import AdminSidebar from "@/components/admin/AdminSidebar";
 import {
@@ -8,6 +8,18 @@ import {
   loadBookOverrides, saveBookOverrides, logActivity, newId,
   type UploadQueueItem, type AdminBookOverride,
 } from "@/components/admin/adminData";
+import PageHeader from "@/components/ui/PageHeader";
+import StatCard from "@/components/ui/StatCard";
+import InfoCard from "@/components/ui/InfoCard";
+
+// Turns "marathi-science-textbook.pdf" into "Marathi Science Textbook" —
+// only used as a starting guess; the admin can still rename it via Book
+// Management after approving.
+function titleGuessFromFileName(fileName: string): string {
+  const base = fileName.replace(/\.pdf$/i, "").replace(/[-_]+/g, " ").replace(/\s+/g, " ").trim();
+  const titled = base.replace(/\b\w/g, (c) => c.toUpperCase());
+  return titled || "Untitled Upload";
+}
 
 function timeAgo(ts: number): string {
   const diff = Date.now() - ts;
@@ -32,6 +44,8 @@ export default function AdminUploadQueuePage() {
   const [checkedAccess, setCheckedAccess] = useState(false);
   const [queue, setQueue] = useState<UploadQueueItem[]>([]);
   const [usingDemo, setUsingDemo] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState("");
 
   function refresh() {
     setQueue(loadUploadQueue());
@@ -60,6 +74,11 @@ export default function AdminUploadQueuePage() {
     const bookOverride: AdminBookOverride = {
       id: newId("custom"), title: item.bookTitleGuess, author: "", language: "English",
       category: "General", status: "Draft", format: "PDF", pdfFileName: item.fileName,
+      // The real uploaded file (if this item came from a real upload,
+      // not a legacy/demo queue item) — this is what makes the resulting
+      // book actually openable everywhere the public catalog is read,
+      // instead of a metadata-only shell.
+      pdfDataUrl: item.pdfDataUrl, pages: item.pages,
       isCustom: true, createdAt: Date.now(), updatedAt: Date.now(),
     };
     saveBookOverrides([...overrides, bookOverride]);
@@ -79,19 +98,57 @@ export default function AdminUploadQueuePage() {
     refresh();
   }
 
-  function simulateUpload() {
-    const item: UploadQueueItem = {
-      id: newId("up"), fileName: `demo-upload-${queue.length + 1}.pdf`,
-      bookTitleGuess: `Demo Upload ${queue.length + 1}`, status: "Processing", submittedAt: Date.now(),
-    };
-    saveUploadQueue([item, ...queue]);
-    logActivity("upload", `${item.fileName} submitted to the upload queue`);
-    refresh();
+  // Reads a REAL PDF chosen by the admin — a data: URL (so it can be
+  // reopened later, same technique app/read.tsx already uses for its
+  // "Read with AI Tutor" upload path) plus its real page count via
+  // pdf.js. Nothing here touches Book Management's own separate
+  // mock-upload UI.
+  async function handleFileSelected(e: ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    if (file.type !== "application/pdf") {
+      setUploadError("Please choose a PDF file.");
+      return;
+    }
+    setUploading(true);
+    setUploadError("");
+    try {
+      const dataUrl: string = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = () => reject(reader.error ?? new Error("FileReader failed"));
+        reader.readAsDataURL(file);
+      });
+
+      let pages = 1;
+      try {
+        const pdfjsLib = await import("pdfjs-dist");
+        pdfjsLib.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
+        const doc = await pdfjsLib.getDocument(dataUrl).promise;
+        pages = doc.numPages;
+      } catch {
+        // Page count is a nice-to-have; a corrupt/odd PDF can still be
+        // queued and approved with a page count of 1.
+      }
+
+      const item: UploadQueueItem = {
+        id: newId("up"), fileName: file.name, bookTitleGuess: titleGuessFromFileName(file.name),
+        status: "Ready for Review", submittedAt: Date.now(), pdfDataUrl: dataUrl, pages,
+      };
+      saveUploadQueue([item, ...queue]);
+      logActivity("upload", `${item.fileName} uploaded and queued for review`);
+      refresh();
+    } catch {
+      setUploadError("Could not read this PDF. Please try a different file.");
+    } finally {
+      setUploading(false);
+    }
   }
 
   if (!mounted || !checkedAccess) {
     return (
-      <main className="flex min-h-screen items-center justify-center bg-slate-100">
+      <main className="flex min-h-screen items-center justify-center bg-[radial-gradient(circle_at_top,#fff8e8_0%,#f3e6c8_45%,#eaddc0_100%)]">
         <p className="text-sm font-semibold text-slate-400">Checking admin access…</p>
       </main>
     );
@@ -102,40 +159,43 @@ export default function AdminUploadQueuePage() {
   const approved = queue.filter(q => q.status === "Approved").length;
 
   return (
-    <main className="min-h-screen bg-slate-100 flex">
+    <main className="min-h-screen bg-[radial-gradient(circle_at_top,#fff8e8_0%,#f3e6c8_45%,#eaddc0_100%)] flex">
       <AdminSidebar />
       <section className="flex-1 p-8 overflow-auto">
-        <div className="bg-gradient-to-r from-orange-600 to-red-600 text-white rounded-3xl p-10 shadow-2xl">
-          <p className="uppercase tracking-widest text-sm opacity-80">Admin · Upload Queue</p>
-          <h2 className="text-4xl font-bold mt-2">Upload & Processing Queue</h2>
-          <p className="mt-3 text-orange-100">Review incoming uploads, approve them into the catalog, or reject them.</p>
-        </div>
+        <PageHeader
+          badge="Admin · Upload Queue"
+          title="Upload & Processing Queue"
+          subtitle="Review incoming uploads, approve them into the catalog, or reject them."
+          homeLabel="Library"
+        />
 
-        <div className="mt-6 rounded-2xl bg-amber-50 px-5 py-3 text-sm font-semibold text-amber-800 ring-1 ring-amber-200">
+        <InfoCard tone="amber" className="mb-6 py-3 text-sm font-semibold">
           📌 Demo admin actions are stored locally for this prototype — nothing here touches a real backend.
+        </InfoCard>
+
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <StatCard label="Total in Queue" value={queue.length} badge={usingDemo ? "demo" : undefined} />
+          <StatCard label="Processing" value={processing} valueClassName="text-blue-600" />
+          <StatCard label="Ready for Review" value={readyForReview} valueClassName="text-yellow-600" />
+          <StatCard label="Approved" value={approved} valueClassName="text-green-600" />
         </div>
 
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-6">
-          <div className="bg-white rounded-2xl p-5 shadow">
-            <p className="text-3xl font-bold text-slate-900">{queue.length}</p>
-            <p className="text-slate-500 text-sm mt-1">Total in Queue</p>
-            {usingDemo && <span className="mt-1 inline-block rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold uppercase text-amber-700">demo</span>}
-          </div>
-          <div className="bg-white rounded-2xl p-5 shadow"><p className="text-3xl font-bold text-blue-600">{processing}</p><p className="text-slate-500 text-sm mt-1">Processing</p></div>
-          <div className="bg-white rounded-2xl p-5 shadow"><p className="text-3xl font-bold text-yellow-600">{readyForReview}</p><p className="text-slate-500 text-sm mt-1">Ready for Review</p></div>
-          <div className="bg-white rounded-2xl p-5 shadow"><p className="text-3xl font-bold text-green-600">{approved}</p><p className="text-slate-500 text-sm mt-1">Approved</p></div>
-        </div>
-
-        <div className="bg-white rounded-3xl p-8 shadow-lg mt-8">
+        <InfoCard className="mt-8">
           <div className="border-2 border-dashed border-slate-300 rounded-3xl p-8 text-center">
-            <p className="text-slate-500">Upload PDF / EPUB / scanned documents (demo)</p>
-            <button onClick={simulateUpload} className="mt-6 bg-blue-600 text-white px-6 py-3 rounded-xl font-semibold hover:bg-blue-700">
-              Simulate New Upload
-            </button>
+            <p className="text-slate-500">
+              Upload a real PDF — once approved in this queue, it becomes an actual readable book across the site (homepage, library, AI Tutor, Read).
+            </p>
+            <label className="mt-6 inline-block cursor-pointer">
+              <span className={`inline-block rounded-xl bg-orange-600 px-6 py-2.5 text-sm font-bold text-white shadow-md shadow-orange-500/25 transition ${uploading ? "opacity-60" : "hover:bg-orange-700"}`}>
+                {uploading ? "Reading PDF…" : "Choose PDF to Upload"}
+              </span>
+              <input type="file" accept="application/pdf" onChange={handleFileSelected} disabled={uploading} className="hidden" />
+            </label>
+            {uploadError && <p className="mt-3 text-xs font-semibold text-red-600">{uploadError}</p>}
           </div>
-        </div>
+        </InfoCard>
 
-        <div className="bg-white rounded-3xl shadow mt-6 overflow-hidden overflow-x-auto">
+        <div className="bg-white rounded-3xl shadow-[0_20px_60px_rgba(75,45,12,0.10)] ring-1 ring-black/5 mt-6 overflow-hidden overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="bg-slate-50 border-b border-slate-200">
               <tr>{["File", "Detected Title", "Status", "Submitted", "Actions"].map(h => (

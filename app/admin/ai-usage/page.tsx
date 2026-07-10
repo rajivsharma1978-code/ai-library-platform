@@ -3,11 +3,15 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import AdminSidebar from "@/components/admin/AdminSidebar";
-import { loadAIUsage, loadActivity, type AdminActivityEntry } from "@/components/admin/adminData";
+import { loadAIUsage, loadActivity, type AdminActivityEntry, type AIFeature } from "@/components/admin/adminData";
+import PageHeader from "@/components/ui/PageHeader";
+import StatCard from "@/components/ui/StatCard";
+import InfoCard from "@/components/ui/InfoCard";
 
 const DEMO_AI_QUESTIONS = 24;
-// Feature breakdown is demo-only — ndl_ai_usage_stats only tracks a single
-// total count today, not per-feature usage, so this is clearly labeled.
+// Shown only until real per-feature usage exists — every AI action
+// (Explain, Summarize, Translate, Quiz, Flashcards, Revision) now calls
+// trackAIUsage(), which fills in ndl_ai_usage_stats.byFeature for real.
 const DEMO_FEATURE_BREAKDOWN = [
   { feature: "Explain", pct: 32 },
   { feature: "Summarize", pct: 24 },
@@ -15,6 +19,10 @@ const DEMO_FEATURE_BREAKDOWN = [
   { feature: "Translate", pct: 14 },
   { feature: "Flashcards", pct: 10 },
 ];
+const FEATURE_LABELS: Record<AIFeature, string> = {
+  explain: "Explain", summarize: "Summarize", translate: "Translate",
+  quiz: "Quiz", flashcards: "Flashcards", revision: "Revision",
+};
 
 function timeAgo(ts: number): string {
   const diff = Date.now() - ts;
@@ -34,6 +42,8 @@ export default function AdminAIUsagePage() {
   const [lastUsedAt, setLastUsedAt] = useState<number | undefined>(undefined);
   const [usingDemo, setUsingDemo] = useState(false);
   const [aiActivity, setAiActivity] = useState<AdminActivityEntry[]>([]);
+  const [featureBreakdown, setFeatureBreakdown] = useState<{ feature: string; pct: number }[]>(DEMO_FEATURE_BREAKDOWN);
+  const [usingDemoFeatures, setUsingDemoFeatures] = useState(true);
 
   useEffect(() => {
     if (localStorage.getItem("ndlAdminAccess") !== "granted") {
@@ -46,65 +56,77 @@ export default function AdminAIUsagePage() {
     setAiQuestions(usage.questionsAsked > 0 ? usage.questionsAsked : DEMO_AI_QUESTIONS);
     setLastUsedAt(usage.lastUsedAt);
     setAiActivity(loadActivity().filter(a => a.type === "ai"));
+
+    const byFeature = usage.byFeature || {};
+    const totalFeatureCount = (Object.values(byFeature) as number[]).reduce((a, b) => a + (b || 0), 0);
+    if (totalFeatureCount > 0) {
+      setUsingDemoFeatures(false);
+      setFeatureBreakdown(
+        (Object.entries(byFeature) as [AIFeature, number][])
+          .filter(([, count]) => count > 0)
+          .sort((a, b) => b[1] - a[1])
+          .map(([feature, count]) => ({ feature: FEATURE_LABELS[feature], pct: Math.round((count / totalFeatureCount) * 100) }))
+      );
+    }
     setMounted(true);
   }, [router]);
 
   if (!mounted || !checkedAccess) {
     return (
-      <main className="flex min-h-screen items-center justify-center bg-slate-100">
+      <main className="flex min-h-screen items-center justify-center bg-[radial-gradient(circle_at_top,#fff8e8_0%,#f3e6c8_45%,#eaddc0_100%)]">
         <p className="text-sm font-semibold text-slate-400">Checking admin access…</p>
       </main>
     );
   }
 
   return (
-    <main className="min-h-screen bg-slate-100 flex">
+    <main className="min-h-screen bg-[radial-gradient(circle_at_top,#fff8e8_0%,#f3e6c8_45%,#eaddc0_100%)] flex">
       <AdminSidebar />
       <section className="flex-1 p-8 overflow-auto">
-        <div className="bg-gradient-to-r from-purple-700 to-indigo-700 text-white rounded-3xl p-10 shadow-2xl">
-          <p className="uppercase tracking-widest text-sm opacity-80">Admin · AI Usage</p>
-          <h2 className="text-4xl font-bold mt-2">AI Usage</h2>
-          <p className="mt-3 text-purple-100">Monitor how learners are using the AI Companion across the platform.</p>
-        </div>
+        <PageHeader
+          badge="Admin · AI Usage"
+          title="AI Usage"
+          subtitle="Monitor how learners are using the AI Companion across the platform."
+          homeLabel="Library"
+        />
 
-        <div className="mt-6 rounded-2xl bg-amber-50 px-5 py-3 text-sm font-semibold text-amber-800 ring-1 ring-amber-200">
+        <InfoCard tone="amber" className="mb-6 py-3 text-sm font-semibold">
           📌 Demo admin actions are stored locally for this prototype — nothing here touches a real backend.
-        </div>
+        </InfoCard>
 
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-6">
-          <div className="bg-white rounded-2xl p-5 shadow">
-            <p className="text-3xl font-bold text-purple-600">{aiQuestions}</p>
-            <p className="text-slate-500 text-sm mt-1">Total AI Questions</p>
-            {usingDemo && <span className="mt-1 inline-block rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold uppercase text-amber-700">demo</span>}
-          </div>
-          <div className="bg-white rounded-2xl p-5 shadow">
-            <p className="text-lg font-bold text-slate-900">{lastUsedAt ? timeAgo(lastUsedAt) : "No activity yet"}</p>
-            <p className="text-slate-500 text-sm mt-1">Last Used</p>
-          </div>
-          <div className="bg-white rounded-2xl p-5 shadow"><p className="text-3xl font-bold text-green-600">98%</p><p className="text-slate-500 text-sm mt-1">Success Rate <span className="text-[10px] font-bold uppercase text-amber-600">demo</span></p></div>
-          <div className="bg-white rounded-2xl p-5 shadow"><p className="text-3xl font-bold text-blue-600">1.4s</p><p className="text-slate-500 text-sm mt-1">Avg Response Time <span className="text-[10px] font-bold uppercase text-amber-600">demo</span></p></div>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <StatCard label="Total AI Questions" value={aiQuestions} badge={usingDemo ? "demo" : undefined} />
+          <StatCard label="Last Used" value={lastUsedAt ? timeAgo(lastUsedAt) : "No activity yet"} valueClassName="text-lg text-slate-950" />
+          <StatCard label="Success Rate" value="98%" valueClassName="text-green-600" badge="demo" />
+          <StatCard label="Avg Response Time" value="1.4s" badge="demo" />
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mt-8">
-          <div className="bg-white rounded-3xl p-8 shadow-lg">
+          <InfoCard>
             <div className="flex items-center justify-between">
-              <h3 className="text-2xl font-bold">Usage by Feature</h3>
-              <span className="rounded-full bg-amber-100 px-3 py-1 text-[10px] font-bold uppercase text-amber-700">demo</span>
+              <h3 className="text-2xl font-black text-slate-950">Usage by Feature</h3>
+              {usingDemoFeatures && (
+                <span className="rounded-full bg-amber-100 px-3 py-1 text-[10px] font-bold uppercase text-amber-700">demo</span>
+              )}
             </div>
             <div className="mt-6 space-y-4">
-              {DEMO_FEATURE_BREAKDOWN.map(f => (
+              {featureBreakdown.map(f => (
                 <div key={f.feature}>
-                  <div className="flex justify-between text-sm"><p>{f.feature}</p><p>{f.pct}%</p></div>
+                  <div className="flex justify-between text-sm text-slate-700"><p>{f.feature}</p><p>{f.pct}%</p></div>
                   <div className="w-full bg-slate-200 h-3 rounded-full mt-2">
-                    <div className="bg-purple-600 h-3 rounded-full" style={{ width: `${f.pct}%` }} />
+                    <div className="bg-amber-500 h-3 rounded-full" style={{ width: `${f.pct}%` }} />
                   </div>
                 </div>
               ))}
             </div>
-          </div>
+          </InfoCard>
 
-          <div className="bg-white rounded-3xl p-8 shadow-lg">
-            <h3 className="text-2xl font-bold">AI System Status</h3>
+          <InfoCard>
+            <div className="flex items-center justify-between">
+              <h3 className="text-2xl font-black text-slate-950">AI System Status</h3>
+              <span className="rounded-full bg-slate-100 px-3 py-1 text-[10px] font-bold uppercase text-slate-500">static</span>
+            </div>
+            <p className="mt-1 text-xs text-slate-400">Fixed configuration flags, not a live health check — there's no backend service to poll in this prototype.</p>
             <div className="mt-6 space-y-4">
               {[
                 ["AI Provider", "Demo / OpenAI Ready"],
@@ -112,16 +134,16 @@ export default function AdminAIUsagePage() {
                 ["Voice Reader Integration", "Enabled"],
                 ["Fallback Mode", "Enabled"],
               ].map(([label, value]) => (
-                <div key={label} className="flex justify-between border-b pb-3">
-                  <span>{label}</span><span className="font-bold text-green-600">{value}</span>
+                <div key={label} className="flex justify-between border-b border-slate-100 pb-3">
+                  <span className="text-slate-700">{label}</span><span className="font-bold text-green-600">{value}</span>
                 </div>
               ))}
             </div>
-          </div>
+          </InfoCard>
         </div>
 
-        <div className="bg-white rounded-3xl p-8 shadow-lg mt-8">
-          <h3 className="text-2xl font-bold">Recent AI Activity</h3>
+        <InfoCard className="mt-8">
+          <h3 className="text-2xl font-black text-slate-950">Recent AI Activity</h3>
           {aiActivity.length === 0 ? (
             <p className="mt-4 text-slate-500">No AI-related admin activity logged yet.</p>
           ) : (
@@ -135,7 +157,7 @@ export default function AdminAIUsagePage() {
               ))}
             </div>
           )}
-        </div>
+        </InfoCard>
       </section>
     </main>
   );

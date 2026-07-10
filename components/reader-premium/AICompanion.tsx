@@ -4,6 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import StudyWorkspace, { RevisionAction } from "./study/StudyWorkspace";
 import type { StoredHighlight, StoredNote, StoredBookmark } from "./study/studyData";
+import { useEnabledLanguages, LANGUAGE_NAME_TO_CODE } from "@/lib/languageSettings";
 
 const LANGUAGES = ["English", "Hindi", "Tamil", "Bengali", "Marathi", "Telugu"] as const;
 type Lang = typeof LANGUAGES[number];
@@ -129,6 +130,8 @@ export default function AICompanion({
   // "study" is the new Phase 2 workspace. Nothing inside the "companion"
   // branch below was modified from the original implementation.
   const [outerTab, setOuterTab] = useState<"companion" | "study">("companion");
+  const enabledLanguageCodes = useEnabledLanguages();
+  const availableLanguages = LANGUAGES.filter(l => enabledLanguageCodes.includes(LANGUAGE_NAME_TO_CODE[l]));
 
   // ── Layout refinement state ────────────────────────────────────────
   // Shortcuts: collapsed by default — a compact escape hatch to the rest
@@ -232,7 +235,7 @@ export default function AICompanion({
           onChange={(e) => onLanguageChange(e.target.value as Lang)}
           className="flex-1 rounded-lg bg-slate-900 px-2 py-1.5 text-xs font-semibold text-white outline-none"
         >
-          {LANGUAGES.map(l => <option key={l} value={l}>{l}</option>)}
+          {availableLanguages.map(l => <option key={l} value={l}>{l}</option>)}
         </select>
       </div>
 

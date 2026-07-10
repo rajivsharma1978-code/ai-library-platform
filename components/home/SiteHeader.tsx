@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { UI_TEXT, LANGUAGE_NAMES, type Language } from "@/lib/i18n";
 import { useLanguage } from "@/lib/useLanguage";
+import { useEnabledLanguages } from "@/lib/languageSettings";
 
 interface NDLUser { name: string; role: string; }
 
@@ -27,6 +28,7 @@ const USER_NAV = [
 
 export function SiteHeader() {
   const { language, setLanguage } = useLanguage();
+  const enabledLanguages = useEnabledLanguages();
   const [user, setUser] = useState<NDLUser | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [learningOpen, setLearningOpen] = useState(false);
@@ -163,9 +165,11 @@ export function SiteHeader() {
           <div className="relative hidden sm:block">
             <select value={language} onChange={e => setLanguage(e.target.value as Language)}
               className="appearance-none pl-7 pr-6 py-1.5 text-[12.5px] font-medium text-gray-700 bg-transparent border-0 outline-none cursor-pointer">
-              {(Object.entries(LANGUAGE_NAMES) as [Language, string][]).map(([c, n]) => (
-                <option key={c} value={c}>{n}</option>
-              ))}
+              {(Object.entries(LANGUAGE_NAMES) as [Language, string][])
+                .filter(([c]) => enabledLanguages.includes(c))
+                .map(([c, n]) => (
+                  <option key={c} value={c}>{n}</option>
+                ))}
             </select>
             <span className="pointer-events-none absolute left-1.5 top-1/2 -translate-y-1/2 text-base">🇮🇳</span>
             <span className="pointer-events-none absolute right-1 top-1/2 -translate-y-1/2 text-[10px] text-gray-500">▾</span>

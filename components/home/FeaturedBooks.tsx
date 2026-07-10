@@ -3,23 +3,21 @@
 import Link from "next/link";
 import { useRef, useState, type MouseEvent } from "react";
 import { motion } from "framer-motion";
-import { directorBooks } from "@/lib/directorBooks";
+import { usePublicCatalog, type CatalogBook } from "@/lib/catalog";
 import RealBookCover from "./RealBookCover";
 import { UI_TEXT } from "@/lib/i18n";
 import { useLanguage } from "@/lib/useLanguage";
-
-type DirectorBook = { id: string; title: string; author?: string; language?: string; description?: string; [k: string]: any };
 
 export function FeaturedBooks() {
   const { language } = useLanguage();
   const t = UI_TEXT[language];
   const isEn = t.navLibrary === "Library";
   const scrollRef = useRef<HTMLDivElement>(null);
-  const [summaryBook, setSummaryBook] = useState<DirectorBook | null>(null);
+  const [summaryBook, setSummaryBook] = useState<CatalogBook | null>(null);
   const [summaryText, setSummaryText] = useState("");
   const [loading, setLoading] = useState(false);
 
-  const books = directorBooks as DirectorBook[];
+  const books = usePublicCatalog();
 
   const scroll = (dir: "left" | "right") => {
     scrollRef.current?.scrollBy({ left: dir === "right" ? 260 : -260, behavior: "smooth" });
@@ -29,7 +27,7 @@ export function FeaturedBooks() {
   // dependency on a separate mock summaries dictionary unrelated to the
   // real catalog. The short delay is kept purely for the loading-skeleton
   // feel; the content itself is real.
-  const openSummary = (book: DirectorBook) => {
+  const openSummary = (book: CatalogBook) => {
     setSummaryBook(book); setSummaryText(""); setLoading(true);
     setTimeout(() => {
       setSummaryText(book.description || (isEn ? "Summary not available." : "सारांश उपलब्ध नहीं है।"));

@@ -7,12 +7,23 @@ import {
   loadModeration, saveModeration, usingDemoModeration, logActivity,
   type ModerationFlag, type ModerationSeverity,
 } from "@/components/admin/adminData";
+import PageHeader from "@/components/ui/PageHeader";
+import StatCard from "@/components/ui/StatCard";
+import InfoCard from "@/components/ui/InfoCard";
+import FilterBar from "@/components/ui/FilterBar";
 
 const SEVERITY_COLORS: Record<ModerationSeverity, string> = {
   Low: "bg-slate-200 text-slate-600",
   Medium: "bg-yellow-100 text-yellow-700",
   High: "bg-red-100 text-red-700",
 };
+
+type ModerationFilter = "All" | "Open" | "Resolved";
+const FILTER_OPTIONS: { key: ModerationFilter; label: string }[] = [
+  { key: "Open", label: "Open" },
+  { key: "Resolved", label: "Resolved" },
+  { key: "All", label: "All" },
+];
 
 function timeAgo(ts: number): string {
   const diff = Date.now() - ts;
@@ -29,7 +40,7 @@ export default function AdminModerationPage() {
   const [checkedAccess, setCheckedAccess] = useState(false);
   const [flags, setFlags] = useState<ModerationFlag[]>([]);
   const [usingDemo, setUsingDemo] = useState(false);
-  const [filter, setFilter] = useState<"All" | "Open" | "Resolved">("Open");
+  const [filter, setFilter] = useState<ModerationFilter>("Open");
 
   function refresh() {
     setFlags(loadModeration());
@@ -64,7 +75,7 @@ export default function AdminModerationPage() {
 
   if (!mounted || !checkedAccess) {
     return (
-      <main className="flex min-h-screen items-center justify-center bg-slate-100">
+      <main className="flex min-h-screen items-center justify-center bg-[radial-gradient(circle_at_top,#fff8e8_0%,#f3e6c8_45%,#eaddc0_100%)]">
         <p className="text-sm font-semibold text-slate-400">Checking admin access…</p>
       </main>
     );
@@ -76,40 +87,32 @@ export default function AdminModerationPage() {
   const visible = flags.filter(f => filter === "All" || f.status === filter);
 
   return (
-    <main className="min-h-screen bg-slate-100 flex">
+    <main className="min-h-screen bg-[radial-gradient(circle_at_top,#fff8e8_0%,#f3e6c8_45%,#eaddc0_100%)] flex">
       <AdminSidebar />
       <section className="flex-1 p-8 overflow-auto">
-        <div className="bg-gradient-to-r from-red-700 to-orange-600 text-white rounded-3xl p-10 shadow-2xl">
-          <p className="uppercase tracking-widest text-sm opacity-80">Admin · Moderation</p>
-          <h2 className="text-4xl font-bold mt-2">Moderation Alerts</h2>
-          <p className="mt-3 text-red-100">Review and resolve flagged content across the platform.</p>
-        </div>
+        <PageHeader
+          badge="Admin · Moderation"
+          title="Moderation Alerts"
+          subtitle="Review and resolve flagged content across the platform."
+          homeLabel="Library"
+        />
 
-        <div className="mt-6 rounded-2xl bg-amber-50 px-5 py-3 text-sm font-semibold text-amber-800 ring-1 ring-amber-200">
+        <InfoCard tone="amber" className="mb-6 py-3 text-sm font-semibold">
           📌 Demo admin actions are stored locally for this prototype — nothing here touches a real backend.
+        </InfoCard>
+
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <StatCard label="Total Flags" value={flags.length} badge={usingDemo ? "demo" : undefined} />
+          <StatCard label="Open" value={open} valueClassName="text-yellow-600" />
+          <StatCard label="Resolved" value={resolved} valueClassName="text-green-600" />
+          <StatCard label="High Severity (Open)" value={highSeverity} valueClassName="text-red-600" />
         </div>
 
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-6">
-          <div className="bg-white rounded-2xl p-5 shadow">
-            <p className="text-3xl font-bold text-slate-900">{flags.length}</p>
-            <p className="text-slate-500 text-sm mt-1">Total Flags</p>
-            {usingDemo && <span className="mt-1 inline-block rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold uppercase text-amber-700">demo</span>}
-          </div>
-          <div className="bg-white rounded-2xl p-5 shadow"><p className="text-3xl font-bold text-yellow-600">{open}</p><p className="text-slate-500 text-sm mt-1">Open</p></div>
-          <div className="bg-white rounded-2xl p-5 shadow"><p className="text-3xl font-bold text-green-600">{resolved}</p><p className="text-slate-500 text-sm mt-1">Resolved</p></div>
-          <div className="bg-white rounded-2xl p-5 shadow"><p className="text-3xl font-bold text-red-600">{highSeverity}</p><p className="text-slate-500 text-sm mt-1">High Severity (Open)</p></div>
+        <div className="mt-6">
+          <FilterBar options={FILTER_OPTIONS} active={filter} onChange={setFilter} />
         </div>
 
-        <div className="mt-6 flex gap-2">
-          {(["Open", "Resolved", "All"] as const).map(f => (
-            <button key={f} onClick={() => setFilter(f)}
-              className={`rounded-full px-4 py-2 text-sm font-bold ${filter === f ? "bg-slate-900 text-white" : "bg-white text-slate-600 shadow"}`}>
-              {f}
-            </button>
-          ))}
-        </div>
-
-        <div className="bg-white rounded-3xl shadow mt-6 overflow-hidden overflow-x-auto">
+        <div className="bg-white rounded-3xl shadow-[0_20px_60px_rgba(75,45,12,0.10)] ring-1 ring-black/5 mt-6 overflow-hidden overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="bg-slate-50 border-b border-slate-200">
               <tr>{["Subject", "Reason", "Severity", "Status", "Flagged", "Actions"].map(h => (

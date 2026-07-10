@@ -3,12 +3,10 @@
 import Link from "next/link";
 import { useRef } from "react";
 import { motion } from "framer-motion";
-import { directorBooks } from "@/lib/directorBooks";
+import { usePublicCatalog } from "@/lib/catalog";
 import RealBookCover from "./RealBookCover";
 import { UI_TEXT } from "@/lib/i18n";
 import { useLanguage } from "@/lib/useLanguage";
-
-type DirectorBook = { id: string; title: string; author?: string; language?: string; [k: string]: any };
 
 export function NewArrivals() {
   const { language } = useLanguage();
@@ -19,7 +17,8 @@ export function NewArrivals() {
   // Same real catalog as Featured Books, shown in reverse order for a
   // touch of visual variety between the two sections — there's no real
   // "date added" field to sort by with only three demo books.
-  const books = [...(directorBooks as DirectorBook[])].reverse();
+  const catalog = usePublicCatalog();
+  const books = [...catalog].reverse();
 
   return (
     <section id="new-arrivals" className="bg-white border-b border-gray-100 py-10">

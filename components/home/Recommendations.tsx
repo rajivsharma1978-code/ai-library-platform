@@ -3,12 +3,12 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
-import { directorBooks } from "@/lib/directorBooks";
+import { usePublicCatalog, type CatalogBook } from "@/lib/catalog";
 import RealBookCover from "./RealBookCover";
 import { UI_TEXT } from "@/lib/i18n";
 import { useLanguage } from "@/lib/useLanguage";
 
-type DirectorBook = { id: string; title: string; author?: string; pages?: number | string; [k: string]: any };
+type DirectorBook = CatalogBook;
 interface ReadingProgressEntry { bookId: string; currentPage: number; totalPages: number; lastReadAt: number; [k: string]: any }
 
 const TESTIMONIALS = [
@@ -41,7 +41,7 @@ export function Recommendations() {
   const { language } = useLanguage();
   const t = UI_TEXT[language];
   const isEn = t.navLibrary === "Library";
-  const books = directorBooks as DirectorBook[];
+  const books = usePublicCatalog();
 
   const [mounted, setMounted] = useState(false);
   const [progress, setProgress] = useState<ReadingProgressEntry[]>([]);

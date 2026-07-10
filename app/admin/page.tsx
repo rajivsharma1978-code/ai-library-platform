@@ -9,10 +9,13 @@ import { useLanguage } from "@/lib/useLanguage";
 import { directorBooks } from "@/lib/directorBooks";
 import {
   loadBookOverrides, loadActivity, loadAIUsage, buildDisplayBooks,
+  loadUsers, usingDemoUsers,
   type AdminActivityEntry, type ActivityType,
 } from "@/components/admin/adminData";
+import PageHeader from "@/components/ui/PageHeader";
+import StatCard from "@/components/ui/StatCard";
+import InfoCard from "@/components/ui/InfoCard";
 
-const DEMO_USERS_COUNT = 128;
 const DEMO_AI_QUESTIONS = 24;
 
 const DEMO_ACTIVITY: AdminActivityEntry[] = [
@@ -57,7 +60,7 @@ export default function AdminPage() {
 
   if (!mounted || !checkedAccess) {
     return (
-      <main className="flex min-h-screen items-center justify-center bg-slate-100">
+      <main className="flex min-h-screen items-center justify-center bg-[radial-gradient(circle_at_top,#fff8e8_0%,#f3e6c8_45%,#eaddc0_100%)]">
         <p className="text-sm font-semibold text-slate-400">Checking admin access…</p>
       </main>
     );
@@ -75,72 +78,69 @@ export default function AdminPage() {
   const aiQuestions = aiUsage.questionsAsked > 0 ? aiUsage.questionsAsked : DEMO_AI_QUESTIONS;
   const usingDemoAI = aiUsage.questionsAsked === 0;
 
+  // Same list Admin → Users manages — Add/Remove there now shows up here
+  // too, instead of a number nothing was ever connected to.
+  const userCount = loadUsers().length;
+  const usingDemoUsersCount = usingDemoUsers();
+
   const realActivity = loadActivity();
   const usingDemoActivity = realActivity.length === 0;
   const activity = (usingDemoActivity ? DEMO_ACTIVITY : realActivity).slice(0, 8);
 
   return (
-    <main className="min-h-screen bg-slate-100 flex">
+    <main className="min-h-screen bg-[radial-gradient(circle_at_top,#fff8e8_0%,#f3e6c8_45%,#eaddc0_100%)] flex">
       <AdminSidebar />
 
       <section className="flex-1 p-8 overflow-auto">
-        <div className="bg-gradient-to-r from-indigo-700 via-blue-700 to-purple-700 text-white rounded-3xl p-10 shadow-2xl">
-          <p className="uppercase tracking-widest text-sm opacity-80">Admin Control Center</p>
-          <h2 className="text-5xl font-bold mt-3">Manage AI-Powered Digital Library</h2>
-          <p className="mt-4 text-blue-100">
-            Upload content, manage metadata, monitor AI usage, and track activity across the platform.
-          </p>
-        </div>
+        <PageHeader
+          badge="Admin Control Center"
+          title="Manage AI-Powered Digital Library"
+          subtitle="Upload content, manage metadata, monitor AI usage, and track activity across the platform."
+          homeLabel="Library"
+        />
 
-        <div className="mt-6 rounded-2xl bg-amber-50 px-5 py-3 text-sm font-semibold text-amber-800 ring-1 ring-amber-200">
+        <InfoCard tone="amber" className="mb-8 py-3 text-sm font-semibold">
           📌 Demo admin actions are stored locally for this prototype — nothing here touches a real backend.
-        </div>
+        </InfoCard>
 
         {/* 1. Dashboard overview */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-6 mt-8">
-          {[
-            [String(totalBooks), "Total Books"],
-            [String(publishedBooks), "Published"],
-            [String(draftBooks), "Draft"],
-            [String(DEMO_USERS_COUNT), "Users"],
-            [String(aiQuestions), "AI Questions"],
-            [String(uniqueLanguages), "Languages"],
-            [String(uploadQueueCount), "Upload Queue"],
-            [String(activity.length), "Recent Activity"],
-          ].map(([value, label]) => (
-            <div key={label} className="bg-white rounded-3xl p-6 shadow-lg">
-              <p className="text-4xl font-bold text-slate-900">{value}</p>
-              <p className="text-slate-500 mt-2">{label}</p>
-            </div>
-          ))}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
+          <StatCard icon="📚" label="Total Books" value={totalBooks} />
+          <StatCard icon="✅" label="Published" value={publishedBooks} />
+          <StatCard icon="📝" label="Draft" value={draftBooks} />
+          <StatCard icon="👥" label="Users" value={userCount} badge={usingDemoUsersCount ? "demo" : undefined} />
+          <StatCard icon="🤖" label="AI Questions" value={aiQuestions} badge={usingDemoAI ? "demo" : undefined} />
+          <StatCard icon="🌐" label="Languages" value={uniqueLanguages} />
+          <StatCard icon="⬆️" label="Upload Queue" value={uploadQueueCount} />
+          <StatCard icon="🕐" label="Recent Activity" value={activity.length} />
         </div>
 
         {/* 4. Quick actions */}
         <div className="mt-8">
-          <h3 className="text-lg font-black text-slate-800 mb-3">Quick Actions</h3>
+          <h3 className="text-lg font-black text-slate-950 mb-3">Quick Actions</h3>
           <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-            <Link href="/admin/book-management?action=add" className="rounded-2xl bg-blue-600 px-4 py-4 text-center text-sm font-bold text-white shadow hover:bg-blue-700">
+            <Link href="/admin/book-management?action=add" className="rounded-2xl bg-orange-600 px-4 py-4 text-center text-sm font-bold text-white shadow-md shadow-orange-500/25 hover:bg-orange-700">
               ➕ Add Book
             </Link>
-            <Link href="/admin/users" className="rounded-2xl bg-slate-900 px-4 py-4 text-center text-sm font-bold text-white shadow hover:bg-slate-800">
+            <Link href="/admin/users" className="rounded-2xl bg-slate-950 px-4 py-4 text-center text-sm font-bold text-white shadow hover:bg-slate-800">
               👥 Manage Users
             </Link>
-            <Link href="/admin/ai-usage" className="rounded-2xl bg-slate-900 px-4 py-4 text-center text-sm font-bold text-white shadow hover:bg-slate-800">
+            <Link href="/admin/ai-usage" className="rounded-2xl bg-slate-950 px-4 py-4 text-center text-sm font-bold text-white shadow hover:bg-slate-800">
               🤖 View AI Usage
             </Link>
-            <Link href="/admin/languages" className="rounded-2xl bg-slate-900 px-4 py-4 text-center text-sm font-bold text-white shadow hover:bg-slate-800">
+            <Link href="/admin/languages" className="rounded-2xl bg-slate-950 px-4 py-4 text-center text-sm font-bold text-white shadow hover:bg-slate-800">
               🌐 Language Settings
             </Link>
-            <Link href="/admin/upload-queue" className="rounded-2xl bg-slate-900 px-4 py-4 text-center text-sm font-bold text-white shadow hover:bg-slate-800">
+            <Link href="/admin/upload-queue" className="rounded-2xl bg-slate-950 px-4 py-4 text-center text-sm font-bold text-white shadow hover:bg-slate-800">
               ⬆️ Upload Queue
             </Link>
           </div>
         </div>
 
         {/* 3. Admin Activity */}
-        <div className="bg-white rounded-3xl p-8 shadow-lg mt-8">
+        <InfoCard className="mt-8">
           <div className="flex items-center justify-between">
-            <h3 className="text-2xl font-bold">Recent Activity</h3>
+            <h3 className="text-2xl font-black text-slate-950">Recent Activity</h3>
             {usingDemoActivity && (
               <span className="rounded-full bg-amber-100 px-3 py-1 text-[10px] font-bold uppercase text-amber-700">demo</span>
             )}
@@ -154,11 +154,15 @@ export default function AdminPage() {
               </div>
             ))}
           </div>
-        </div>
+        </InfoCard>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mt-8">
-          <div className="bg-white rounded-3xl p-8 shadow-lg">
-            <h3 className="text-2xl font-bold">AI System Status</h3>
+          <InfoCard>
+            <div className="flex items-center justify-between">
+              <h3 className="text-2xl font-black text-slate-950">AI System Status</h3>
+              <span className="rounded-full bg-slate-100 px-3 py-1 text-[10px] font-bold uppercase text-slate-500">static</span>
+            </div>
+            <p className="mt-1 text-xs text-slate-400">Fixed configuration flags, not a live health check — there's no backend service to poll in this prototype.</p>
             <div className="mt-6 space-y-4">
               {[
                 ["AI Provider", "Demo / OpenAI Ready"],
@@ -167,34 +171,34 @@ export default function AdminPage() {
                 ["Voice Reader", "Enabled"],
                 ["Fallback Mode", "Enabled"],
               ].map(([label, value]) => (
-                <div key={label} className="flex justify-between border-b pb-3">
-                  <span>{label}</span>
+                <div key={label} className="flex justify-between border-b border-slate-100 pb-3">
+                  <span className="text-slate-700">{label}</span>
                   <span className="font-bold text-green-600">{value}</span>
                 </div>
               ))}
             </div>
-          </div>
+          </InfoCard>
 
-          <div className="bg-white rounded-3xl p-8 shadow-lg">
-            <h3 className="text-2xl font-bold">Language Coverage</h3>
+          <InfoCard>
+            <h3 className="text-2xl font-black text-slate-950">Language Coverage</h3>
             <div className="mt-6 space-y-4">
               {Array.from(new Set(displayBooks.map(b => b.language))).map(lang => {
                 const count = displayBooks.filter(b => b.language === lang).length;
                 const pct = Math.round((count / Math.max(1, totalBooks)) * 100);
                 return (
                   <div key={lang}>
-                    <div className="flex justify-between text-sm">
+                    <div className="flex justify-between text-sm text-slate-700">
                       <p>{lang}</p>
                       <p>{count} book{count === 1 ? "" : "s"} · {pct}%</p>
                     </div>
                     <div className="w-full bg-slate-200 h-3 rounded-full mt-2">
-                      <div className="bg-blue-600 h-3 rounded-full" style={{ width: `${pct}%` }} />
+                      <div className="bg-amber-500 h-3 rounded-full" style={{ width: `${pct}%` }} />
                     </div>
                   </div>
                 );
               })}
             </div>
-          </div>
+          </InfoCard>
         </div>
       </section>
     </main>

@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { UI_TEXT } from "@/lib/i18n";
 import { useLanguage } from "@/lib/useLanguage";
-import { directorBooks } from "@/lib/directorBooks";
+import { usePublicCatalog } from "@/lib/catalog";
 import PageHeader from "@/components/ui/PageHeader";
 import QuickLinks from "@/components/ui/QuickLinks";
 import AppButton from "@/components/ui/AppButton";
@@ -31,8 +31,8 @@ function readArray<T>(key: string): T[] {
     return Array.isArray(parsed) ? parsed : [];
   } catch { return []; }
 }
-function findBookById(id: string): DirectorBook | undefined {
-  return (directorBooks as DirectorBook[]).find(b => b.id === id);
+function findBookById(books: DirectorBook[], id: string): DirectorBook | undefined {
+  return books.find(b => b.id === id);
 }
 function bookCover(book?: DirectorBook): string | undefined {
   const c = book?.cover || book?.coverUrl || book?.image || book?.thumbnail;
@@ -136,6 +136,7 @@ export default function AiTutorPage() {
 
   const [mounted, setMounted] = useState(false);
   const [progress, setProgress] = useState<ReadingProgressEntry[]>([]);
+  const catalogBooks = usePublicCatalog();
 
   useEffect(() => {
     setProgress(readArray<ReadingProgressEntry>("ndl_reading_progress"));
@@ -145,21 +146,29 @@ export default function AiTutorPage() {
   // ── 1. Continue Learning — most recently read book, else Quantum ──────
   const continueBook = useMemo(() => {
     const sorted = [...progress].sort((a, b) => b.lastReadAt - a.lastReadAt);
-    const fromProgress = sorted.length > 0 ? findBookById(sorted[0].bookId) : undefined;
-    return fromProgress ?? findBookById("quantum") ?? (directorBooks as DirectorBook[])[0];
-  }, [progress]);
+    const fromProgress = sorted.length > 0 ? findBookById(catalogBooks, sorted[0].bookId) : undefined;
+    return fromProgress ?? findBookById(catalogBooks, "quantum") ?? catalogBooks[0];
+  }, [progress, catalogBooks]);
   const continueProgressEntry = progress.find(p => p.bookId === continueBook?.id);
   const usingFallbackContinue = !continueProgressEntry;
 
-  // ── 2. Recommended for Demo — Quantum, Nalanda, Chandrayaan (whichever
-  // actually exist in the catalog today), excluding whatever's already
-  // shown in Continue Learning so the same book doesn't appear twice. ────
+  // ── 2. Recommended for Demo — Quantum, Nalanda, Chandrayaan seed the
+  // order (whichever actually exist in the catalog today), then any other
+  // published catalog book — including ones an admin just approved from
+  // the Upload Queue — is appended after them, so a newly-published book
+  // actually shows up here instead of only on pages that list everything.
+  // Excludes whatever's already shown in Continue Learning so the same
+  // book doesn't appear twice. Capped at 6 so the grid stays reasonable. ─
   const recommended = useMemo(() => {
-    const ids = ["quantum", "nalanda", "chandrayaan-3"];
-    return ids
-      .map(id => findBookById(id))
-      .filter((b): b is DirectorBook => !!b && b.id !== continueBook?.id);
-  }, [continueBook]);
+    const seedIds = ["quantum", "nalanda", "chandrayaan-3"];
+    const seeded = seedIds
+      .map(id => findBookById(catalogBooks, id))
+      .filter((b): b is DirectorBook => !!b);
+    const extra = catalogBooks.filter(b => !seedIds.includes(b.id));
+    return [...seeded, ...extra]
+      .filter(b => b.id !== continueBook?.id)
+      .slice(0, 6);
+  }, [continueBook, catalogBooks]);
 
   const quickLinks = [
     { href: "/", icon: "🏠", label: t.commonHome },

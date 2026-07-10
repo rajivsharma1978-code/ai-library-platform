@@ -8,6 +8,9 @@ import {
   loadBookOverrides, buildDisplayBooks, loadLanguageSettings, saveLanguageSettings,
   usingDemoLanguageSettings, logActivity, type AdminLanguageSetting,
 } from "@/components/admin/adminData";
+import PageHeader from "@/components/ui/PageHeader";
+import StatCard from "@/components/ui/StatCard";
+import InfoCard from "@/components/ui/InfoCard";
 
 export default function AdminLanguagesPage() {
   const router = useRouter();
@@ -52,7 +55,7 @@ export default function AdminLanguagesPage() {
 
   if (!mounted || !checkedAccess) {
     return (
-      <main className="flex min-h-screen items-center justify-center bg-slate-100">
+      <main className="flex min-h-screen items-center justify-center bg-[radial-gradient(circle_at_top,#fff8e8_0%,#f3e6c8_45%,#eaddc0_100%)]">
         <p className="text-sm font-semibold text-slate-400">Checking admin access…</p>
       </main>
     );
@@ -62,31 +65,28 @@ export default function AdminLanguagesPage() {
   const enabledCount = settings.filter(s => s.enabled).length;
 
   return (
-    <main className="min-h-screen bg-slate-100 flex">
+    <main className="min-h-screen bg-[radial-gradient(circle_at_top,#fff8e8_0%,#f3e6c8_45%,#eaddc0_100%)] flex">
       <AdminSidebar />
       <section className="flex-1 p-8 overflow-auto">
-        <div className="bg-gradient-to-r from-teal-700 to-blue-700 text-white rounded-3xl p-10 shadow-2xl">
-          <p className="uppercase tracking-widest text-sm opacity-80">Admin · Languages</p>
-          <h2 className="text-4xl font-bold mt-2">Language Settings</h2>
-          <p className="mt-3 text-teal-100">Manage which languages are available, and track catalog coverage per language.</p>
-        </div>
+        <PageHeader
+          badge="Admin · Languages"
+          title="Language Settings"
+          subtitle="Manage which languages are available, and track catalog coverage per language."
+          homeLabel="Library"
+        />
 
-        <div className="mt-6 rounded-2xl bg-amber-50 px-5 py-3 text-sm font-semibold text-amber-800 ring-1 ring-amber-200">
+        <InfoCard tone="amber" className="mb-6 py-3 text-sm font-semibold">
           📌 Demo admin actions are stored locally for this prototype — nothing here touches a real backend.
+        </InfoCard>
+
+        <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+          <StatCard label="Languages Tracked" value={settings.length} />
+          <StatCard label="Enabled" value={enabledCount} valueClassName="text-green-600" />
+          <StatCard label="Books in Catalog" value={totalBooks} badge={usingDemo ? "demo settings" : undefined} />
         </div>
 
-        <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mt-6">
-          <div className="bg-white rounded-2xl p-5 shadow"><p className="text-3xl font-bold text-slate-900">{settings.length}</p><p className="text-slate-500 text-sm mt-1">Languages Tracked</p></div>
-          <div className="bg-white rounded-2xl p-5 shadow"><p className="text-3xl font-bold text-green-600">{enabledCount}</p><p className="text-slate-500 text-sm mt-1">Enabled</p></div>
-          <div className="bg-white rounded-2xl p-5 shadow">
-            <p className="text-3xl font-bold text-blue-600">{totalBooks}</p>
-            <p className="text-slate-500 text-sm mt-1">Books in Catalog</p>
-            {usingDemo && <span className="mt-1 inline-block rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold uppercase text-amber-700">demo settings</span>}
-          </div>
-        </div>
-
-        <div className="bg-white rounded-3xl p-8 shadow-lg mt-8">
-          <h3 className="text-2xl font-bold">Language Coverage</h3>
+        <InfoCard className="mt-8">
+          <h3 className="text-2xl font-black text-slate-950">Language Coverage</h3>
           <div className="mt-6 space-y-6">
             {settings.map(s => {
               const count = bookCounts[s.language] || 0;
@@ -104,7 +104,7 @@ export default function AdminLanguagesPage() {
                         <input
                           type="number" min={0} max={100} value={s.targetCoveragePercent}
                           onChange={(e) => updateTarget(s, Math.max(0, Math.min(100, Number(e.target.value))))}
-                          className="w-16 rounded-lg border border-slate-200 px-2 py-1 text-sm outline-none"
+                          className="w-16 rounded-lg border border-slate-200 px-2 py-1 text-sm outline-none focus:ring-2 focus:ring-amber-400"
                         />%
                       </label>
                       <button
@@ -116,13 +116,13 @@ export default function AdminLanguagesPage() {
                     </div>
                   </div>
                   <div className="mt-3 w-full bg-slate-200 h-3 rounded-full">
-                    <div className="bg-teal-600 h-3 rounded-full" style={{ width: `${actualPct}%` }} />
+                    <div className="bg-amber-500 h-3 rounded-full" style={{ width: `${actualPct}%` }} />
                   </div>
                 </div>
               );
             })}
           </div>
-        </div>
+        </InfoCard>
       </section>
     </main>
   );

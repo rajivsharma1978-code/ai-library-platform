@@ -4,9 +4,14 @@ import { useEffect, useMemo, useState } from "react";
 import { UI_TEXT } from "@/lib/i18n";
 import { useLanguage } from "@/lib/useLanguage";
 import { directorBooks } from "@/lib/directorBooks";
+import { trackAIUsage, logActivity, type AIFeature } from "@/components/admin/adminData";
 import PageHeader from "@/components/ui/PageHeader";
 import StatCard from "@/components/ui/StatCard";
 import InfoCard from "@/components/ui/InfoCard";
+
+const ACTION_TO_AI_FEATURE: Record<RevisionAction, AIFeature> = {
+  notes: "revision", quiz: "quiz", flashcards: "flashcards", mcqs: "quiz",
+};
 
 // ── Local, read-only types mirroring the Reader's Study Workspace data
 // shapes. Not imported from the Reader/Study Workspace modules — this
@@ -169,6 +174,8 @@ export default function RevisionPage() {
       });
       const data = await res.json();
       setAiOutput(data.answer || data.error || "No output generated.");
+      trackAIUsage(ACTION_TO_AI_FEATURE[action]);
+      logActivity("ai", `AI generated ${ACTION_META[action].label.toLowerCase()} in the Revision Center`);
 
       const oldAnalytics = JSON.parse(localStorage.getItem("ndl_ai_analytics") || "{}");
       const bump: Record<string, any> = { ...oldAnalytics };

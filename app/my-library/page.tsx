@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { UI_TEXT } from "@/lib/i18n";
 import { useLanguage } from "@/lib/useLanguage";
-import { directorBooks } from "@/lib/directorBooks";
+import { usePublicCatalog } from "@/lib/catalog";
 import PageHeader from "@/components/ui/PageHeader";
 import StatCard from "@/components/ui/StatCard";
 import InfoCard from "@/components/ui/InfoCard";
@@ -47,12 +47,12 @@ function writeArray<T>(key: string, value: T[]) {
   if (typeof window === "undefined") return;
   try { window.localStorage.setItem(key, JSON.stringify(value)); } catch {}
 }
-function findBookById(id: string): DirectorBook | undefined {
-  return (directorBooks as DirectorBook[]).find(b => b.id === id);
+function findBookById(books: DirectorBook[], id: string): DirectorBook | undefined {
+  return books.find(b => b.id === id);
 }
-function findBookByTitle(title: string): DirectorBook | undefined {
+function findBookByTitle(books: DirectorBook[], title: string): DirectorBook | undefined {
   const q = title.trim().toLowerCase();
-  return (directorBooks as DirectorBook[]).find(b => b.title?.trim().toLowerCase() === q);
+  return books.find(b => b.title?.trim().toLowerCase() === q);
 }
 function bookCover(book?: DirectorBook): string | undefined {
   const candidate = book?.cover || book?.coverUrl || book?.image || book?.thumbnail;
@@ -71,15 +71,15 @@ function bookTotalPages(book?: DirectorBook): number {
 type RawLibraryEntry = string | { bookId?: string; title?: string; addedAt?: number };
 interface ResolvedLibraryEntry { book: DirectorBook; raw: RawLibraryEntry }
 
-function normalizeLibrary(raw: RawLibraryEntry[]): ResolvedLibraryEntry[] {
+function normalizeLibrary(raw: RawLibraryEntry[], books: DirectorBook[]): ResolvedLibraryEntry[] {
   const out: ResolvedLibraryEntry[] = [];
   for (const entry of raw) {
     let book: DirectorBook | undefined;
     if (typeof entry === "string") {
-      book = findBookById(entry) ?? findBookByTitle(entry);
+      book = findBookById(books, entry) ?? findBookByTitle(books, entry);
     } else if (entry && typeof entry === "object") {
-      if (entry.bookId) book = findBookById(entry.bookId);
-      if (!book && entry.title) book = findBookByTitle(entry.title);
+      if (entry.bookId) book = findBookById(books, entry.bookId);
+      if (!book && entry.title) book = findBookByTitle(books, entry.title);
     }
     if (book) out.push({ book, raw: entry });
   }
@@ -191,6 +191,7 @@ export default function MyLibraryPage() {
   const [activity, setActivity] = useState<LearningActivityEntry[]>([]);
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<FilterKey>("all");
+  const catalogBooks = usePublicCatalog();
 
   useEffect(() => {
     setRawLibrary(readArray<RawLibraryEntry>("ndl_my_library"));
@@ -202,18 +203,18 @@ export default function MyLibraryPage() {
     setMounted(true);
   }, []);
 
-  const resolvedLibrary = useMemo(() => normalizeLibrary(rawLibrary), [rawLibrary]);
+  const resolvedLibrary = useMemo(() => normalizeLibrary(rawLibrary, catalogBooks), [rawLibrary, catalogBooks]);
   const usingDemoShelf = resolvedLibrary.length === 0;
   const shelfBooks: DirectorBook[] = usingDemoShelf
-    ? (directorBooks as DirectorBook[])
+    ? catalogBooks
     : resolvedLibrary.map(r => r.book);
 
   function removeBook(bookId: string) {
     if (usingDemoShelf) return;
     function resolveId(entry: RawLibraryEntry): string | undefined {
-      if (typeof entry === "string") return (findBookById(entry) ?? findBookByTitle(entry))?.id;
-      if (entry.bookId) { const b = findBookById(entry.bookId); if (b) return b.id; }
-      if (entry.title) { const b = findBookByTitle(entry.title); if (b) return b.id; }
+      if (typeof entry === "string") return (findBookById(catalogBooks, entry) ?? findBookByTitle(catalogBooks, entry))?.id;
+      if (entry.bookId) { const b = findBookById(catalogBooks, entry.bookId); if (b) return b.id; }
+      if (entry.title) { const b = findBookByTitle(catalogBooks, entry.title); if (b) return b.id; }
       return undefined;
     }
     const next = rawLibrary.filter(entry => resolveId(entry) !== bookId);
@@ -224,7 +225,7 @@ export default function MyLibraryPage() {
   function progressFor(bookId: string) {
     const p = progress.find(x => x.bookId === bookId);
     if (!p) return null;
-    const total = p.totalPages || bookTotalPages(findBookById(bookId));
+    const total = p.totalPages || bookTotalPages(findBookById(catalogBooks, bookId));
     return { currentPage: p.currentPage, totalPages: total, pct: Math.min(100, Math.round((p.currentPage / Math.max(1, total)) * 100)), lastReadAt: p.lastReadAt };
   }
   function hasNotes(bookId: string) { return notes.some(n => n.bookId === bookId); }
@@ -246,12 +247,12 @@ export default function MyLibraryPage() {
 
   const continueReadingList = useMemo(() => {
     const real = progress
-      .map(p => ({ book: findBookById(p.bookId), progress: p }))
+      .map(p => ({ book: findBookById(catalogBooks, p.bookId), progress: p }))
       .filter((x): x is { book: DirectorBook; progress: ReadingProgressEntry } => !!x.book)
       .sort((a, b) => b.progress.lastReadAt - a.progress.lastReadAt)
       .slice(0, 3);
     if (real.length > 0) return real;
-    return (directorBooks as DirectorBook[]).slice(0, 2).map((b, i) => {
+    return catalogBooks.slice(0, 2).map((b, i) => {
       const total = bookTotalPages(b);
       const pct = [58, 30][i] ?? 40;
       return {
@@ -259,7 +260,7 @@ export default function MyLibraryPage() {
         progress: { bookId: b.id, currentPage: Math.round((pct / 100) * total), totalPages: total, lastReadAt: Date.now() - i * 1000 * 60 * 60 * 12 },
       };
     });
-  }, [progress]);
+  }, [progress, catalogBooks]);
   const usingDemoContinueReading = progress.length === 0;
 
   const visibleBooks = useMemo(() => {

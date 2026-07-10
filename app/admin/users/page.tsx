@@ -7,12 +7,17 @@ import {
   loadUsers, saveUsers, usingDemoUsers, logActivity, newId,
   type AdminUser, type UserRole,
 } from "@/components/admin/adminData";
+import PageHeader from "@/components/ui/PageHeader";
+import StatCard from "@/components/ui/StatCard";
+import InfoCard from "@/components/ui/InfoCard";
+import SearchBar from "@/components/ui/SearchBar";
+import AppButton from "@/components/ui/AppButton";
 
 const ROLE_OPTIONS: UserRole[] = ["Student", "Teacher", "Researcher", "Senior Learner", "Admin"];
 const ROLE_COLORS: Record<UserRole, string> = {
   Student: "bg-blue-100 text-blue-700",
   Teacher: "bg-green-100 text-green-700",
-  Researcher: "bg-purple-100 text-purple-700",
+  Researcher: "bg-slate-200 text-slate-700",
   "Senior Learner": "bg-amber-100 text-amber-700",
   Admin: "bg-red-100 text-red-700",
 };
@@ -82,7 +87,7 @@ export default function AdminUsersPage() {
 
   if (!mounted || !checkedAccess) {
     return (
-      <main className="flex min-h-screen items-center justify-center bg-slate-100">
+      <main className="flex min-h-screen items-center justify-center bg-[radial-gradient(circle_at_top,#fff8e8_0%,#f3e6c8_45%,#eaddc0_100%)]">
         <p className="text-sm font-semibold text-slate-400">Checking admin access…</p>
       </main>
     );
@@ -92,42 +97,38 @@ export default function AdminUsersPage() {
   const suspended = users.filter(u => u.status === "Suspended").length;
 
   return (
-    <main className="min-h-screen bg-slate-100 flex">
+    <main className="min-h-screen bg-[radial-gradient(circle_at_top,#fff8e8_0%,#f3e6c8_45%,#eaddc0_100%)] flex">
       <AdminSidebar />
       <section className="flex-1 p-8 overflow-auto">
-        <div className="bg-gradient-to-r from-indigo-700 to-blue-700 text-white rounded-3xl p-10 shadow-2xl">
-          <p className="uppercase tracking-widest text-sm opacity-80">Admin · Users</p>
-          <h2 className="text-4xl font-bold mt-2">Manage Users</h2>
-          <p className="mt-3 text-blue-100">View, suspend, and manage learner and educator accounts.</p>
-        </div>
+        <PageHeader
+          badge="Admin · Users"
+          title="Manage Users"
+          subtitle="View, suspend, and manage learner and educator accounts."
+          homeLabel="Library"
+        />
 
-        <div className="mt-6 rounded-2xl bg-amber-50 px-5 py-3 text-sm font-semibold text-amber-800 ring-1 ring-amber-200">
+        <InfoCard tone="amber" className="mb-6 py-3 text-sm font-semibold">
           📌 Demo admin actions are stored locally for this prototype — nothing here touches a real backend.
+        </InfoCard>
+
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <StatCard label="Total Users" value={users.length} />
+          <StatCard label="Active" value={active} valueClassName="text-green-600" />
+          <StatCard label="Suspended" value={suspended} valueClassName="text-red-500" />
+          <StatCard label="Roles Represented" value={new Set(users.map(u => u.role)).size} badge={usingDemo ? "demo" : undefined} />
         </div>
 
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-6">
-          <div className="bg-white rounded-2xl p-5 shadow"><p className="text-3xl font-bold text-slate-900">{users.length}</p><p className="text-slate-500 text-sm mt-1">Total Users</p></div>
-          <div className="bg-white rounded-2xl p-5 shadow"><p className="text-3xl font-bold text-green-600">{active}</p><p className="text-slate-500 text-sm mt-1">Active</p></div>
-          <div className="bg-white rounded-2xl p-5 shadow"><p className="text-3xl font-bold text-red-500">{suspended}</p><p className="text-slate-500 text-sm mt-1">Suspended</p></div>
-          <div className="bg-white rounded-2xl p-5 shadow">
-            <p className="text-3xl font-bold text-purple-600">{new Set(users.map(u => u.role)).size}</p>
-            <p className="text-slate-500 text-sm mt-1">Roles Represented</p>
-            {usingDemo && <span className="mt-1 inline-block rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold uppercase text-amber-700">demo</span>}
-          </div>
-        </div>
-
-        <div className="bg-white rounded-2xl p-5 shadow mt-6 flex flex-wrap gap-4 items-center">
-          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search by name or email…"
-            className="flex-1 min-w-[200px] border border-slate-200 rounded-xl px-4 py-2.5 outline-none text-sm focus:border-blue-400" />
-          <select value={roleFilter} onChange={(e) => setRoleFilter(e.target.value)} className="border border-slate-200 rounded-xl px-4 py-2.5 outline-none text-sm">
+        <InfoCard className="mt-6 flex flex-wrap gap-4 items-center">
+          <SearchBar value={search} onChange={setSearch} placeholder="Search by name or email…" className="flex-1 min-w-[200px]" />
+          <select value={roleFilter} onChange={(e) => setRoleFilter(e.target.value)} className="border border-slate-200 rounded-xl px-4 py-2.5 outline-none text-sm focus:ring-2 focus:ring-amber-400">
             {["All", ...ROLE_OPTIONS].map(r => <option key={r}>{r}</option>)}
           </select>
-          <button onClick={addDemoUser} className="bg-blue-600 text-white px-5 py-2.5 rounded-xl text-sm font-semibold hover:bg-blue-700">
+          <AppButton onClick={addDemoUser} variant="accent">
             + Add Demo User
-          </button>
-        </div>
+          </AppButton>
+        </InfoCard>
 
-        <div className="bg-white rounded-3xl shadow mt-6 overflow-hidden overflow-x-auto">
+        <div className="bg-white rounded-3xl shadow-[0_20px_60px_rgba(75,45,12,0.10)] ring-1 ring-black/5 mt-6 overflow-hidden overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="bg-slate-50 border-b border-slate-200">
               <tr>{["Name", "Email", "Role", "Status", "Joined", "Actions"].map(h => (

@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { UI_TEXT } from "@/lib/i18n";
 import { useLanguage } from "@/lib/useLanguage";
-import { directorBooks } from "@/lib/directorBooks";
+import { usePublicCatalog } from "@/lib/catalog";
 import PageHeader from "@/components/ui/PageHeader";
 import StatCard from "@/components/ui/StatCard";
 import InfoCard from "@/components/ui/InfoCard";
@@ -38,12 +38,12 @@ function readArray<T>(key: string): T[] {
     return Array.isArray(parsed) ? parsed : [];
   } catch { return []; }
 }
-function findBookById(id: string): DirectorBook | undefined {
-  return (directorBooks as DirectorBook[]).find(b => b.id === id);
+function findBookById(books: DirectorBook[], id: string): DirectorBook | undefined {
+  return books.find(b => b.id === id);
 }
-function findBookByTitle(title: string): DirectorBook | undefined {
+function findBookByTitle(books: DirectorBook[], title: string): DirectorBook | undefined {
   const q = title.trim().toLowerCase();
-  return (directorBooks as DirectorBook[]).find(b => b.title?.trim().toLowerCase() === q);
+  return books.find(b => b.title?.trim().toLowerCase() === q);
 }
 function bookTotalPages(book?: DirectorBook): number {
   const n = Number(book?.pages);
@@ -58,10 +58,10 @@ function bookCover(book?: DirectorBook): string | undefined {
 // {bookId, addedAt} objects (newer format) — same defensive handling as
 // app/my-library/page.tsx, kept independent here on purpose. ───────────
 type RawLibraryEntry = string | { bookId?: string; title?: string; addedAt?: number };
-function resolveLibraryBook(entry: RawLibraryEntry): DirectorBook | undefined {
-  if (typeof entry === "string") return findBookById(entry) ?? findBookByTitle(entry);
-  if (entry.bookId) { const b = findBookById(entry.bookId); if (b) return b; }
-  if (entry.title) { const b = findBookByTitle(entry.title); if (b) return b; }
+function resolveLibraryBook(entry: RawLibraryEntry, books: DirectorBook[]): DirectorBook | undefined {
+  if (typeof entry === "string") return findBookById(books, entry) ?? findBookByTitle(books, entry);
+  if (entry.bookId) { const b = findBookById(books, entry.bookId); if (b) return b; }
+  if (entry.title) { const b = findBookByTitle(books, entry.title); if (b) return b; }
   return undefined;
 }
 
@@ -142,6 +142,7 @@ export default function MyBooksPage() {
   const [search, setSearch] = useState("");
   const [languageFilter, setLanguageFilter] = useState("");
   const [collection, setCollection] = useState<Collection>("all");
+  const catalogBooks = usePublicCatalog();
 
   useEffect(() => {
     setRawLibrary(readArray<RawLibraryEntry>("ndl_my_library"));
@@ -153,25 +154,25 @@ export default function MyBooksPage() {
   }, []);
 
   const resolvedShelf = useMemo(
-    () => rawLibrary.map(e => resolveLibraryBook(e)).filter((b): b is DirectorBook => !!b),
-    [rawLibrary]
+    () => rawLibrary.map(e => resolveLibraryBook(e, catalogBooks)).filter((b): b is DirectorBook => !!b),
+    [rawLibrary, catalogBooks]
   );
   const usingDemoShelf = resolvedShelf.length === 0;
-  const allBooks: DirectorBook[] = usingDemoShelf ? (directorBooks as DirectorBook[]) : resolvedShelf;
+  const allBooks: DirectorBook[] = usingDemoShelf ? catalogBooks : resolvedShelf;
 
   // "Uploaded Books" = entries in ndl_my_library that don't resolve to any
   // catalog book at all (i.e. not in lib/directorBooks.ts). There's no
   // separate upload-tracking key in this app yet, so this collection is
   // structurally correct but will usually be empty today.
   const uploadedBooks = useMemo(
-    () => rawLibrary.filter(e => !resolveLibraryBook(e)),
-    [rawLibrary]
+    () => rawLibrary.filter(e => !resolveLibraryBook(e, catalogBooks)),
+    [rawLibrary, catalogBooks]
   );
 
   function progressFor(bookId: string) {
     const p = progress.find(x => x.bookId === bookId);
     if (!p) return null;
-    const total = p.totalPages || bookTotalPages(findBookById(bookId));
+    const total = p.totalPages || bookTotalPages(findBookById(catalogBooks, bookId));
     return { currentPage: p.currentPage, totalPages: total, pct: Math.min(100, Math.round((p.currentPage / Math.max(1, total)) * 100)) };
   }
   function countsFor(bookId: string) {

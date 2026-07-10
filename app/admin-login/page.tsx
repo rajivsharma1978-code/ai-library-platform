@@ -25,17 +25,17 @@ export default function AdminLoginPage() {
   }
 
   return (
-    <main className="min-h-screen bg-slate-100 flex items-center justify-center p-8">
-      <div className="bg-white rounded-3xl shadow-2xl p-10 w-full max-w-md">
-        <p className="uppercase tracking-widest text-sm text-blue-600">
+    <main className="min-h-screen bg-[radial-gradient(circle_at_top,#fff8e8_0%,#f3e6c8_45%,#eaddc0_100%)] flex items-center justify-center p-8">
+      <div className="bg-white rounded-[2rem] shadow-[0_20px_60px_rgba(75,45,12,0.12)] ring-1 ring-black/5 p-10 w-full max-w-md">
+        <p className="uppercase tracking-widest text-sm font-bold text-amber-700">
           NDL AI
         </p>
 
-        <h1 className="text-4xl font-bold mt-3 text-slate-900">
+        <h1 className="text-4xl font-black mt-3 text-slate-950">
           Admin Login
         </h1>
 
-        <p className="text-slate-500 mt-3">
+        <p className="text-slate-600 mt-3">
           Protected administrator access for the national digital library.
         </p>
 
@@ -45,7 +45,7 @@ export default function AdminLoginPage() {
             placeholder="Admin ID"
             value={username}
             onChange={(e) => setUsername(e.target.value)}
-            className="w-full border rounded-2xl px-5 py-4 outline-none"
+            className="w-full border border-slate-200 rounded-2xl px-5 py-4 outline-none focus:ring-2 focus:ring-amber-400 focus:border-transparent"
           />
 
           <input
@@ -53,7 +53,7 @@ export default function AdminLoginPage() {
             placeholder="Password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            className="w-full border rounded-2xl px-5 py-4 outline-none"
+            className="w-full border border-slate-200 rounded-2xl px-5 py-4 outline-none focus:ring-2 focus:ring-amber-400 focus:border-transparent"
           />
 
           {error && (
@@ -64,7 +64,7 @@ export default function AdminLoginPage() {
 
           <button
             onClick={handleLogin}
-            className="w-full bg-black text-white py-4 rounded-2xl font-semibold"
+            className="w-full bg-orange-600 hover:bg-orange-700 text-white py-4 rounded-2xl font-bold shadow-md shadow-orange-500/25 transition"
           >
             Login to Admin Dashboard
           </button>

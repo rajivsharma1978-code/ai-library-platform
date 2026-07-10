@@ -7,6 +7,9 @@ import {
   loadAccessibility, saveAccessibility, usingDemoAccessibility, logActivity,
   type AccessibilityCheckItem, type AccessibilityStatus,
 } from "@/components/admin/adminData";
+import PageHeader from "@/components/ui/PageHeader";
+import StatCard from "@/components/ui/StatCard";
+import InfoCard from "@/components/ui/InfoCard";
 
 const STATUS_ORDER: AccessibilityStatus[] = ["Not Started", "Needs Work", "Pass"];
 const STATUS_COLORS: Record<AccessibilityStatus, string> = {
@@ -48,7 +51,7 @@ export default function AdminAccessibilityPage() {
 
   if (!mounted || !checkedAccess) {
     return (
-      <main className="flex min-h-screen items-center justify-center bg-slate-100">
+      <main className="flex min-h-screen items-center justify-center bg-[radial-gradient(circle_at_top,#fff8e8_0%,#f3e6c8_45%,#eaddc0_100%)]">
         <p className="text-sm font-semibold text-slate-400">Checking admin access…</p>
       </main>
     );
@@ -60,32 +63,29 @@ export default function AdminAccessibilityPage() {
   const overallScore = items.length > 0 ? Math.round((passCount / items.length) * 100) : 0;
 
   return (
-    <main className="min-h-screen bg-slate-100 flex">
+    <main className="min-h-screen bg-[radial-gradient(circle_at_top,#fff8e8_0%,#f3e6c8_45%,#eaddc0_100%)] flex">
       <AdminSidebar />
       <section className="flex-1 p-8 overflow-auto">
-        <div className="bg-gradient-to-r from-emerald-700 to-teal-700 text-white rounded-3xl p-10 shadow-2xl">
-          <p className="uppercase tracking-widest text-sm opacity-80">Admin · Accessibility</p>
-          <h2 className="text-4xl font-bold mt-2">Accessibility Readiness</h2>
-          <p className="mt-3 text-emerald-100">Track accessibility checks across the Reader and AI Companion.</p>
-        </div>
+        <PageHeader
+          badge="Admin · Accessibility"
+          title="Accessibility Readiness"
+          subtitle="Track accessibility checks across the Reader and AI Companion."
+          homeLabel="Library"
+        />
 
-        <div className="mt-6 rounded-2xl bg-amber-50 px-5 py-3 text-sm font-semibold text-amber-800 ring-1 ring-amber-200">
+        <InfoCard tone="amber" className="mb-6 py-3 text-sm font-semibold">
           📌 Demo admin actions are stored locally for this prototype — nothing here touches a real backend.
+        </InfoCard>
+
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <StatCard label="Overall Score" value={`${overallScore}%`} valueClassName="text-green-600" badge={usingDemo ? "demo" : undefined} />
+          <StatCard label="Pass" value={passCount} valueClassName="text-green-600" />
+          <StatCard label="Needs Work" value={needsWorkCount} valueClassName="text-yellow-600" />
+          <StatCard label="Not Started" value={notStartedCount} valueClassName="text-slate-500" />
         </div>
 
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-6">
-          <div className="bg-white rounded-2xl p-5 shadow">
-            <p className="text-3xl font-bold text-emerald-600">{overallScore}%</p>
-            <p className="text-slate-500 text-sm mt-1">Overall Score</p>
-            {usingDemo && <span className="mt-1 inline-block rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold uppercase text-amber-700">demo</span>}
-          </div>
-          <div className="bg-white rounded-2xl p-5 shadow"><p className="text-3xl font-bold text-green-600">{passCount}</p><p className="text-slate-500 text-sm mt-1">Pass</p></div>
-          <div className="bg-white rounded-2xl p-5 shadow"><p className="text-3xl font-bold text-yellow-600">{needsWorkCount}</p><p className="text-slate-500 text-sm mt-1">Needs Work</p></div>
-          <div className="bg-white rounded-2xl p-5 shadow"><p className="text-3xl font-bold text-slate-500">{notStartedCount}</p><p className="text-slate-500 text-sm mt-1">Not Started</p></div>
-        </div>
-
-        <div className="bg-white rounded-3xl p-8 shadow-lg mt-8">
-          <h3 className="text-2xl font-bold">Accessibility Checklist</h3>
+        <InfoCard className="mt-8">
+          <h3 className="text-2xl font-black text-slate-950">Accessibility Checklist</h3>
           <p className="mt-1 text-sm text-slate-500">Click a status pill to cycle it (Not Started → Needs Work → Pass).</p>
           <div className="mt-6 space-y-3">
             {items.map(item => (
@@ -100,7 +100,7 @@ export default function AdminAccessibilityPage() {
               </div>
             ))}
           </div>
-        </div>
+        </InfoCard>
       </section>
     </main>
   );

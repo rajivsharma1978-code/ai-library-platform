@@ -7,6 +7,8 @@ import AICompanion from "@/components/reader-premium/AICompanion";
 import BookOpeningAnimation from "@/components/reader-premium/BookOpeningAnimation";
 import BookCover from "@/components/reader-premium/BookCover";
 import { directorBooks } from "@/lib/directorBooks";
+import { getPublicCatalog } from "@/lib/catalog";
+import { trackAIUsage, logActivity, type AIFeature } from "@/components/admin/adminData";
 import ReaderLayout from "@/components/reader/ReaderLayout";
 // ── Phase 2: AI Notes, Highlights, Bookmarks, Study Workspace ─────────
 // Additive only — nothing below touches page turning, zoom, fullscreen,
@@ -77,6 +79,24 @@ async function callAskAI(
   });
   const data = await res.json();
   return data?.answer ?? "No response. Please try again.";
+}
+
+// ── AI usage tracking ────────────────────────────────────────────────
+// Maps this Reader's action-name strings (used by both the floating
+// toolbar and the AI Companion's quick-action buttons) onto the 6
+// features Admin → AI Usage tracks. Free-form "ask" questions and image
+// "ask" have no matching bucket, so they're intentionally left untracked
+// by feature (still real AI calls, just not one of the 6 named ones).
+function mapActionToAIFeature(action?: string): AIFeature | null {
+  switch (action) {
+    case "explain": return "explain";
+    case "summarize": return "summarize";
+    case "translate": return "translate";
+    case "quiz": case "mcqs": return "quiz";
+    case "flashcards": return "flashcards";
+    case "notes": case "revision": return "revision";
+    default: return null;
+  }
 }
 
 // ── Crop a screen-space rectangle out of the current page's canvas ────
@@ -180,6 +200,12 @@ export default function PremiumReaderPreviewContent() {
   // normal library-book visit.
   const isUploadedBook = Boolean(isHydrated && uploadedSource && uploadedPdfData && uploadedPdfId);
 
+  // Same before/after-hydration split as the upload data above — the
+  // merged (admin-editable) catalog reads localStorage, so it's only
+  // safe to use once isHydrated is true; before that, the static
+  // directorBooks default keeps the first render identical to SSR.
+  const catalogBooks = isHydrated ? getPublicCatalog() : directorBooks;
+
   const bookId = isUploadedBook ? (uploadedPdfId as string) : (searchParams.get("book") || "nalanda");
   const currentBook = isUploadedBook
     ? {
@@ -197,7 +223,7 @@ export default function PremiumReaderPreviewContent() {
         pages: Number(uploadedPdfPages) || 1,
         layout: "single" as const,
       }
-    : (directorBooks.find((b) => b.id === bookId) || directorBooks[0]);
+    : (catalogBooks.find((b) => b.id === bookId) || catalogBooks[0]);
   const book = currentBook.title;
   const totalPages = Number(currentBook.pages);
   const isSpreadBook = currentBook.layout === "spread";
@@ -522,7 +548,7 @@ export default function PremiumReaderPreviewContent() {
 
     const prompt = `${scopeInstruction} Create exactly 8 multiple-choice quiz questions covering the entire book "${book}". Respond ONLY in: ${language}.`;
 
-    await runAI(prompt, context, undefined, "Entire Book Quiz");
+    await runAI(prompt, context, undefined, "Entire Book Quiz", "quiz");
   }
 
   // ── Navigation ──────────────────────────────────────────────────────
@@ -566,7 +592,7 @@ export default function PremiumReaderPreviewContent() {
   }
 
   // ── AI ───────────────────────────────────────────────────────────────
-  async function runAI(prompt: string, content?: string, imageDataUrl?: string, chapterOverride?: string) {
+  async function runAI(prompt: string, content?: string, imageDataUrl?: string, chapterOverride?: string, action?: string) {
     resetInteractionState();
     setAiLoading(true);
     setAiResponse("AI is thinking…");
@@ -578,6 +604,11 @@ export default function PremiumReaderPreviewContent() {
         prompt, book, readerPage, content ?? fallback, language, imageDataUrl, chapterOverride
       );
       setAiResponse(answer);
+      const feature = mapActionToAIFeature(action);
+      if (feature) {
+        trackAIUsage(feature);
+        logActivity("ai", `AI ${action} used while reading "${book}"`);
+      }
     } catch {
       setAiResponse("Something went wrong. Please try again.");
     } finally {
@@ -602,7 +633,7 @@ export default function PremiumReaderPreviewContent() {
       case "revision":   prompt = `Create concise revision notes (headings + short bullet points) from the SELECTED TEXT above, suitable for quick exam revision. Respond ONLY in: ${language}.`; break;
       default:          prompt = `${action} Respond ONLY in: ${language}.`;
     }
-    runAI(prompt, content, undefined, "Selected Text");
+    runAI(prompt, content, undefined, "Selected Text", action);
   }
 
   // ── IMAGE-MODE ACTION RUNNER ──────────────────────────────────────────
@@ -621,7 +652,7 @@ export default function PremiumReaderPreviewContent() {
         break;
       default:          prompt = `${action} Respond ONLY in: ${language}.`;
     }
-    runAI(prompt, content, imageData, `Selected Image (page ${pageNumber})`);
+    runAI(prompt, content, imageData, `Selected Image (page ${pageNumber})`, action);
   }
 
   // ── THE ROUTER — every floating-toolbar button goes through this. ────
@@ -669,6 +700,8 @@ export default function PremiumReaderPreviewContent() {
         ? `Content from page ${readerPage} of "${book}":\n\n${getVisiblePageText()}`
         : `Viewing page ${readerPage} of "${book}".`;
       text = await callAskAI("Give a 3–4 sentence spoken summary. No markdown.", book, readerPage, content, language);
+      trackAIUsage("summarize");
+      logActivity("ai", `AI Read Aloud summary generated for "${book}"`);
     } catch { text = `Reading page ${readerPage} of ${book}.`; }
     const utt = new SpeechSynthesisUtterance(text);
     utt.rate = 0.92;
@@ -817,6 +850,8 @@ export default function PremiumReaderPreviewContent() {
       const data = await res.json();
       const improved = (data?.answer as string) ?? currentText;
       setLastNoteWasImproved(true);
+      trackAIUsage("revision");
+      logActivity("ai", `AI improved a note ("${action}") for "${book}"`);
       return improved;
     } catch {
       return currentText;
@@ -1547,7 +1582,18 @@ export default function PremiumReaderPreviewContent() {
             const content = getVisiblePageText().length > 50
               ? `Content from page ${readerPage} of "${book}":\n\n${getVisiblePageText()}`
               : `Viewing page ${readerPage} of "${book}".`;
-            runAI(prompt, content);
+            // AICompanion's QUICK_ACTIONS labels are "🧠 Explain", "📝
+            // Summarize", etc. — derive the same action name the floating
+            // toolbar uses so this goes through the same AI-usage tracking
+            // in runAI, instead of duplicating the tracking logic here.
+            const quickAction = label.includes("Explain") ? "explain"
+              : label.includes("Summarize") ? "summarize"
+              : label.includes("Translate") ? "translate"
+              : label.includes("Quiz") ? "quiz"
+              : label.includes("Flashcards") ? "flashcards"
+              : label.includes("Notes") ? "notes"
+              : undefined;
+            runAI(prompt, content, undefined, undefined, quickAction);
           }}
           bookTitle={book}
           pageNumber={readerPage}

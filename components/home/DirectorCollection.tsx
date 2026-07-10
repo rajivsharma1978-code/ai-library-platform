@@ -1,18 +1,16 @@
 "use client";
 
 import Link from "next/link";
-import { directorBooks } from "@/lib/directorBooks";
+import { usePublicCatalog } from "@/lib/catalog";
 import RealBookCover from "./RealBookCover";
 import { UI_TEXT } from "@/lib/i18n";
 import { useLanguage } from "@/lib/useLanguage";
-
-type DirectorBook = { id: string; title: string; author?: string; language?: string; description?: string; [k: string]: any };
 
 export default function DirectorCollection() {
   const { language } = useLanguage();
   const t = UI_TEXT[language];
   const isEn = t.navLibrary === "Library";
-  const books = directorBooks as DirectorBook[];
+  const books = usePublicCatalog();
 
   return (
     <section className="bg-[#fff8ed] px-6 py-16">

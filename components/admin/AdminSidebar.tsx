@@ -35,7 +35,7 @@ export default function AdminSidebar() {
               href={item.href}
               className={`block rounded-2xl p-4 transition-all duration-200 font-medium text-sm ${
                 isActive
-                  ? "bg-blue-600 text-white shadow-lg shadow-blue-600/30"
+                  ? "bg-amber-500 text-slate-950 shadow-lg shadow-amber-500/30 font-bold"
                   : "bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-white"
               }`}
             >
@@ -54,7 +54,7 @@ export default function AdminSidebar() {
             localStorage.removeItem("ndlAdminAccess");
             router.push("/admin-login");
           }}
-          className="w-full bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-xl text-sm transition"
+          className="w-full bg-slate-800 hover:bg-slate-700 text-white px-4 py-2 rounded-xl text-sm font-semibold transition"
         >
           Logout
         </button>
