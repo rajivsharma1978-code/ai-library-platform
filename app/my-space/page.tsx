@@ -4,27 +4,16 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { directorBooks } from "@/lib/directorBooks";
 import {
-  buildMySpaceDashboard, activityLabel, bookCoverUrl,
+  buildMySpaceDashboard, activityLabel,
   DirectorBook,
 } from "@/components/my-space/mySpaceData";
+import BookCoverThumb from "@/components/ui/BookCover";
 
 // ── Small shared primitives (kept local — this page is the only consumer) ─
-
-function BookCoverThumb({ book, className = "" }: { book?: DirectorBook; className?: string }) {
-  const cover = bookCoverUrl(book);
-  const initials = (book?.title ?? "?").split(" ").slice(0, 2).map(w => w[0]).join("").toUpperCase();
-  if (cover) {
-    return (
-      // eslint-disable-next-line @next/next/no-img-element
-      <img src={cover} alt={book?.title ?? "Book cover"} className={`object-cover ${className}`} />
-    );
-  }
-  return (
-    <div className={`flex items-center justify-center bg-[linear-gradient(135deg,#f4d58d_0%,#c18a3f_60%,#8a5a24_100%)] text-white font-black ${className}`}>
-      <span style={{ fontSize: "1.4em" }}>{initials || "📖"}</span>
-    </div>
-  );
-}
+// BookCoverThumb is now the shared components/ui/BookCover.tsx (imported
+// above), upgraded from a 2-tier (static image → initials) fallback to
+// the full 3-tier one (static → PDF first page → initials) shared with
+// My Library/My Books/AI Tutor/the homepage.
 
 function ProgressBar({ pct, colorClass = "bg-amber-500" }: { pct: number; colorClass?: string }) {
   return (

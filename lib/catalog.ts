@@ -42,6 +42,7 @@ export function getPublicCatalog(): CatalogBook[] {
         author: o.author ?? b.author,
         language: o.language ?? b.language,
         pages: o.pages ?? b.pages,
+        category: o.category ?? b.category,
         status: o.status ?? "Published",
       };
     })
@@ -55,6 +56,7 @@ export function getPublicCatalog(): CatalogBook[] {
       author: o.author || "",
       description: "",
       language: o.language || "English",
+      category: o.category || "General Knowledge",
       cover: "",
       // A real Upload Queue approval sets pdfDataUrl (an actual openable
       // PDF); Book Management's own mock-upload never does, so a book

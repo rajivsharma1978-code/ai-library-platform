@@ -31,6 +31,7 @@ import { useLanguage } from "@/lib/useLanguage";
 import { UI_TEXT, type Language } from "@/lib/i18n";
 import { parseVoiceCommand, type VoiceCommand, type AccessibilityVoiceAction } from "@/lib/voiceCommands";
 import { FONT_STEP, type A11ySettings, type BooleanA11yKey } from "@/lib/accessibilitySettings";
+import { useAdaptivePanelPlacement } from "@/lib/panelPlacement";
 
 interface VoiceAssistantProps {
   settings: A11ySettings;
@@ -73,6 +74,9 @@ export default function VoiceAssistant({ settings, stepFontScale, setToggle }: V
   const [transcript, setTranscript] = useState("");
   const [feedback, setFeedback] = useState("");
   const recognitionRef = useRef<any>(null);
+  // Same adaptive-placement fix as AccessibilityToolbar's panel — see
+  // lib/panelPlacement.ts.
+  const { triggerRef, panelRef, placement } = useAdaptivePanelPlacement(open, 288);
 
   useEffect(() => {
     setMounted(true);
@@ -170,11 +174,25 @@ export default function VoiceAssistant({ settings, stepFontScale, setToggle }: V
 
   const darkPanel = settings.darkMode;
 
+  // No independent fixed positioning here anymore — this renders as a
+  // normal flex item inside the shared FloatingControlsDock (see
+  // components/ui/AccessibilityToolbar.tsx), so the mic button and the
+  // ♿ button move together as one draggable stack instead of being two
+  // separately-positioned floating elements.
   return (
-    <div data-a11y-no-invert className="fixed bottom-24 right-5 z-[9999] flex flex-col items-end gap-3">
+    <div className="flex flex-col items-end gap-3">
       {open && (
         <div
-          className={`w-72 max-w-[85vw] rounded-[1.5rem] p-4 shadow-[0_20px_60px_rgba(75,45,12,0.20)] ring-1 ring-black/5 ${darkPanel ? "bg-slate-900 text-white" : "bg-white text-slate-900"}`}
+          ref={panelRef}
+          data-a11y-no-invert
+          style={{
+            position: "fixed",
+            top: placement?.top,
+            left: placement?.left,
+            maxHeight: placement?.maxHeight,
+            visibility: placement ? "visible" : "hidden",
+          }}
+          className={`w-72 max-w-[85vw] overflow-y-auto rounded-[1.5rem] p-4 shadow-[0_20px_60px_rgba(75,45,12,0.20)] ring-1 ring-black/5 ${darkPanel ? "bg-slate-900 text-white" : "bg-white text-slate-900"}`}
         >
           <div className="mb-2 flex items-center justify-between">
             <h3 className="text-sm font-black">{t.voiceAssistant}</h3>
@@ -210,6 +228,8 @@ export default function VoiceAssistant({ settings, stepFontScale, setToggle }: V
       )}
 
       <button
+        ref={triggerRef as React.RefObject<HTMLButtonElement>}
+        data-dock-handle
         onClick={() => (listening ? stopListening() : startListening())}
         aria-label={supported ? (listening ? t.voiceStopListening : t.voiceStartListening) : t.voiceUnsupported}
         title={supported ? (listening ? t.voiceStopListening : t.voiceStartListening) : t.voiceUnsupported}

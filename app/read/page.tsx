@@ -10,6 +10,7 @@ import PageHeader from "@/components/ui/PageHeader";
 import AppButton from "@/components/ui/AppButton";
 import InfoCard from "@/components/ui/InfoCard";
 import AccessibilityToolbar from "@/components/ui/AccessibilityToolbar";
+import BookCover from "@/components/ui/BookCover";
 
 // ══════════════════════════════════════════════════════════════════════
 // Normal PDF Reader — /read
@@ -314,7 +315,8 @@ function ReadPageContent() {
                   href={`/read?book=${b.id}`}
                   className="flex h-full flex-col items-center rounded-2xl border border-slate-200 p-4 text-center hover:border-slate-400 hover:shadow"
                 >
-                  <p className="font-bold text-slate-900">{b.title}</p>
+                  <BookCover book={b} className="h-36 w-24 rounded-lg shadow" />
+                  <p className="mt-3 font-bold text-slate-900">{b.title}</p>
                   {b.author && <p className="mt-1 text-xs text-slate-500">{b.author}</p>}
                   <span className="mt-auto pt-3 inline-block rounded-full bg-slate-950 px-4 py-1.5 text-xs font-bold text-white">
                     📖 {t.readerReadNormally}

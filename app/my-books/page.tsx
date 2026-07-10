@@ -12,6 +12,7 @@ import FilterBar from "@/components/ui/FilterBar";
 import AppButton from "@/components/ui/AppButton";
 import QuickLinks from "@/components/ui/QuickLinks";
 import AccessibilityToolbar from "@/components/ui/AccessibilityToolbar";
+import CoverThumb from "@/components/ui/BookCover";
 
 // ── Local, read-only types mirroring Reader/Study Workspace/My Space/My
 // Library data shapes. This page is self-contained on purpose — it does
@@ -50,11 +51,6 @@ function bookTotalPages(book?: DirectorBook): number {
   const n = Number(book?.pages);
   return Number.isFinite(n) && n > 0 ? n : 220;
 }
-function bookCover(book?: DirectorBook): string | undefined {
-  const c = book?.cover || book?.coverUrl || book?.image || book?.thumbnail;
-  return c && c.trim() ? c : undefined;
-}
-
 // ── ndl_my_library can contain plain title strings (older format) or
 // {bookId, addedAt} objects (newer format) — same defensive handling as
 // app/my-library/page.tsx, kept independent here on purpose. ───────────
@@ -66,67 +62,9 @@ function resolveLibraryBook(entry: RawLibraryEntry, books: DirectorBook[]): Dire
   return undefined;
 }
 
-// ── Cover: real image field → first PDF page rendered as cover → gradient
-// + initials as the true last resort. Same technique as My Library. ─────
-function PdfFirstPageCover({ pdfPath, onFail }: { pdfPath: string; onFail: () => void }) {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [rendered, setRendered] = useState(false);
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const pdfjsLib = await import("pdfjs-dist");
-        pdfjsLib.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
-        const pdf = await pdfjsLib.getDocument(pdfPath).promise;
-        const page = await pdf.getPage(1);
-        const baseVp = page.getViewport({ scale: 1 });
-        const scale = 400 / baseVp.width;
-        const viewport = page.getViewport({ scale });
-        const canvas = canvasRef.current;
-        if (!canvas || cancelled) return;
-        canvas.width = Math.ceil(viewport.width);
-        canvas.height = Math.ceil(viewport.height);
-        const ctx = canvas.getContext("2d");
-        if (!ctx) throw new Error("no 2d context");
-        await page.render({ canvasContext: ctx, viewport, canvas }).promise;
-        if (!cancelled) setRendered(true);
-      } catch {
-        if (!cancelled) onFail();
-      }
-    })();
-    return () => { cancelled = true; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pdfPath]);
-  return <canvas ref={canvasRef} style={{ width: "100%", height: "100%", objectFit: "cover", display: rendered ? "block" : "none" }} />;
-}
-
-function CoverThumb({ book, className = "" }: { book?: DirectorBook; className?: string }) {
-  const staticCover = bookCover(book);
-  const [staticFailed, setStaticFailed] = useState(false);
-  const [pdfFailed, setPdfFailed] = useState(false);
-  useEffect(() => { setStaticFailed(false); setPdfFailed(false); }, [book?.id]);
-  const initials = (book?.title ?? "?").split(" ").slice(0, 2).map(w => w[0]).join("").toUpperCase();
-
-  const canUseStatic = !!staticCover && !staticFailed;
-  const canUsePdf = !canUseStatic && !!book?.pdf && !pdfFailed;
-
-  if (canUseStatic) {
-    // eslint-disable-next-line @next/next/no-img-element
-    return <img src={staticCover} alt={book?.title ? `Cover of ${book.title}` : "Book cover"} className={`object-cover ${className}`} onError={() => setStaticFailed(true)} />;
-  }
-  if (canUsePdf) {
-    return (
-      <div role="img" aria-label={book?.title ? `Cover of ${book.title}` : "Book cover"} className={`overflow-hidden bg-slate-100 ${className}`}>
-        <PdfFirstPageCover pdfPath={book!.pdf as string} onFail={() => setPdfFailed(true)} />
-      </div>
-    );
-  }
-  return (
-    <div role="img" aria-label={book?.title ? `Cover of ${book.title}` : "Book cover placeholder"} className={`flex items-center justify-center bg-[linear-gradient(135deg,#f4d58d_0%,#c18a3f_60%,#8a5a24_100%)] text-white font-black ${className}`}>
-      <span style={{ fontSize: "1.3em" }}>{initials || "📖"}</span>
-    </div>
-  );
-}
+// CoverThumb is now the shared components/ui/BookCover.tsx (imported
+// above) — see that file for the three-tier fallback + PDF-render
+// timeout that used to be duplicated here.
 
 type Collection = "all" | "continue" | "completed" | "favorites" | "uploaded";
 

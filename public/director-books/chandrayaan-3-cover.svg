@@ -1,0 +1,71 @@
+<svg viewBox="0 0 600 800" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="sky" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#050b1f"/>
+      <stop offset="55%" stop-color="#0b1f3a"/>
+      <stop offset="100%" stop-color="#14325c"/>
+    </linearGradient>
+    <radialGradient id="moonGlow" cx="72%" cy="22%" r="30%">
+      <stop offset="0%" stop-color="#fef3c7" stop-opacity="0.5"/>
+      <stop offset="100%" stop-color="#fef3c7" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="flame" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#fdba74"/>
+      <stop offset="100%" stop-color="#ea580c"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="600" height="800" fill="url(#sky)"/>
+  <rect width="600" height="800" fill="url(#moonGlow)"/>
+
+  <!-- Stars -->
+  <g fill="#f8fafc">
+    <circle cx="70" cy="90" r="1.6" opacity="0.8"/>
+    <circle cx="130" cy="150" r="1.2" opacity="0.6"/>
+    <circle cx="500" cy="120" r="1.6" opacity="0.7"/>
+    <circle cx="450" cy="200" r="1.2" opacity="0.5"/>
+    <circle cx="90" cy="260" r="1.2" opacity="0.6"/>
+    <circle cx="540" cy="300" r="1.6" opacity="0.7"/>
+    <circle cx="200" cy="80" r="1.2" opacity="0.5"/>
+    <circle cx="330" cy="130" r="1.2" opacity="0.6"/>
+  </g>
+
+  <!-- Moon -->
+  <circle cx="430" cy="170" r="80" fill="#fef3c7" opacity="0.92"/>
+  <circle cx="405" cy="150" r="12" fill="#eab308" opacity="0.25"/>
+  <circle cx="450" cy="195" r="8" fill="#eab308" opacity="0.2"/>
+  <circle cx="460" cy="145" r="6" fill="#eab308" opacity="0.2"/>
+
+  <!-- Tricolour arc -->
+  <g opacity="0.9">
+    <path d="M 60 430 Q 300 360 540 430" fill="none" stroke="#f97316" stroke-width="10" stroke-linecap="round"/>
+    <path d="M 60 452 Q 300 382 540 452" fill="none" stroke="#f8fafc" stroke-width="10" stroke-linecap="round"/>
+    <path d="M 60 474 Q 300 404 540 474" fill="none" stroke="#15803d" stroke-width="10" stroke-linecap="round"/>
+  </g>
+
+  <!-- Rocket -->
+  <g transform="translate(300,300) rotate(28)">
+    <path d="M 0 -95 C 26 -60 26 20 26 55 L -26 55 C -26 20 -26 -60 0 -95 Z" fill="#e2e8f0"/>
+    <path d="M -26 20 L -52 62 L -26 55 Z" fill="#cbd5e1"/>
+    <path d="M 26 20 L 52 62 L 26 55 Z" fill="#cbd5e1"/>
+    <circle cx="0" cy="-30" r="12" fill="#0b1f3a"/>
+    <rect x="-26" y="-6" width="52" height="14" fill="#f97316"/>
+    <rect x="-26" y="10" width="52" height="10" fill="#f8fafc"/>
+    <rect x="-26" y="22" width="52" height="10" fill="#15803d"/>
+    <path d="M -14 55 L -6 100 L 6 100 L 14 55 Z" fill="url(#flame)"/>
+  </g>
+
+  <!-- Title block -->
+  <g font-family="Georgia, 'Times New Roman', serif" text-anchor="middle">
+    <text x="300" y="560" font-size="15" letter-spacing="4" fill="#fdba74">भारत का चंद्र मिशन</text>
+
+    <text x="300" y="612" font-size="42" font-weight="700" fill="#f8fafc">Chandrayaan 3</text>
+    <text x="300" y="656" font-size="26" font-weight="600" fill="#fde68a">Tiranga Flies on the Moon</text>
+
+    <line x1="220" y1="686" x2="380" y2="686" stroke="#f97316" stroke-width="1.5" opacity="0.8"/>
+
+    <text x="300" y="716" font-size="19" fill="#cbd5e1">Yuvraj Malik</text>
+  </g>
+
+  <text x="300" y="60" font-family="Georgia, serif" font-size="13" letter-spacing="3" fill="#fdba74" text-anchor="middle" opacity="0.85">NATIONAL DIGITAL LIBRARY · AI READER</text>
+</svg>

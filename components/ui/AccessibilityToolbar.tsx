@@ -17,12 +17,14 @@
 // app/revision/page.tsx and the Premium Reader's AI Companion, which are
 // untouched and keep working exactly as before.
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { useLanguage } from "@/lib/useLanguage";
 import { UI_TEXT, type Language } from "@/lib/i18n";
 import { useA11ySettings, MIN_FONT_SCALE, MAX_FONT_SCALE, FONT_STEP, DEFAULT_A11Y_SETTINGS } from "@/lib/accessibilitySettings";
 import VoiceAssistant from "@/components/ui/VoiceAssistant";
 import { ReadingRuler, ReadingMask } from "@/components/ui/ReadingOverlays";
+import FloatingControlsDock from "@/components/ui/FloatingControlsDock";
+import { useAdaptivePanelPlacement } from "@/lib/panelPlacement";
 
 const TEXT: Record<Language, Record<string, string>> = {
   en: {
@@ -81,7 +83,14 @@ export default function AccessibilityToolbar() {
   const [open, setOpen] = useState(false);
   const [speaking, setSpeaking] = useState(false);
   const [expanded, setExpanded] = useState({ ruler: false, text: false, visual: false });
-  const panelRef = useRef<HTMLDivElement>(null);
+  // Adaptive placement (Issue 1 fix): the panel used to just be a normal
+  // flex child that always grew upward from the trigger, which assumed
+  // the dock was anchored bottom-right. Now that the dock is draggable
+  // to any edge, the panel is fixed-positioned and placed by
+  // computePanelPlacement based on the trigger's real on-screen rect —
+  // expanding away from whichever edge is nearest and always clamped
+  // fully inside the viewport.
+  const { triggerRef, panelRef, placement } = useAdaptivePanelPlacement(open, 320);
 
   // isHydrated-style gate: SSR/first render always uses English text and
   // default settings (identical to what every page already renders today),
@@ -173,11 +182,19 @@ export default function AccessibilityToolbar() {
   );
 
   return (
-    <div data-a11y-no-invert className="fixed bottom-5 right-5 z-[9999] flex flex-col items-end gap-3">
+    <FloatingControlsDock>
       {open && (
         <div
           ref={panelRef}
-          className={`w-80 max-w-[90vw] max-h-[75vh] overflow-y-auto rounded-[1.75rem] p-5 shadow-[0_20px_60px_rgba(75,45,12,0.20)] ring-1 ring-black/5 ${settings.darkMode ? "bg-slate-900 text-white" : "bg-white text-slate-900"}`}
+          data-a11y-no-invert
+          style={{
+            position: "fixed",
+            top: placement?.top,
+            left: placement?.left,
+            maxHeight: placement?.maxHeight,
+            visibility: placement ? "visible" : "hidden",
+          }}
+          className={`w-80 max-w-[90vw] overflow-y-auto rounded-[1.75rem] p-5 shadow-[0_20px_60px_rgba(75,45,12,0.20)] ring-1 ring-black/5 ${settings.darkMode ? "bg-slate-900 text-white" : "bg-white text-slate-900"}`}
         >
           <div className="mb-4 flex items-center justify-between">
             <h2 className="text-lg font-black">{t.toolbarLabel}</h2>
@@ -286,6 +303,8 @@ export default function AccessibilityToolbar() {
       )}
 
       <button
+        ref={triggerRef as React.RefObject<HTMLButtonElement>}
+        data-dock-handle
         onClick={() => setOpen(o => !o)}
         aria-label={t.toolbarLabel}
         title={t.toolbarLabel}
@@ -298,6 +317,6 @@ export default function AccessibilityToolbar() {
 
       {mounted && <ReadingRuler settings={settings} />}
       {mounted && <ReadingMask settings={settings} />}
-    </div>
+    </FloatingControlsDock>
   );
 }

@@ -99,7 +99,13 @@ export function applyA11ySettings(settings: A11ySettings) {
   if (typeof document === "undefined") return;
   const html = document.documentElement;
   html.style.fontSize = `${settings.fontScale}%`;
-  html.style.filter = computeFilter(settings);
+  // Applied to <body>, NOT <html> — a `filter` on <html> would make every
+  // position:fixed descendant (the floating dock, Reading Ruler/Mask)
+  // silently start tracking <html>'s scrollable box instead of the
+  // viewport. Putting it on <body> keeps the exact same visual result for
+  // page content while leaving room for those overlays to render outside
+  // <body> via the portal in lib/fixedPortal.ts and stay viewport-fixed.
+  document.body.style.filter = computeFilter(settings);
   html.setAttribute("data-a11y-contrast", String(settings.highContrast));
   html.setAttribute("data-a11y-dark", String(settings.darkMode));
   html.setAttribute("data-a11y-reading", String(settings.readingMode));

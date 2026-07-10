@@ -10,9 +10,11 @@
 // toolbar does — no per-page wiring, no second toolbar.
 
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useLanguage } from "@/lib/useLanguage";
 import { UI_TEXT, type Language } from "@/lib/i18n";
 import type { A11ySettings } from "@/lib/accessibilitySettings";
+import { getFixedPortalRoot } from "@/lib/fixedPortal";
 
 const RULER_STEP = 24; // px per arrow-key press
 
@@ -31,6 +33,8 @@ export function ReadingRuler({ settings }: { settings: A11ySettings }) {
 
   const [y, setY] = useState<number | null>(null);
   const draggingRef = useRef(false);
+  const [portalRoot, setPortalRoot] = useState<HTMLElement | null>(null);
+  useEffect(() => setPortalRoot(getFixedPortalRoot()), []);
 
   // Center it the first time it's switched on; keep its position across
   // toggles/re-renders after that instead of re-centering every render.
@@ -57,14 +61,14 @@ export function ReadingRuler({ settings }: { settings: A11ySettings }) {
     };
   }, [settings.rulerThickness]);
 
-  if (!settings.rulerEnabled || y === null) return null;
+  if (!settings.rulerEnabled || y === null || !portalRoot) return null;
 
   function onKeyDown(e: React.KeyboardEvent) {
     if (e.key === "ArrowUp") { e.preventDefault(); setY(v => Math.max(0, (v ?? 0) - RULER_STEP)); }
     else if (e.key === "ArrowDown") { e.preventDefault(); setY(v => Math.min(window.innerHeight - settings.rulerThickness, (v ?? 0) + RULER_STEP)); }
   }
 
-  return (
+  return createPortal(
     <div
       role="slider"
       tabIndex={0}
@@ -84,7 +88,8 @@ export function ReadingRuler({ settings }: { settings: A11ySettings }) {
         borderTop: `2px solid ${settings.rulerColor}`,
         borderBottom: `2px solid ${settings.rulerColor}`,
       }}
-    />
+    />,
+    portalRoot
   );
 }
 
@@ -95,6 +100,8 @@ export function ReadingMask({ settings }: { settings: A11ySettings }) {
   useEffect(() => setMounted(true), []);
 
   const [y, setY] = useState<number | null>(null);
+  const [portalRoot, setPortalRoot] = useState<HTMLElement | null>(null);
+  useEffect(() => setPortalRoot(getFixedPortalRoot()), []);
 
   useEffect(() => {
     if (settings.maskEnabled && y === null && typeof window !== "undefined") {
@@ -123,7 +130,7 @@ export function ReadingMask({ settings }: { settings: A11ySettings }) {
     };
   }, [settings.maskEnabled, settings.maskHeight]);
 
-  if (!settings.maskEnabled || y === null) return null;
+  if (!settings.maskEnabled || y === null || !portalRoot) return null;
 
   const alpha = settings.maskOpacity / 100;
   const shared: React.CSSProperties = {
@@ -136,10 +143,11 @@ export function ReadingMask({ settings }: { settings: A11ySettings }) {
     transition: "top 90ms ease-out, height 90ms ease-out",
   };
 
-  return (
+  return createPortal(
     <div aria-hidden data-a11y-no-invert title={t.maskAriaLabel}>
       <div style={{ ...shared, top: 0, height: y }} />
       <div style={{ ...shared, top: y + settings.maskHeight, bottom: 0, height: "auto" }} />
-    </div>
+    </div>,
+    portalRoot
   );
 }

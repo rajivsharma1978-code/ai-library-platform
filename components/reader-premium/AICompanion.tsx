@@ -302,8 +302,9 @@ export default function AICompanion({
         )}
 
         {/* Ask AI input — stays visible regardless of Quick Actions
-            collapse state. */}
-        <div className="mt-3 flex gap-2">
+            collapse state. Marked data-dock-avoid so the floating
+            accessibility/voice dock never settles on top of it. */}
+        <div data-dock-avoid className="mt-3 flex gap-2">
           <input
             value={aiQuestion}
             onChange={(e) => setAiQuestion(e.target.value)}

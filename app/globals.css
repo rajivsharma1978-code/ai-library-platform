@@ -175,6 +175,18 @@ html[data-a11y-dyslexia="true"] p {
   margin-bottom: var(--a11y-paragraph-spacing) !important;
 }
 
+/* ── Floating Controls Dock ───────────────────────────────────────────
+   [data-dock-handle] marks ONLY the ♿ and 🎙️ trigger buttons (never
+   panel content) — see components/ui/FloatingControlsDock.tsx. touch-
+   action: none stops the browser's own touch-scroll/zoom gestures from
+   competing with a press-and-drag on the handle itself; panel content
+   (sliders, scrollable settings list) is untouched and keeps normal
+   touch behavior. */
+[data-dock-handle] {
+  touch-action: none;
+  cursor: grab;
+}
+
 /* ── Paper Mode (Phase B3) ────────────────────────────────────────────
    A warm, low-glare page tint — distinct from Dark Mode/Sepia, styled
    after e-reader "paper white" themes. CSS-only, same pattern as Reading

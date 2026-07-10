@@ -232,13 +232,18 @@ export interface AdminLanguageSetting {
   enabled: boolean;
   targetCoveragePercent: number;
 }
+// All six start enabled — the app's own homepage advertises Indian-
+// language support as a headline feature, so the primary language
+// switcher shouldn't start out artificially limited. The Admin →
+// Languages enable/disable toggle still fully works from here; this only
+// changes the out-of-the-box starting state, not the feature itself.
 const DEMO_LANGUAGE_SETTINGS: AdminLanguageSetting[] = [
   { language: "English", enabled: true, targetCoveragePercent: 100 },
   { language: "Hindi",   enabled: true, targetCoveragePercent: 90 },
   { language: "Tamil",   enabled: true, targetCoveragePercent: 75 },
   { language: "Bengali", enabled: true, targetCoveragePercent: 75 },
-  { language: "Marathi", enabled: false, targetCoveragePercent: 60 },
-  { language: "Telugu",  enabled: false, targetCoveragePercent: 60 },
+  { language: "Marathi", enabled: true, targetCoveragePercent: 60 },
+  { language: "Telugu",  enabled: true, targetCoveragePercent: 60 },
 ];
 export function loadLanguageSettings(): AdminLanguageSetting[] {
   const list = readArray<AdminLanguageSetting>(BATCH2_KEYS.languages);
