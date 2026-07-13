@@ -11,6 +11,8 @@
 // books live entirely in this override list. buildDisplayBooks() merges
 // the two into one list for both pages to render.
 
+import type { PageNumberingConfig } from "@/lib/pageNumbering";
+
 export type BookStatus = "Published" | "Draft" | "Pending" | "Under Review";
 
 export interface AdminBookOverride {
@@ -35,6 +37,11 @@ export interface AdminBookOverride {
   pdfDataUrl?: string;
   /** true = this book exists ONLY here (not in lib/directorBooks.ts). */
   isCustom?: boolean;
+  /** Printed-page mapping override (lib/pageNumbering.ts). When set on a
+   *  catalog book, replaces that book's own static config; when unset,
+   *  the book's static lib/directorBooks.ts config (if any) still
+   *  applies — see getPublicCatalog()'s merge. */
+  pageNumbering?: PageNumberingConfig;
   /** true = "deleted" from the admin's point of view. Catalog books can't
    *  really be removed from the static file, so this just hides them. */
   removed?: boolean;
@@ -54,6 +61,7 @@ export interface DisplayBook {
   coverFileName?: string;
   pdfFileName?: string;
   isCustom: boolean;
+  pageNumbering?: PageNumberingConfig;
 }
 
 export type ActivityType = "add" | "edit" | "delete" | "upload" | "ai" | "moderation";
@@ -164,6 +172,7 @@ export function buildDisplayBooks(catalog: DirectorBookLike[], overrides: AdminB
         coverFileName: o?.coverFileName,
         pdfFileName: o?.pdfFileName,
         isCustom: false,
+        pageNumbering: o?.pageNumbering ?? (b as any).pageNumbering,
       };
     })
     .filter((b): b is DisplayBook => b !== null);
@@ -182,6 +191,7 @@ export function buildDisplayBooks(catalog: DirectorBookLike[], overrides: AdminB
       coverFileName: o.coverFileName,
       pdfFileName: o.pdfFileName,
       isCustom: true,
+      pageNumbering: o.pageNumbering,
     }));
 
   return [...fromCatalog, ...customBooks];

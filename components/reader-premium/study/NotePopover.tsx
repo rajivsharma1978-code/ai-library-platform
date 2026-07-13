@@ -42,6 +42,7 @@ export default function NotePopover({
 
   return (
     <div
+      className="ndl-fade-in-scale"
       onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); }}
       style={{
         position: "fixed",
@@ -81,6 +82,7 @@ export default function NotePopover({
 
       <div style={{ position: "relative", marginTop: 8 }}>
         <button
+          className="ndl-press"
           onClick={() => setShowAiMenu(v => !v)}
           disabled={improving || !text.trim()}
           style={{
@@ -119,6 +121,7 @@ export default function NotePopover({
 
       <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
         <button
+          className="ndl-press"
           onClick={() => onSave(text)}
           disabled={!text.trim()}
           style={{
@@ -130,6 +133,7 @@ export default function NotePopover({
           Save
         </button>
         <button
+          className="ndl-press"
           onClick={onCancel}
           style={{
             background: "#f1f0ee", color: "#64748b", border: "none",

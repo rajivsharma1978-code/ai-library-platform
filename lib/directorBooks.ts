@@ -1,3 +1,5 @@
+import type { PageNumberingConfig } from "@/lib/pageNumbering";
+
 export type DirectorBook = {
   id: string;
   title: string;
@@ -13,6 +15,11 @@ export type DirectorBook = {
   /** Same field/convention as AdminBookOverride.category (components/admin/adminData.ts)
    *  — the public catalog groups by this on /library. */
   category: string;
+  /** Optional printed-page mapping (see lib/pageNumbering.ts). Absent on a
+   *  book means "no mapping" — every reader falls back to today's
+   *  behavior (PDF page IS the displayed page number), so adding this
+   *  field never breaks a book that doesn't set it. */
+  pageNumbering?: PageNumberingConfig;
 };
 
 export const directorBooks: DirectorBook[] = [
@@ -31,6 +38,19 @@ export const directorBooks: DirectorBook[] = [
     pages: 32,
     layout: "single",
     category: "History & Culture",
+    // No numeric offset guess: this book mixes single portrait pages with
+    // landscape two-up spreads (verified against the real PDF — pages
+    // alternate aspect ratio, not a consistent single-page layout), so a
+    // linear "PDF page N -> printed page N-2" formula would be wrong more
+    // often than right. Real per-page detection (text layer / OCR
+    // corners — lib/printedPageDetection.ts) is the only reliable source
+    // for the actual printed number(s); this config supplies just the
+    // front-matter labels detection can never produce on its own.
+    pageNumbering: {
+      type: "map",
+      pageMap: {},
+      labels: { 1: "Cover", 2: "Title Page" },
+    },
   },
   {
     id: "chandrayaan-3",
@@ -52,6 +72,15 @@ export const directorBooks: DirectorBook[] = [
     pages: 35,
     layout: "single",
     category: "Space & Astronomy",
+    // Same mixed single/two-up structure as Nalanda (verified against the
+    // real PDF: pages 1-3 are portrait singles, page 4 onward switches to
+    // landscape two-up spreads) — no numeric offset guess for the same
+    // reason; real detection resolves the actual printed number(s).
+    pageNumbering: {
+      type: "map",
+      pageMap: {},
+      labels: { 1: "Cover", 2: "Title Page" },
+    },
   },
   {
     id: "quantum",
@@ -68,5 +97,20 @@ export const directorBooks: DirectorBook[] = [
     pages: 400,
     layout: "spread",
     category: "Computing",
+    // Fallback only now — real detection (lib/printedPageDetection.ts) is
+    // primary. Verified against the actual PDF text layer: printed "1"
+    // lands on PDF page 13, confirmed consistent (offset of exactly 12)
+    // all the way through page 300. Front matter (cover through preface)
+    // runs PDF pages 1-12.
+    pageNumbering: {
+      type: "offset",
+      startPdfPage: 13,
+      startBookPage: 1,
+      labels: {
+        1: "Cover", 2: "Title Page", 3: "Copyright",
+        4: "Contents", 5: "Contents", 6: "Contents",
+        7: "Preface", 8: "Preface",
+      },
+    },
   },
 ];

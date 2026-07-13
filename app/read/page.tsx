@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useRef, useState, type ChangeEvent } from "react";
 import { usePublicCatalog } from "@/lib/catalog";
+import { getPageDisplay, resolveBookPageInput, describePageForAI, getBookPageLabel } from "@/lib/pageNumbering";
 import { UI_TEXT } from "@/lib/i18n";
 import { useLanguage } from "@/lib/useLanguage";
 import PageHeader from "@/components/ui/PageHeader";
@@ -11,6 +12,7 @@ import AppButton from "@/components/ui/AppButton";
 import InfoCard from "@/components/ui/InfoCard";
 import AccessibilityToolbar from "@/components/ui/AccessibilityToolbar";
 import BookCover from "@/components/ui/BookCover";
+import { saveUploadedPdf } from "@/lib/uploadedPdfStore";
 
 // ══════════════════════════════════════════════════════════════════════
 // Normal PDF Reader — /read
@@ -25,15 +27,19 @@ import BookCover from "@/components/ui/BookCover";
 //   1. "Read Normally" upload — stays right here, renders locally via a
 //      blob: URL, no AI, no redirect.
 //   2. "Read with AI Tutor" upload — reads the file as a base64 data
-//      URL, stores it in sessionStorage under the exact same keys
-//      PremiumReaderPreviewContent.tsx already looks for, and redirects
-//      to /reader-premium?source=upload. Untouched by this pass.
+//      URL and hands it off to PremiumReaderPreviewContent.tsx via
+//      IndexedDB (lib/uploadedPdfStore.ts) plus small sessionStorage
+//      pointer fields, then redirects to /reader-premium?source=upload.
+//      The payload used to go straight into sessionStorage under these
+//      same keys, but that has a ~5-10MB per-origin quota and a base64
+//      data URL runs ~33% larger than the source file — any upload past
+//      a few MB threw QuotaExceededError. Only the payload moved; the
+//      pointer fields below are unchanged.
 // ══════════════════════════════════════════════════════════════════════
 
 type DirectorBook = { id: string; title: string; author?: string; pdf: string; pages?: number | string; [k: string]: any };
 
 const AI_UPLOAD_KEYS = {
-  data: "ndl_uploaded_pdf_data",
   name: "ndl_uploaded_pdf_name",
   pages: "ndl_uploaded_pdf_pages",
   id: "ndl_uploaded_pdf_id",
@@ -183,7 +189,7 @@ function ReadPageContent() {
   function voiceReadPage() {
     if (typeof window === "undefined") return;
     const utt = new SpeechSynthesisUtterance(
-      `Reading page ${page} of ${numPages || "unknown"} of ${displayTitle || "this book"}.`
+      `Reading ${describePageForAI(page, catalogBook?.pageNumbering)}, out of ${numPages || "unknown"} pages, in ${displayTitle || "this book"}.`
     );
     utt.rate = 0.95;
     utt.onend = () => setVoiceSpeaking(false);
@@ -201,13 +207,13 @@ function ReadPageContent() {
   // instead of whatever was current when the listener was first attached
   // — the same stale-closure pitfall fixed in AccessibilityToolbar.
   const voiceStateRef = useRef({
-    page, numPages, isTransitioning, voiceSpeaking,
+    page, numPages, isTransitioning, voiceSpeaking, pageNumbering: catalogBook?.pageNumbering,
     goNext, goPrev, changePage, zoomIn, zoomOut, setFitMode, toggleFullscreen,
     voiceReadPage, voicePauseReading, voiceResumeReading, voiceStopReading,
   });
   useEffect(() => {
     voiceStateRef.current = {
-      page, numPages, isTransitioning, voiceSpeaking,
+      page, numPages, isTransitioning, voiceSpeaking, pageNumbering: catalogBook?.pageNumbering,
       goNext, goPrev, changePage, zoomIn, zoomOut, setFitMode, toggleFullscreen,
       voiceReadPage, voicePauseReading, voiceResumeReading, voiceStopReading,
     };
@@ -225,11 +231,23 @@ function ReadPageContent() {
       switch (detail.action) {
         case "nextPage": v.goNext(); break;
         case "prevPage": v.goPrev(); break;
-        case "goToPage":
+        case "goToPage": {
+          // "Go to page N" means the printed book page by default, same
+          // as Premium Reader — falls back to treating N as a raw PDF
+          // page when this book has no mapping, or the requested printed
+          // page doesn't resolve.
           if (detail.page && !v.isTransitioning) {
-            v.changePage(Math.min(v.numPages || 1, Math.max(1, detail.page)));
+            const { pdfPage, usedFallback } = resolveBookPageInput(detail.page, v.pageNumbering, v.numPages || 1);
+            v.changePage(pdfPage);
+            if (usedFallback && v.pageNumbering && typeof window !== "undefined") {
+              const utt = new SpeechSynthesisUtterance(
+                `No printed page ${detail.page} found — showing PDF page ${pdfPage} instead.`
+              );
+              window.speechSynthesis?.speak(utt);
+            }
           }
           break;
+        }
         case "zoomIn": v.zoomIn(); break;
         case "zoomOut": v.zoomOut(); break;
         case "fitPage": v.setFitMode("page"); break;
@@ -281,7 +299,10 @@ function ReadPageContent() {
       const pageCount = doc.numPages;
       const uploadId = `uploaded-${Date.now()}`;
 
-      window.sessionStorage.setItem(AI_UPLOAD_KEYS.data, dataUrl);
+      // The (potentially large) PDF payload goes to IndexedDB; only
+      // small pointer fields go in sessionStorage — see the module
+      // comment above for why.
+      await saveUploadedPdf(uploadId, dataUrl);
       window.sessionStorage.setItem(AI_UPLOAD_KEYS.name, file.name);
       window.sessionStorage.setItem(AI_UPLOAD_KEYS.pages, String(pageCount));
       window.sessionStorage.setItem(AI_UPLOAD_KEYS.id, uploadId);
@@ -395,7 +416,7 @@ function ReadPageContent() {
               {thumbnailPages.map(p => (
                 <button key={p} onClick={() => setPage(p)}
                   className={`rounded-lg px-3 py-2 text-left text-xs font-bold ${page === p ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"}`}>
-                  {t.commonPage} {p}
+                  {getBookPageLabel(p, catalogBook?.pageNumbering) ?? `${t.commonPage} ${p}`}
                 </button>
               ))}
               {numPages > THUMBNAIL_LIMIT && (
@@ -431,7 +452,17 @@ function ReadPageContent() {
 
       <footer className="flex flex-shrink-0 items-center justify-center gap-4 border-t border-slate-200 bg-white px-6 py-3">
         <button onClick={goPrev} disabled={page <= 1 || isTransitioning} className="rounded-full bg-slate-900 px-5 py-2 text-xs font-bold text-white disabled:opacity-30">← {t.commonPrevious}</button>
-        <span className="text-xs font-bold text-slate-500">{t.commonPage} {page} {t.commonOf} {numPages || "…"}</span>
+        {(() => {
+          const display = getPageDisplay(page, numPages || 1, catalogBook?.pageNumbering);
+          return display.bookLabel ? (
+            <span className="flex flex-col items-center leading-tight">
+              <span className="text-xs font-bold text-slate-700">{display.bookLabel}</span>
+              <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">PDF {page} {t.commonOf} {numPages || "…"}</span>
+            </span>
+          ) : (
+            <span className="text-xs font-bold text-slate-500">{t.commonPage} {page} {t.commonOf} {numPages || "…"}</span>
+          );
+        })()}
         <button onClick={goNext} disabled={page >= numPages || isTransitioning} className="rounded-full bg-slate-900 px-5 py-2 text-xs font-bold text-white disabled:opacity-30">{t.commonNext} →</button>
       </footer>
 

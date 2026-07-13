@@ -21,6 +21,7 @@ export default function HighlightColorPicker({
 
   return (
     <div
+      className="ndl-fade-in-scale"
       onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); }}
       style={{
         position: "fixed",
@@ -46,6 +47,7 @@ export default function HighlightColorPicker({
         {ORDER.map((c) => (
           <button
             key={c}
+            className="ndl-press"
             onClick={() => onPick(c)}
             title={HIGHLIGHT_COLOR_HEX[c].label}
             style={{
@@ -58,6 +60,7 @@ export default function HighlightColorPicker({
         ))}
       </div>
       <button
+        className="ndl-press"
         onClick={onCancel}
         style={{
           marginTop: 8, width: "100%", background: "#f1f0ee", color: "#64748b",

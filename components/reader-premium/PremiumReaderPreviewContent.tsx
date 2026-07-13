@@ -1,7 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
+import Link from "next/link";
 import dynamic from "next/dynamic";
 import AICompanion from "@/components/reader-premium/AICompanion";
 import BookOpeningAnimation from "@/components/reader-premium/BookOpeningAnimation";
@@ -9,7 +10,8 @@ import BookCover from "@/components/reader-premium/BookCover";
 import { directorBooks } from "@/lib/directorBooks";
 import { getPublicCatalog } from "@/lib/catalog";
 import { trackAIUsage, logActivity, type AIFeature } from "@/components/admin/adminData";
-import ReaderLayout from "@/components/reader/ReaderLayout";
+import PremiumReaderLayout, { type PremiumReaderLayoutHandle } from "@/components/reader-premium/PremiumReaderLayout";
+import LanguagePopover from "@/components/reader-premium/LanguagePopover";
 import AccessibilityToolbar from "@/components/ui/AccessibilityToolbar";
 // ── Phase 2: AI Notes, Highlights, Bookmarks, Study Workspace ─────────
 // Additive only — nothing below touches page turning, zoom, fullscreen,
@@ -23,6 +25,13 @@ import HighlightColorPicker from "@/components/reader-premium/study/HighlightCol
 import NotePopover, { NoteAIAction } from "@/components/reader-premium/study/NotePopover";
 import type { RevisionAction } from "@/components/reader-premium/study/StudyWorkspace";
 import type { PageOverlayHighlight, PageOverlayNote } from "@/components/reader-premium/PdfBookSpread";
+import { getPrintedPageMap, getPageDescriptionForAI, resolvePrintedPageTarget, getDisplayLabel, getSpreadDisplayLabel } from "@/lib/printedPageMap";
+import { cleanOcrTextForAi, sanitizeForSpeech, resolvePageText } from "@/lib/premium-reader/pageTextExtractor";
+import { chunkBookText, buildChapterWindowText, dedupeChapterText, mapWithConcurrency, withTimeout } from "@/lib/premium-reader/aiContext";
+import { getUploadedPdf } from "@/lib/uploadedPdfStore";
+import { getSpeechLanguage } from "@/lib/premium-reader/aiActions";
+import { loadVoices, pickVoiceForLanguage, stripMarkdownForSpeech, splitIntoSpeechChunks } from "@/lib/premium-reader/speech";
+import { useEnabledLanguages, LANGUAGE_NAME_TO_CODE } from "@/lib/languageSettings";
 
 const PdfBookSpread = dynamic(
   () => import("@/components/reader-premium/PdfBookSpread"),
@@ -58,6 +67,22 @@ type ActiveSelection =
 // ── Screen-space rectangle used for drag/highlight overlays ───────────
 type ScreenRect = { left: number; top: number; width: number; height: number };
 
+// ── Phase C2: one remembered Q&A turn, kept in memory only (never
+// localStorage) so follow-ups like "explain that more simply" can be
+// grounded without changing any persisted schema. ─────────────────────
+type AiTurn = { question: string; answer: string };
+
+// ── Response depth — reuses the Student/Exam Prep/Researcher study
+// modes already implemented server-side (app/api/ask-ai/route.ts) via
+// the existing "[Study Mode: X]" tag, instead of adding a new backend
+// concept for what is really the same idea under a friendlier name. ────
+type Depth = "Beginner" | "Exam-focused" | "Research-level";
+const DEPTH_TO_STUDY_MODE: Record<Depth, string> = {
+  Beginner: "Student",
+  "Exam-focused": "Exam Prep",
+  "Research-level": "Researcher",
+};
+
 // ── AI caller ─────────────────────────────────────────────────────────
 async function callAskAI(
   question: string, bookTitle: string, pageNumber: number,
@@ -65,20 +90,47 @@ async function callAskAI(
   /** Overrides the default "Page N" chapter label sent to the AI.
    *  Selection actions pass "Selected Text" or "Selected Image" so the
    *  model uses that as its context heading instead of "Page X". */
-  chapterOverride?: string
+  chapterOverride?: string,
+  studyMode: string = "Student",
+  /** Last few turns from this reading session, oldest first — lets the
+   *  model resolve "explain that more simply"-style follow-ups. */
+  history?: AiTurn[],
+  /** Human-readable scope label sent to the API so its system prompt
+   *  never claims a narrower scope than what was actually provided. */
+  scope: string = "current page",
+  /** Aborts the request (network failure OR the timeout runAI sets up
+   *  around this call) — surfaces as a DOMException named "AbortError",
+   *  caught the same as any other failure by the caller. */
+  signal?: AbortSignal
 ): Promise<string> {
   const res = await fetch("/api/ask-ai", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      question: `[Study Mode: Student] ${question} Respond ONLY in: ${language}.`,
+      question: `[Study Mode: ${studyMode}] ${question} Respond ONLY in: ${language}.`,
       book: bookTitle,
       chapter: chapterOverride ?? `Page ${pageNumber}`,
       content,
+      scope,
+      ...(history && history.length > 0 ? { history: history.slice(-3) } : {}),
       ...(imageDataUrl ? { imageDataUrl } : {}),
     }),
+    signal,
   });
+  // res.json() itself can throw (e.g. a non-JSON proxy/error page) —
+  // that's allowed to propagate to the caller's catch exactly like any
+  // other failure here; there is deliberately no special-casing per
+  // failure type, so every failure (network error, non-200, invalid
+  // JSON, timeout/abort) is caught identically by runAI.
   const data = await res.json();
+  // The route always returns { answer } even for errors so /reader,
+  // /quiz, /revision (which never check res.ok) still get SOME text —
+  // but this caller can and should tell the difference, so a real
+  // server-side failure (missing API key, OpenAI error, etc.) properly
+  // triggers runAI's catch block: Retry button, preserved question,
+  // aiFailed state, instead of silently rendering the error text as if
+  // it were a normal answer.
+  if (!res.ok) throw new Error(data?.answer || "AI request failed");
   return data?.answer ?? "No response. Please try again.";
 }
 
@@ -172,29 +224,50 @@ export default function PremiumReaderPreviewContent() {
   }, []);
 
   // ── Unified reading experience: user-uploaded PDFs ──────────────────
-  // app/read/page.tsx stores an uploaded file as a base64 data URL in
-  // sessionStorage (survives both client-side navigation AND a full
-  // page reload — unlike a blob: URL, which dies the moment the
-  // document that created it unloads), then redirects here with
-  // ?source=upload. This is the ONLY place in the whole Reader that
-  // decides which "book" is active — everything downstream (PdfBookSpread,
-  // AI Companion, Study Workspace, highlights, notes, bookmarks, Read
-  // Aloud, translation, quiz, revision) already just consumes whatever
+  // app/read/page.tsx reads an uploaded file as a base64 data URL and
+  // stores it in IndexedDB (lib/uploadedPdfStore.ts) — sessionStorage's
+  // ~5-10MB per-origin quota was too small for a base64-encoded file of
+  // any real size (base64 alone runs ~33% larger than the source), so
+  // any upload past a few MB threw QuotaExceededError. Small pointer
+  // fields (upload id / file name / page count) still live in
+  // sessionStorage since they're tiny and safe to read synchronously.
+  // This is the ONLY place in the whole Reader that decides which "book"
+  // is active — everything downstream (PdfBookSpread, AI Companion,
+  // Study Workspace, highlights, notes, bookmarks, Read Aloud,
+  // translation, quiz, revision) already just consumes whatever
   // currentBook/bookId resolve to below, so none of it needed to change.
   //
   // BEFORE hydration: always the stable directorBooks default (Nalanda,
-  // or whatever ?book= says) — never sessionStorage, never the uploaded
-  // title. AFTER hydration: if an upload is actually present, this
-  // re-evaluates on the next render (triggered by isHydrated flipping)
-  // and swaps to it. That swap is a perfectly normal post-mount state
-  // update, not part of hydration reconciliation, so it can never
-  // produce a mismatch — this is intentionally "BookCover updates only
-  // after client mount," not eliminated.
+  // or whatever ?book= says) — never sessionStorage/IndexedDB, never the
+  // uploaded title. AFTER hydration: if an upload is actually present,
+  // this re-evaluates (triggered by isHydrated flipping, then again once
+  // the IndexedDB read below resolves) and swaps to it. Both swaps are
+  // normal post-mount state updates, not part of hydration
+  // reconciliation, so neither can ever produce a mismatch — this is
+  // intentionally "BookCover updates only after client mount," not
+  // eliminated.
   const uploadedSource = searchParams.get("source") === "upload";
-  const uploadedPdfData = isHydrated ? window.sessionStorage.getItem("ndl_uploaded_pdf_data") : null;
   const uploadedPdfName = isHydrated ? window.sessionStorage.getItem("ndl_uploaded_pdf_name") : null;
   const uploadedPdfPages = isHydrated ? window.sessionStorage.getItem("ndl_uploaded_pdf_pages") : null;
   const uploadedPdfId = isHydrated ? window.sessionStorage.getItem("ndl_uploaded_pdf_id") : null;
+
+  // The PDF's actual bytes — unlike the pointer fields above, this is an
+  // async IndexedDB read, so it starts null and resolves once via effect.
+  const [uploadedPdfData, setUploadedPdfData] = useState<string | null>(null);
+  const [uploadedPdfLoadFailed, setUploadedPdfLoadFailed] = useState(false);
+  useEffect(() => {
+    if (!isHydrated || !uploadedSource || !uploadedPdfId) return;
+    let cancelled = false;
+    getUploadedPdf(uploadedPdfId)
+      .then((dataUrl) => {
+        if (cancelled) return;
+        if (dataUrl) setUploadedPdfData(dataUrl);
+        else setUploadedPdfLoadFailed(true);
+      })
+      .catch(() => { if (!cancelled) setUploadedPdfLoadFailed(true); });
+    return () => { cancelled = true; };
+  }, [isHydrated, uploadedSource, uploadedPdfId]);
+
   // Explicit AND — requires both the URL's stated intent (?source=upload)
   // and the data actually being present, so a stale/bad link (or leftover
   // sessionStorage from a previous session) never silently hijacks a
@@ -229,6 +302,20 @@ export default function PremiumReaderPreviewContent() {
   const totalPages = Number(currentBook.pages);
   const isSpreadBook = currentBook.layout === "spread";
 
+  // ── Printed-page mapping (demo: static, deterministic — no OCR, no
+  // background indexing, nothing async) ─────────────────────────────────
+  // A hand-verified per-book table (lib/printedPageMap.ts). Every lookup
+  // is synchronous and instant — this is the ONLY source of truth for
+  // every "what page is this" display/prompt/lookup below.
+  const printedPageMap = useMemo(() => getPrintedPageMap(bookId), [bookId]);
+
+  // Single place both the reader UI and every AI prompt below describe a
+  // PDF page from — never build a "page N" string by hand elsewhere.
+  const pageDescription = useCallback(
+    (pdfPage: number) => getPageDescriptionForAI(pdfPage, printedPageMap),
+    [printedPageMap]
+  );
+
   // ── Reader ────────────────────────────────────────────────────────
   const [readerPage, setReaderPage] = useState(1);
   const [bookOpened, setBookOpened] = useState(false);
@@ -241,7 +328,66 @@ export default function PremiumReaderPreviewContent() {
   const panStart = useRef({ mx: 0, my: 0, px: 0, py: 0 });
   const bookAreaRef = useRef<HTMLDivElement>(null);
   const autoFitDone = useRef(false);
-  const [isFlipping, setIsFlipping] = useState(false);
+
+  // ── Phase C3: layout state (visual/interaction redesign only — none
+  // of this touches PDF rendering, page logic, zoom logic, or AI
+  // request logic; it only decides how much space the AI panel takes
+  // and whether the book-info panel/fullscreen chrome show). ─────────
+  const AI_PANEL_COMPACT_KEY = "ndl_reader_ai_panel_compact";
+  const AI_PANEL_EXPANDED_PX = 400;
+  // Icon-only rail — AI icon + expand button, nothing else — so the
+  // reader immediately gets the freed width back instead of a mostly-
+  // empty 280px panel.
+  const AI_PANEL_COMPACT_PX = 76;
+  const [aiPanelCompact, setAiPanelCompact] = useState(false);
+  const [contentsOpen, setContentsOpen] = useState(false);
+  // Own lightweight fullscreen tracking (PremiumReaderLayout tracks its
+  // own copy too, purely for its exit-button/idle-hide chrome) — this
+  // copy exists only so `center` (built here) can swap in the floating
+  // fullscreen bottom bar instead of the normal one.
+  const [isFullscreenLayout, setIsFullscreenLayout] = useState(false);
+  const layoutRef = useRef<PremiumReaderLayoutHandle>(null);
+  const wasFullscreenRef = useRef(false);
+  // Tracks viewport width for responsive behavior only (never touches
+  // reader/PDF logic) — tablet gets a narrower/compact AI panel by
+  // default, mobile additionally renders it as a full-height overlay
+  // instead of a permanent column so the book keeps the full width.
+  const [viewportWidth, setViewportWidth] = useState(1280);
+
+  useEffect(() => {
+    try {
+      const stored = window.localStorage.getItem(AI_PANEL_COMPACT_KEY);
+      if (stored !== null) setAiPanelCompact(stored === "true");
+      else setAiPanelCompact(window.innerWidth < 1024); // tablet/mobile default
+    } catch { /* ignore */ }
+    function onFsChange() { setIsFullscreenLayout(!!document.fullscreenElement); }
+    document.addEventListener("fullscreenchange", onFsChange);
+    setViewportWidth(window.innerWidth);
+    function onResize() { setViewportWidth(window.innerWidth); }
+    window.addEventListener("resize", onResize);
+    return () => {
+      document.removeEventListener("fullscreenchange", onFsChange);
+      window.removeEventListener("resize", onResize);
+    };
+  }, []);
+  const isMobileViewport = viewportWidth < 640;
+
+  // AI panel starts compact on ENTERING fullscreen (per spec), same
+  // "force once on the false→true edge" pattern as ReaderNav's own
+  // auto-collapse — the user's manual toggle keeps working normally
+  // afterward, in or out of fullscreen.
+  useEffect(() => {
+    if (isFullscreenLayout && !wasFullscreenRef.current) setAiPanelCompact(true);
+    wasFullscreenRef.current = isFullscreenLayout;
+  }, [isFullscreenLayout]);
+
+  function toggleAiPanelCompact() {
+    setAiPanelCompact((prev) => {
+      const next = !prev;
+      try { window.localStorage.setItem(AI_PANEL_COMPACT_KEY, String(next)); } catch { /* ignore */ }
+      return next;
+    });
+  }
 
   // Tracks drag start (screen coords) — SHARED by both Text Select and
   // Image Select. Which one of the two "uses" the resulting drag is
@@ -249,11 +395,28 @@ export default function PremiumReaderPreviewContent() {
   // having two separate trackers.
   const dragStartRef = useRef<{ x: number; y: number } | null>(null);
 
+  // Snapshot of selectionRects taken the moment "⭐ Highlight" / "📝 Add
+  // Note" is clicked — NOT read live inside addHighlight/saveNote. Those
+  // buttons live inside the same mouse-up-handling area as the page, so
+  // clicking them fires a native mouseup that bubbles to handleMouseUp
+  // BEFORE the button's own click handler runs; handleMouseUp's "this
+  // mouseup landed on a UI control" guard already clears selectionRects
+  // to [] on that bubble. By the time addHighlight/saveNote actually run
+  // (on the later click event), selectionRects in state is already empty
+  // — which silently saved highlights/notes with an empty rectsPct/
+  // rectPct, so they showed up in Study but never rendered on the page.
+  // Capturing the rects here, before that mouseup can clear them, fixes it.
+  const pendingSelectionRectsRef = useRef<ScreenRect[]>([]);
+
   // ── Page text cache ───────────────────────────────────────────────
   const [pageTexts, setPageTexts] = useState<Record<number, string>>({});
 
   // ── Language ──────────────────────────────────────────────────────
   const [language, setLanguage] = useState<Lang>("English");
+  // Hook call kept unconditional (above every early `return` below) per
+  // Rules of Hooks — used by the toolbar's LanguagePopover near the
+  // bottom of this component.
+  const enabledLanguageCodes = useEnabledLanguages();
 
   // ── AI ────────────────────────────────────────────────────────────
   const [aiResponse, setAiResponse] = useState(
@@ -261,6 +424,64 @@ export default function PremiumReaderPreviewContent() {
   );
   const [aiQuestion, setAiQuestion] = useState("");
   const [aiLoading, setAiLoading] = useState(false);
+
+  // ── Phase C2: scope, depth, follow-up memory, retry ────────────────
+  // Scope: what Quick Actions / Ask AI apply to (page/chapter/book) —
+  // an active text selection still wins for Ask AI regardless (see
+  // askPremiumAI). Depth: reuses the existing server-side study modes.
+  // Neither persists across page reloads on purpose — this mirrors how
+  // `language` above already behaves, and avoids touching localStorage.
+  const [scope, setScope] = useState<"page" | "chapter" | "book">("page");
+  const [depth, setDepth] = useState<Depth>("Beginner");
+
+  // Last few Q&A turns from THIS reading session, in memory only — lets
+  // a typed follow-up like "explain that more simply" or "give an
+  // example" resolve "that" against the previous answer. Reset whenever
+  // the book changes (see the bookId effect below).
+  const [aiHistory, setAiHistory] = useState<AiTurn[]>([]);
+  const AI_HISTORY_LIMIT = 3;
+
+  // True only right after the most recent AI call failed — drives the
+  // small inline Retry button. `lastAiCallRef` re-runs the exact call
+  // that failed (quick action, chapter/book scope, or Ask AI) without
+  // the user having to redo anything.
+  const [aiFailed, setAiFailed] = useState(false);
+  const lastAiCallRef = useRef<(() => void) | null>(null);
+  // Aborts a still-in-flight request when a newer one starts, and caps
+  // how long any single request can hang before it's treated as failed.
+  const activeAbortControllerRef = useRef<AbortController | null>(null);
+  const AI_REQUEST_TIMEOUT_MS = 30000;
+
+  // Full-book text extraction is slow (walks every page of the PDF) —
+  // cache the result per book, in memory, so a second "Entire Book"
+  // action in the same session never re-extracts from scratch.
+  const fullBookCacheRef = useRef<Record<string, { text: string; weak: boolean }>>({});
+
+  // Shared lazily-opened pdf.js document (independent of PdfBookSpread's
+  // own rendering pipeline), keyed by book — reused by BOTH entire-book
+  // extraction and chapter-scope's bounded page-range extraction below,
+  // so switching scopes never opens a second document unnecessarily.
+  const pdfDocCacheRef = useRef<Record<string, Promise<any>>>({});
+  function getSharedPdfDocument(): Promise<any> {
+    const existing = pdfDocCacheRef.current[bookId];
+    if (existing) return existing;
+    const promise = (async () => {
+      const pdfjsLib = await import("pdfjs-dist");
+      pdfjsLib.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
+      return pdfjsLib.getDocument(currentBook.pdf).promise;
+    })();
+    pdfDocCacheRef.current[bookId] = promise;
+    return promise;
+  }
+
+  // Dev-only visibility into what each AI scope actually sent — never
+  // shown in the UI, gated on NODE_ENV so it's a no-op in production.
+  function logScopeDebug(info: { scope: string; source: string; pages: number; chars: number }) {
+    if (process.env.NODE_ENV !== "production") {
+      // eslint-disable-next-line no-console
+      console.debug("[AI Scope]", info);
+    }
+  }
 
   // ── SINGLE INTERACTION MODE — the only thing that decides which AI
   //    context (text vs image) a floating-toolbar action uses. ─────────
@@ -281,11 +502,24 @@ export default function PremiumReaderPreviewContent() {
   const [selectionRects, setSelectionRects] = useState<ScreenRect[]>([]);
   const [capturedImageRect, setCapturedImageRect] = useState<ScreenRect | null>(null);
 
-  // ── Speech ────────────────────────────────────────────────────────
+  // ── Speech — TWO independent players sharing the one browser
+  // speechSynthesis queue: "page" reads the visible book page verbatim,
+  // "aiResponse" reads the AI Companion's current output. Starting
+  // either one stops the other (see stopPageSpeech/stopAiSpeech) since
+  // only one can ever really be speaking at a time. ────────────────────
   const [speechState, setSpeechState] = useState<SpeechState>("idle");
-  const utteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
+  const [aiSpeechState, setAiSpeechState] = useState<SpeechState>("idle");
+  // Set only when the AI response's language has no closely-matching
+  // installed voice — shown next to the Read AI Response button so a
+  // fallback voice/accent is never silently substituted without
+  // explanation (Phase C2 fix — Hindi/Indic read-aloud).
+  const [aiVoiceNotice, setAiVoiceNotice] = useState<string | null>(null);
+  const pageSpeechStoppedRef = useRef(false);
+  const aiSpeechStoppedRef = useRef(false);
 
   // ── Go To Page ────────────────────────────────────────────────────
+  // Input always means the PRINTED page number — there is no PDF-page
+  // mode. PDF page indexes are purely internal.
   const [goToInput, setGoToInput] = useState("");
 
   // ── Voice Assistant: "Open Study tab" signal — undefined until the
@@ -406,9 +640,18 @@ export default function PremiumReaderPreviewContent() {
   // selection once the new page has rendered and the mouse next moves,
   // with no new mousedown/drag having happened on the new page at all.
   useEffect(() => {
-    window.speechSynthesis?.cancel();
-    setSpeechState("idle");
-    utteranceRef.current = null;
+    // Only the PAGE speech player is tied to page content, so only it
+    // gets stopped here — the AI response player keeps narrating across
+    // a page turn since aiResponse itself doesn't change until a new AI
+    // call completes. Cancelling the shared synth queue is still safe
+    // even while AI speech is mid-chunk: onend simply won't fire for
+    // the cancelled utterance, so speakSequence's chain stops there —
+    // exactly like an explicit Stop.
+    if (speechState !== "idle") {
+      window.speechSynthesis?.cancel();
+      pageSpeechStoppedRef.current = true;
+      setSpeechState("idle");
+    }
     clearActiveSelection();   // activeSelection, highlights, ask-input, floating toolbar
     resetInteractionState();  // isPanning
     dragStartRef.current = null; // drag anchor — never carry a stale one to the new page
@@ -426,6 +669,21 @@ export default function PremiumReaderPreviewContent() {
     setAiResponse("Select text from the book, drag a region, or click a quick action.");
     autoFitDone.current = false;
     switchInteractionMode("none");
+    // A new book means a new conversation and a new scope — carrying
+    // either over would ground follow-ups in the wrong book, or apply
+    // "Entire Book" scope to a book the user hasn't even opened yet.
+    setAiHistory([]);
+    setScope("page");
+    setAiFailed(false);
+    // Unlike a plain page turn, a book change invalidates BOTH speech
+    // players — the AI response about to be cleared, and whatever page
+    // was playing, both belonged to the book being left.
+    window.speechSynthesis?.cancel();
+    pageSpeechStoppedRef.current = true;
+    setSpeechState("idle");
+    aiSpeechStoppedRef.current = true;
+    setAiSpeechState("idle");
+    setAiVoiceNotice(null);
   }, [bookId]); // eslint-disable-line
 
   useEffect(() => { if (zoom <= 100) setPan({ x: 0, y: 0 }); }, [zoom]);
@@ -462,29 +720,36 @@ export default function PremiumReaderPreviewContent() {
   // PdfBookSpread's own rendering pipeline) so it never touches or risks
   // the existing page-rendering code.
   // ══════════════════════════════════════════════════════════════════
-  const MAX_FULL_BOOK_CHARS = 12000;
+  const FULL_BOOK_EXTRACT_CAP = 24000;
   const WEAK_BOOK_TEXT_THRESHOLD = 300;
+  // Kept well under typical model context limits even at 3 chunks + 1
+  // combine call — each chunk is its own request, not stacked together.
+  const BOOK_CHUNK_SIZE = 8000;
+  // "Current chapter" scope prefers ALREADY-CACHED page text (pageTexts)
+  // when there's enough of it; otherwise it does its own small, bounded
+  // text-layer extraction for just this window (see getChapterText) —
+  // never a full-book extraction.
+  const CHAPTER_WINDOW_PAGES = 5;
 
   async function extractFullBookText(): Promise<{ text: string; weak: boolean }> {
     try {
-      const pdfjsLib = await import("pdfjs-dist");
-      pdfjsLib.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
-      const pdf = await pdfjsLib.getDocument(currentBook.pdf).promise;
+      const pdf = await getSharedPdfDocument();
       const numPages = pdf.numPages || totalPages;
 
       let combined = "";
       let pagesWithText = 0;
 
       for (let i = 1; i <= numPages; i++) {
-        if (combined.length >= MAX_FULL_BOOK_CHARS) break;
+        if (combined.length >= FULL_BOOK_EXTRACT_CAP) break;
         try {
           const page = await pdf.getPage(i);
           const textContent = await page.getTextContent();
-          const pageText = (textContent.items as any[])
+          const rawText = (textContent.items as any[])
             .map((item: any) => item.str)
             .join(" ")
             .replace(/\s+/g, " ")
             .trim();
+          const pageText = cleanOcrTextForAi(rawText);
           if (pageText.length > 10) {
             pagesWithText++;
             combined += `\n\n[Page ${i}]\n${pageText}`;
@@ -495,24 +760,34 @@ export default function PremiumReaderPreviewContent() {
         }
       }
 
-      const trimmed = combined.trim().slice(0, MAX_FULL_BOOK_CHARS);
+      const trimmed = combined.trim().slice(0, FULL_BOOK_EXTRACT_CAP);
       // "Weak" covers both a mostly-empty extraction AND a book where only
       // a handful of pages produced any real text at all (e.g. an
       // illustrated/scanned book where embedded text is sparse or absent) —
       // either way, page-by-page extraction alone isn't a reliable basis
-      // for a whole-book quiz.
+      // for a whole-book action.
       const weak = trimmed.length < WEAK_BOOK_TEXT_THRESHOLD || pagesWithText < Math.max(1, Math.ceil(numPages * 0.15));
       return { text: trimmed, weak };
     } catch (err) {
-      console.error("[EntireBookQuiz] Full-book extraction failed:", err);
+      console.error("[EntireBookAI] Full-book extraction failed:", err);
       return { text: "", weak: true };
     }
+  }
+
+  // Reuses a per-book cache (in memory only) so repeated Entire Book
+  // actions in the same session never re-walk the PDF from scratch.
+  async function getFullBookText(): Promise<{ text: string; weak: boolean }> {
+    const cached = fullBookCacheRef.current[bookId];
+    if (cached) return cached;
+    const result = await extractFullBookText();
+    fullBookCacheRef.current[bookId] = result;
+    return result;
   }
 
   // Fallback grounding for weak/scanned books: book metadata (title,
   // author, description, language) plus any page text ALREADY cached
   // from pages the user has actually viewed (pageTexts) — every bit of
-  // real content helps ground the quiz rather than relying purely on
+  // real content helps ground the response rather than relying purely on
   // guesswork from the title alone.
   function buildBookMetadataContext(): string {
     const metaLines = [
@@ -524,113 +799,408 @@ export default function PremiumReaderPreviewContent() {
 
     const cachedPages = Object.entries(pageTexts)
       .filter(([, txt]) => txt && txt.trim().length > 10)
-      .map(([pageNum, txt]) => `[Page ${pageNum}]\n${txt.trim()}`)
+      .map(([pageNum, txt]) => `[Page ${pageNum}]\n${cleanOcrTextForAi(txt.trim())}`)
       .join("\n\n");
 
     return [metaLines, cachedPages].filter(Boolean).join("\n\n");
   }
 
-  // The "entire book" quiz action, wired from AICompanion's Quick Actions.
-  // Distinct from the existing page-scoped Quiz action (unchanged) — this
-  // is the new fourth scope alongside current page / visible pages /
-  // selected text.
-  async function runEntireBookQuiz() {
-    resetInteractionState();
-    setAiLoading(true);
-    setAiResponse("Reading the entire book…");
+  // ── Chapter scope ────────────────────────────────────────────────
+  // A window of pages around the current one. Three tiers, in order:
+  //  1. Already-cached page text (pageTexts, populated as the user
+  //     reads) when there's enough of it — free and instant.
+  //  2. A SMALL, BOUNDED extraction for just this window: text layer
+  //     first, then OCR (via pageTextExtractor's resolvePageText, which
+  //     already caches by page — shared with whatever the reader itself
+  //     OCRs as the user scrolls) ONLY for pages the text layer came up
+  //     empty on. This is what makes chapter scope actually work for
+  //     scanned/illustrated books (Nalanda, Chandrayaan-3) that have no
+  //     embedded text layer at all — a plain getTextContent() pass
+  //     alone always came back empty for those, which is why chapter
+  //     summaries there kept coming back "not available in the provided
+  //     content": the context sent to the AI genuinely WAS empty.
+  //  3. If, even after both, there still isn't enough real text, this
+  //     returns whatever partial/best-effort text WAS found (source:
+  //     "partial") rather than silently padding out to a full chapter
+  //     claim — or "empty" if there's truly nothing, so the caller can
+  //     skip the AI call entirely instead of sending it nothing.
+  // Every tier runs through dedupeChapterText so repeated running
+  // headers/footers or repeated OCR fragments don't pad out the count.
+  const MIN_CHAPTER_CONTEXT_CHARS = 250; // enough to confidently call it a "chapter" summary
+  const MIN_USEFUL_CONTEXT_CHARS = 30;   // below this, there's nothing worth sending to the AI at all
+  const CHAPTER_OCR_CONCURRENCY = 2;     // bounded — OCR is expensive, this is Tesseract's own known-safe fan-out
+  const CHAPTER_EXTRACT_TIMEOUT_MS = 20000; // never let a slow/stuck OCR pass hang the UI with no Retry
 
-    const { text, weak } = await extractFullBookText();
+  async function getChapterText(centerPage: number): Promise<{ text: string; source: "cache" | "extracted" | "partial" | "empty"; pages: number }> {
+    const start = Math.max(1, centerPage - CHAPTER_WINDOW_PAGES);
+    const end = Math.min(totalPages, centerPage + CHAPTER_WINDOW_PAGES);
 
-    const context = weak
-      ? buildBookMetadataContext()
-      : `Full text extracted from "${book}" (may be capped for length):\n\n${text}`;
-
-    // Explicit, hard instruction: never refuse, never ask the user for
-    // page content, never cite "I only have page X" — always produce a
-    // complete quiz from whatever context is actually available.
-    const scopeInstruction = weak
-      ? `IMPORTANT: Page-by-page text extraction for this book was limited or unavailable — it is likely an illustrated or scanned book. You have been given the book's title, description, and any available page context instead. Using ONLY this context, generate a broad, useful quiz based on the book's known theme and content. Do NOT say you only have access to one page, do NOT ask the user to provide more page content, and do NOT refuse to generate the quiz — always produce a complete quiz. Begin your response with exactly this sentence: "Here is a broad quiz based on the available book context and visible content."`
-      : `You have been given text extracted from across the entire book (possibly capped for length). Create a quiz that draws from the WHOLE book, not just one page — never say you only have access to a single page.`;
-
-    const prompt = `${scopeInstruction} Create exactly 8 multiple-choice quiz questions covering the entire book "${book}". Respond ONLY in: ${language}.`;
-
-    await runAI(prompt, context, undefined, "Entire Book Quiz", "quiz");
-  }
-
-  // ── Navigation ──────────────────────────────────────────────────────
-  function triggerFlip(action: () => void) {
-    setIsFlipping(true);
-    setTimeout(() => { action(); setTimeout(() => setIsFlipping(false), 160); }, 140);
-  }
-  function goNext() {
-    triggerFlip(() => {
-      autoFitDone.current = false;
-      if (isSpreadBook) {
-        if (readerPage === 1) { setReaderPage(2); return; }
-        const next = readerPage + 2;
-        if (next <= totalPages) setReaderPage(next);
-      } else {
-        setReaderPage(p => Math.min(totalPages, p + 1));
-      }
+    const cachedPagesInRange = Object.keys(pageTexts).filter((p) => {
+      const n = Number(p);
+      return n >= start && n <= end && (pageTexts[n] || "").trim().length > 10;
     });
-  }
-  function goPrev() {
-    triggerFlip(() => {
-      autoFitDone.current = false;
-      if (isSpreadBook) {
-        if (readerPage <= 2) { setReaderPage(1); return; }
-        setReaderPage(p => Math.max(1, p - 2));
-      } else {
-        setReaderPage(p => Math.max(1, p - 1));
-      }
-    });
-  }
-  function fitScreen() { setZoom(100); setPan({ x: 0, y: 0 }); autoFitDone.current = false; }
-  function goToPage(raw: string) {
-    const n = parseInt(raw, 10);
-    if (isNaN(n) || n < 1 || n > totalPages) return;
-    triggerFlip(() => {
-      autoFitDone.current = false;
-      if (isSpreadBook && n > 1) setReaderPage(n % 2 === 0 ? n : n - 1);
-      else setReaderPage(n);
-    });
-    setGoToInput("");
-  }
+    const cachedWindowText = dedupeChapterText(cleanOcrTextForAi(buildChapterWindowText(pageTexts, centerPage, CHAPTER_WINDOW_PAGES)));
 
-  // ── AI ───────────────────────────────────────────────────────────────
-  async function runAI(prompt: string, content?: string, imageDataUrl?: string, chapterOverride?: string, action?: string) {
-    resetInteractionState();
-    setAiLoading(true);
-    setAiResponse("AI is thinking…");
+    if (cachedWindowText.length >= MIN_CHAPTER_CONTEXT_CHARS && cachedPagesInRange.length >= 2) {
+      return { text: cachedWindowText, source: "cache", pages: cachedPagesInRange.length };
+    }
+
+    // Tier 2 — bounded direct extraction (never OCR the whole book, and
+    // never re-OCR a page pageTextExtractor already has cached). Wrapped
+    // in withTimeout so a stuck/slow page render or OCR pass (Tesseract
+    // is slow at best, and this codebase has documented environments
+    // where pdf.js's page.render() itself stalls) can never hang the UI
+    // forever with no Retry — it just falls through to whatever's best
+    // between this and the cache tier, same as if extraction found
+    // nothing. Any pages that DO finish later are still cached by
+    // pageTextExtractor for next time, even though this call stopped
+    // waiting for them.
+    let extractedText = "";
+    let extractedPages = 0;
     try {
-      const fallback = getVisiblePageText().length > 50
-        ? `Content from page ${readerPage} of "${book}":\n\n${getVisiblePageText()}`
-        : `Viewing page ${readerPage} of "${book}".`;
-      const answer = await callAskAI(
-        prompt, book, readerPage, content ?? fallback, language, imageDataUrl, chapterOverride
+      const pdf = await getSharedPdfDocument();
+      setAiResponse("Reading nearby pages…");
+      const pageNumbers: number[] = [];
+      for (let p = start; p <= end; p++) pageNumbers.push(p);
+      const perPage = await withTimeout(
+        mapWithConcurrency(pageNumbers, CHAPTER_OCR_CONCURRENCY, async (p) => {
+          try {
+            const { text } = await resolvePageText(pdf, currentBook.pdf, p);
+            const cleaned = cleanOcrTextForAi(text);
+            return cleaned.length > 10 ? `[Page ${p}]\n${cleaned}` : null;
+          } catch {
+            return null; // one unreadable/un-OCR-able page shouldn't abort the rest
+          }
+        }),
+        CHAPTER_EXTRACT_TIMEOUT_MS,
+        [] as (string | null)[]
       );
-      setAiResponse(answer);
+      const found = perPage.filter((t): t is string => t !== null);
+      extractedText = dedupeChapterText(found.join("\n\n"));
+      extractedPages = found.length;
+    } catch (err) {
+      console.error("[ChapterScope] range extraction failed:", err);
+    }
+
+    const best = extractedText.length > cachedWindowText.length
+      ? { text: extractedText, pages: extractedPages, viaExtraction: true }
+      : { text: cachedWindowText, pages: cachedPagesInRange.length, viaExtraction: false };
+
+    if (best.text.length >= MIN_CHAPTER_CONTEXT_CHARS && best.pages >= 2) {
+      return { text: best.text, source: best.viaExtraction ? "extracted" : "cache", pages: best.pages };
+    }
+    if (best.text.length >= MIN_USEFUL_CONTEXT_CHARS) {
+      return { text: best.text, source: "partial", pages: best.pages };
+    }
+    return { text: "", source: "empty", pages: 0 };
+  }
+
+  // ── Entire-book scope, generalized ────────────────────────────────
+  // Used by ALL Quick Actions (Explain/Summarize/Translate/Quiz/
+  // Flashcards/Notes) and Ask AI when scope === "book" — not just quiz.
+  // For a book with real extractable text, this "chunks safely": the
+  // extracted text is split on page boundaries into a few pieces, each
+  // gets its own AI call in parallel, and a final call combines those
+  // partial results into one polished, non-repetitive answer. A short
+  // book that fits in one chunk skips straight to a single call.
+  // `useHistory` defaults to false: Quick Actions / scope-driven calls
+  // are each a FRESH, discrete request, not a conversation turn. Passing
+  // history into them was the root cause of Page/Chapter/Entire Book
+  // producing near-identical answers — the prompt text for e.g.
+  // "Summarize" is the same regardless of scope, so with recent history
+  // attached the model saw what looked like a repeated question and
+  // anchored to its previous answer instead of processing the new
+  // (larger) content block. Only askPremiumAI's free-text follow-ups
+  // pass true. Every call still WRITES to history regardless (so a
+  // later Ask AI follow-up can still reference a Quick Action's result)
+  // — only whether history is SENT to the model is gated.
+  async function runEntireBookAction(
+    action: string, basePrompt: string, useHistory: boolean = false, onSuccess?: () => void
+  ): Promise<boolean> {
+    resetInteractionState();
+    setAiLoading(true);
+    setAiFailed(false);
+    setAiResponse("Reading the entire book…");
+    lastAiCallRef.current = () => { runEntireBookAction(action, basePrompt, useHistory, onSuccess); };
+
+    try {
+      const { text, weak } = await getFullBookText();
+
+      if (weak) {
+        const context = buildBookMetadataContext();
+        const scopeInstruction = `IMPORTANT: Page-by-page text extraction for this book was limited or unavailable — it is likely an illustrated or scanned book. You have been given the book's title, description, and any page context that IS cached instead. Using ONLY this context: ${basePrompt} Do NOT say you only have access to one page, do NOT ask the user to provide more page content, and do NOT refuse — always produce a complete, useful response grounded in the available context.`;
+        logScopeDebug({ scope: "book", source: "weak-fallback (metadata + cached pages)", pages: Object.keys(pageTexts).length, chars: context.length });
+        return await runAI(scopeInstruction, context, undefined, "Entire Book (limited extraction available)", action, "entire book", useHistory, onSuccess);
+      }
+
+      const chunks = chunkBookText(text, BOOK_CHUNK_SIZE);
+      const pagesExtracted = (text.match(/\[Page \d+\]/g) || []).length;
+
+      if (chunks.length <= 1) {
+        const scopeInstruction = `You have been given text extracted from across the entire book (possibly capped for length). ${basePrompt} Draw from the WHOLE book, not just one page — never say you only have access to a single page.`;
+        logScopeDebug({ scope: "book", source: "full extraction (single chunk)", pages: pagesExtracted, chars: text.length });
+        return await runAI(scopeInstruction, `Full text extracted from "${book}":\n\n${text}`, undefined, "Entire Book", action, "entire book", useHistory, onSuccess);
+      }
+
+      logScopeDebug({ scope: "book", source: `full extraction (chunked x${chunks.length})`, pages: pagesExtracted, chars: text.length });
+      setAiResponse(`Reading the entire book… (${chunks.length} sections)`);
+      const partials = await Promise.all(chunks.map((chunk, i) =>
+        callAskAI(
+          `From ONLY this section of the book "${book}": ${basePrompt} Be concise — this is one part of a larger combined result, so skip a full intro/outro.`,
+          book, readerPage, `Book section ${i + 1} of ${chunks.length}:\n\n${chunk}`, language, undefined,
+          `Entire Book — Section ${i + 1}/${chunks.length}`, DEPTH_TO_STUDY_MODE[depth], undefined, "entire book"
+        )
+      ));
+
+      setAiResponse("Combining sections into one result…");
+      const combinePrompt = `You were given ${chunks.length} partial results, each generated independently from a different section of the same book "${book}" for the same request: "${basePrompt}". Combine them into ONE polished, non-repetitive, well-organized final result. Remove duplicate items, resolve inconsistencies, and present a single coherent output — do not mention that it was assembled from parts.`;
+      const combinedContent = partials.map((p, i) => `--- Section ${i + 1} result ---\n${p}`).join("\n\n");
+      const finalAnswer = await callAskAI(
+        combinePrompt, book, readerPage, combinedContent, language, undefined,
+        "Entire Book — Combined", DEPTH_TO_STUDY_MODE[depth], undefined, "entire book"
+      );
+
+      setAiResponse(finalAnswer);
+      setAiHistory(prev => [...prev, { question: basePrompt, answer: finalAnswer }].slice(-AI_HISTORY_LIMIT));
       const feature = mapActionToAIFeature(action);
       if (feature) {
         trackAIUsage(feature);
-        logActivity("ai", `AI ${action} used while reading "${book}"`);
+        logActivity("ai", `AI ${action} (entire book) used while reading "${book}"`);
       }
-    } catch {
-      setAiResponse("Something went wrong. Please try again.");
+      onSuccess?.();
+      return true;
+    } catch (err) {
+      console.error("[EntireBookAction] failed:", err);
+      setAiResponse("AI is temporarily unavailable. Check your connection and try again.");
+      setAiFailed(true);
+      return false;
     } finally {
       setAiLoading(false);
     }
   }
 
+  // ── Page / chapter / (dispatch to) book scope — shared by Quick
+  // Actions and Ask AI's free-text questions. Selected text is handled
+  // separately by the floating toolbar / askPremiumAI, never here.
+  // `useHistory` — see the comment on runEntireBookAction above. ───────
+  async function runScopedContentAI(
+    prompt: string, action: string, useHistory: boolean = false, onSuccess?: () => void
+  ): Promise<boolean> {
+    if (scope === "book") return runEntireBookAction(action, prompt, useHistory, onSuccess);
+
+    if (scope === "chapter") {
+      // Chapter's own extraction pass (tier 2, when the cache is thin)
+      // can take real time — set the busy state HERE, before it starts,
+      // not just once runAI is reached, so Quick Actions are disabled
+      // and the UI reads as "working" for the whole pipeline, not just
+      // the network call at the end of it.
+      resetInteractionState();
+      setAiLoading(true);
+      setAiFailed(false);
+      const { text: chapterText, source, pages } = await getChapterText(readerPage);
+      const label = `Chapter around ${pageDescription(readerPage)}`;
+      logScopeDebug({ scope: "chapter", source, pages, chars: chapterText.length });
+
+      if (source === "empty") {
+        // Never send an effectively-empty context to the API — that's
+        // exactly what produced bare "not available in the provided
+        // content" replies. A clear, honest local message instead, no
+        // AI call at all. Still a SUCCESSFUL resolution (not a failure —
+        // no Retry needed), so onSuccess still fires (e.g. clears Ask
+        // AI's input the same as any other resolved turn).
+        setAiResponse(
+          `We couldn't find readable text near ${pageDescription(readerPage)} of "${book}" yet — this section may be image-only. ` +
+          `Try Explain/Summarize on a page you've already viewed, or switch to Entire Book scope.`
+        );
+        setAiLoading(false);
+        onSuccess?.();
+        return true;
+      }
+
+      const confident = source === "cache" || source === "extracted";
+      const content = `Content from ${label} of "${book}" (${pages} nearby page(s) combined):\n\n${chapterText}`;
+      const scopeInstruction = confident
+        ? `Answer using CHAPTER-level scope — a window of pages around ${pageDescription(readerPage)}, not just the single visible page. Never say you only have access to one page. ${prompt}`
+        : `IMPORTANT: Only partial/limited text could be found for the pages near ${pageDescription(readerPage)} — likely an illustrated or lightly-texted section. Using ONLY this context: ${prompt} Begin your response with exactly: "Based on the nearby pages currently available, here is what I can share:" — do not call this a complete chapter summary, do NOT say the content is not available, and do NOT refuse; always produce a useful response from what's given, however partial.`;
+      return runAI(scopeInstruction, content, undefined, label, action, "current chapter", useHistory, onSuccess);
+    }
+
+    const visibleText = getVisiblePageText();
+    const content = visibleText.length > 50
+      ? `Content from ${pageDescription(readerPage)} of "${book}":\n\n${cleanOcrTextForAi(visibleText)}`
+      : `Viewing ${pageDescription(readerPage)} of "${book}".`;
+    logScopeDebug({
+      scope: "page",
+      source: visibleText.length > 50 ? "visible page cache" : "no cached text yet",
+      pages: isSpreadBook && readerPage > 1 ? 2 : 1,
+      chars: content.length,
+    });
+    return runAI(prompt, content, undefined, undefined, action, "current page/spread", useHistory, onSuccess);
+  }
+
+  // ── Navigation ──────────────────────────────────────────────────────
+  // Page-state updates immediately on click — no artificial delay before
+  // the page number itself changes. PdfBookSpread derives its own
+  // enter-transition direction from the raw page-number delta, so there
+  // is nothing left for this component to orchestrate around a flip.
+  function goNext() {
+    autoFitDone.current = false;
+    if (isSpreadBook) {
+      if (readerPage === 1) { setReaderPage(2); return; }
+      const next = readerPage + 2;
+      if (next <= totalPages) setReaderPage(next);
+    } else {
+      setReaderPage(p => Math.min(totalPages, p + 1));
+    }
+  }
+  function goPrev() {
+    autoFitDone.current = false;
+    if (isSpreadBook) {
+      if (readerPage <= 2) { setReaderPage(1); return; }
+      setReaderPage(p => Math.max(1, p - 2));
+    } else {
+      setReaderPage(p => Math.max(1, p - 1));
+    }
+  }
+  function fitScreen() { setZoom(100); setPan({ x: 0, y: 0 }); autoFitDone.current = false; }
+
+  // Navigates directly by the internal PDF page index — no printed-page
+  // resolution involved. Used once a target pdfPage is already known
+  // (Go to Page after it resolves, Study Workspace jump-to-highlight,
+  // which already stores the stable pdfPage key).
+  function navigateToPdfPage(target: number) {
+    autoFitDone.current = false;
+    const pdfPage = Math.min(Math.max(1, target), totalPages);
+    if (isSpreadBook && pdfPage > 1) setReaderPage(pdfPage % 2 === 0 ? pdfPage : pdfPage - 1);
+    else setReaderPage(pdfPage);
+  }
+
+  // "Go to page" always means the printed page number — there is no PDF-
+  // page mode. Resolved entirely synchronously against the book's static
+  // map (lib/printedPageMap.ts) — no OCR, no background indexing, nothing
+  // to wait for, so there is no window in which a second, overlapping
+  // request could resolve out of order and show a stale result (that was
+  // the root cause of a previous "typed 10, saw an error about 15" bug:
+  // the old version awaited an indexing result, so typing a new page
+  // before the first request finished left two in flight at once, and
+  // whichever settled last won regardless of which the user typed most
+  // recently). Every call here runs start-to-finish in one synchronous
+  // pass: parse the CURRENT input, clear any previous message, resolve,
+  // done.
+  function goToPage(raw: string) {
+    const n = parseInt(raw.trim(), 10);
+    if (isNaN(n) || n < 1) return;
+    setGoToInput("");
+    setAiResponse(""); // clear any previous Go to Page message before showing a new one
+
+    const pdfPage = resolvePrintedPageTarget(n, printedPageMap);
+    if (pdfPage !== null) {
+      navigateToPdfPage(pdfPage);
+    } else {
+      setAiResponse(`Page ${n} doesn't appear to exist in "${book}".`);
+    }
+  }
+
+  // ── AI ───────────────────────────────────────────────────────────────
+  // The single funnel every AI call in this file ultimately goes
+  // through — Quick Actions, chapter/book scope, selection actions, and
+  // Ask AI. Threads in the current depth (study mode) and follow-up
+  // history, records the retry thunk, and NEVER leaves aiResponse blank
+  // on failure. Returns whether the call succeeded so callers that hold
+  // their own transient state (e.g. askPremiumAI's typed question) can
+  // restore it after a failure.
+  // A fully-resolved, self-contained copy of everything one AI call
+  // needs — captured ONCE at call time so Retry replays the EXACT
+  // original request (question, scope, depth/study-mode, response
+  // language, content) even if the user changes the scope/depth/
+  // language selectors between the failure and clicking Retry.
+  type AiCallSnapshot = {
+    prompt: string; content: string; imageDataUrl?: string; chapterOverride: string;
+    action?: string; scopeLabel: string; language: Lang; studyMode: string; history?: AiTurn[];
+    /** Called once, only after a CONFIRMED successful response — never
+     *  on failure. Captured in the same frozen snapshot Retry replays,
+     *  so e.g. askPremiumAI's "clear the input" only ever fires once the
+     *  request actually succeeds, whether that's the first attempt or a
+     *  later Retry — Retry bypasses askPremiumAI entirely (it calls this
+     *  snapshot directly), so relying on askPremiumAI's own call site to
+     *  clear the input would silently stop working after any retry. */
+    onSuccess?: () => void;
+  };
+
+  async function executeAiCall(snapshot: AiCallSnapshot): Promise<boolean> {
+    resetInteractionState();
+    setAiLoading(true);
+    setAiFailed(false);
+    setAiResponse("AI is thinking…");
+    lastAiCallRef.current = () => { executeAiCall(snapshot); };
+
+    // A brand new call always supersedes whatever was still in flight —
+    // its eventual (stale) response should never land after this one.
+    activeAbortControllerRef.current?.abort();
+    const controller = new AbortController();
+    activeAbortControllerRef.current = controller;
+    const timeoutId = setTimeout(() => controller.abort(), AI_REQUEST_TIMEOUT_MS);
+
+    try {
+      const answer = await callAskAI(
+        snapshot.prompt, book, readerPage, snapshot.content, snapshot.language, snapshot.imageDataUrl,
+        snapshot.chapterOverride, snapshot.studyMode, snapshot.history, snapshot.scopeLabel, controller.signal
+      );
+      setAiResponse(answer);
+      setAiHistory(prev => [...prev, { question: snapshot.prompt, answer }].slice(-AI_HISTORY_LIMIT));
+      const feature = mapActionToAIFeature(snapshot.action);
+      if (feature) {
+        trackAIUsage(feature);
+        logActivity("ai", `AI ${snapshot.action} used while reading "${book}"`);
+      }
+      snapshot.onSuccess?.();
+      return true;
+    } catch (err) {
+      // Deliberately ONE message for every failure type (network error,
+      // non-200 response, invalid JSON, timeout, or an aborted request)
+      // — no implementation-detail wording, and the previous successful
+      // response (if any) stays exactly as it was until Retry succeeds,
+      // since this only ever calls setAiResponse with the error text,
+      // never clears it to blank.
+      console.error("[AI] request failed:", err);
+      setAiResponse("AI is temporarily unavailable. Check your connection and try again.");
+      setAiFailed(true);
+      return false;
+    } finally {
+      clearTimeout(timeoutId);
+      if (activeAbortControllerRef.current === controller) activeAbortControllerRef.current = null;
+      setAiLoading(false);
+    }
+  }
+
+  async function runAI(
+    prompt: string, content?: string, imageDataUrl?: string,
+    chapterOverride?: string, action?: string, scopeLabel: string = "current page",
+    /** Whether to send recent conversation history to the model. Only
+     *  askPremiumAI's free-text follow-ups pass true — see the comment
+     *  on runEntireBookAction for why Quick Actions/scope calls don't. */
+    useHistory: boolean = false,
+    onSuccess?: () => void
+  ): Promise<boolean> {
+    const fallback = getVisiblePageText().length > 50
+      ? `Content from ${pageDescription(readerPage)} of "${book}":\n\n${cleanOcrTextForAi(getVisiblePageText())}`
+      : `Viewing ${pageDescription(readerPage)} of "${book}".`;
+    return executeAiCall({
+      prompt, content: content ?? fallback, imageDataUrl,
+      chapterOverride: chapterOverride ?? pageDescription(readerPage),
+      action, scopeLabel, language, studyMode: DEPTH_TO_STUDY_MODE[depth],
+      history: useHistory ? aiHistory : undefined,
+      onSuccess,
+    });
+  }
+
   // ── QUICK ACTION RUNNER — shared by AICompanion's sidebar buttons AND
   //    Voice Assistant's "explain/summarize/translate/quiz/flashcards"
   //    commands, so both paths produce identical behavior and AI-usage
-  //    tracking instead of two competing implementations. ────────────────
-  function runQuickAction(label: string, prompt: string, scope: "page" | "book") {
-    if (scope === "book") { runEntireBookQuiz(); return; }
-    const content = getVisiblePageText().length > 50
-      ? `Content from page ${readerPage} of "${book}":\n\n${getVisiblePageText()}`
-      : `Viewing page ${readerPage} of "${book}".`;
+  //    tracking instead of two competing implementations. Scope
+  //    (page/chapter/book) comes from the `scope` selector, not the
+  //    button itself — see runScopedContentAI. ──────────────────────────
+  function runQuickAction(label: string, prompt: string) {
     const quickAction = label.includes("Explain") ? "explain"
       : label.includes("Summarize") ? "summarize"
       : label.includes("Translate") ? "translate"
@@ -638,14 +1208,14 @@ export default function PremiumReaderPreviewContent() {
       : label.includes("Flashcards") ? "flashcards"
       : label.includes("Notes") ? "notes"
       : undefined;
-    runAI(prompt, content, undefined, undefined, quickAction);
+    runScopedContentAI(prompt, quickAction ?? "ask");
   }
 
   // ── TEXT-MODE ACTION RUNNER ───────────────────────────────────────────
   // Uses ONLY the selected text. Never touches imageData, even if an
   // image crop happens to exist internally alongside it.
   function runTextSelectionAction(text: string, pageNumber: number, action: string) {
-    const content = `SELECTED TEXT (page ${pageNumber} of "${book}"):\n"""\n${text}\n"""\nUse ONLY the text above. Do not use any other page content.`;
+    const content = `SELECTED TEXT (${pageDescription(pageNumber)} of "${book}"):\n"""\n${cleanOcrTextForAi(text)}\n"""\nUse ONLY the text above. Do not use any other page content.`;
     let prompt = "";
     switch (action) {
       case "explain":   prompt = `Explain the SELECTED TEXT above clearly for a student. Respond ONLY in: ${language}.`; break;
@@ -658,14 +1228,14 @@ export default function PremiumReaderPreviewContent() {
       case "revision":   prompt = `Create concise revision notes (headings + short bullet points) from the SELECTED TEXT above, suitable for quick exam revision. Respond ONLY in: ${language}.`; break;
       default:          prompt = `${action} Respond ONLY in: ${language}.`;
     }
-    runAI(prompt, content, undefined, "Selected Text", action);
+    return runAI(prompt, content, undefined, "Selected Text", action, "selected text");
   }
 
   // ── IMAGE-MODE ACTION RUNNER ──────────────────────────────────────────
   // Uses ONLY the cropped image. Never touches selected text, even if a
   // browser text selection happens to exist internally alongside it.
   function runImageSelectionAction(imageData: string, pageNumber: number, action: string, customQuestion?: string) {
-    const content = `SELECTED IMAGE from page ${pageNumber} of "${book}". Analyze ONLY this image.`;
+    const content = `SELECTED IMAGE from ${pageDescription(pageNumber)} of "${book}". Analyze ONLY this image.`;
     let prompt = "";
     switch (action) {
       case "explain":   prompt = `Explain what is shown in this SELECTED IMAGE clearly for a student. Respond ONLY in: ${language}.`; break;
@@ -677,7 +1247,7 @@ export default function PremiumReaderPreviewContent() {
         break;
       default:          prompt = `${action} Respond ONLY in: ${language}.`;
     }
-    runAI(prompt, content, imageData, `Selected Image (page ${pageNumber})`, action);
+    return runAI(prompt, content, imageData, `Selected Image (${pageDescription(pageNumber)})`, action, "selected image");
   }
 
   // ── THE ROUTER — every floating-toolbar button goes through this. ────
@@ -703,41 +1273,145 @@ export default function PremiumReaderPreviewContent() {
     }
   }
 
-  function askPremiumAI() {
-    if (!aiQuestion.trim()) return;
-    const q = aiQuestion; setAiQuestion("");
-    const content = getVisiblePageText().length > 50
-      ? `Content from page ${readerPage} of "${book}":\n\n${getVisiblePageText()}`
-      : `Viewing page ${readerPage} of "${book}".`;
-    runAI(q, content);
+  // Free-text "Ask AI". An active text selection always wins here (the
+  // most specific context available for a custom question); otherwise
+  // falls back to the current scope selector (page/chapter/book), same
+  // as the Quick Action buttons. The typed question is NEVER cleared
+  // speculatively — it stays in the input for the entire round trip and
+  // is only cleared once the request actually succeeds, so a failure
+  // never loses (or even briefly blanks) what the user typed. `aiLoading`
+  // guards against a second submit (e.g. mashing Enter) firing a
+  // duplicate request while one is already in flight.
+  async function askPremiumAI() {
+    if (!aiQuestion.trim() || aiLoading) return;
+    const q = aiQuestion;
+    // Passed as onSuccess rather than checked after the call returns —
+    // Retry calls the frozen snapshot directly (bypassing this function
+    // entirely), so only a callback captured IN the snapshot fires
+    // consistently on every eventual success, first attempt or retry.
+    const clearInput = () => setAiQuestion("");
+
+    activeSelection && activeSelection.type === "text"
+      ? await runAI(
+          q,
+          `SELECTED TEXT (${pageDescription(activeSelection.pageNumber)} of "${book}"):\n"""\n${cleanOcrTextForAi(activeSelection.text)}\n"""\nAnswer the user's question using this selected text as the primary basis.`,
+          undefined, "Selected Text", "ask", "selected text", true, clearInput
+        )
+      : await runScopedContentAI(q, "ask", true, clearInput);
   }
 
   // ── Read Aloud ────────────────────────────────────────────────────────
-  async function handleReadAloud() {
+  // Speaks a sequence of chunks one after another via the browser's
+  // native speechSynthesis queue. Chunked (rather than one long
+  // utterance) because Chrome/Edge — especially on Windows, and
+  // especially with non-English voices — are known to silently cut off
+  // a single long utterance after only a few words; short sentence-
+  // bounded chunks sidestep that. Pause/resume work unmodified since
+  // they act on whichever chunk is currently speaking; `stoppedRef`
+  // stops the chain from advancing to the next chunk after an explicit
+  // Stop (as opposed to a chunk finishing normally).
+  function speakSequence(
+    chunks: string[],
+    voice: SpeechSynthesisVoice | null,
+    langCode: string | undefined,
+    setState: (s: SpeechState) => void,
+    stoppedRef: { current: boolean }
+  ) {
+    const synth = window.speechSynthesis;
+    stoppedRef.current = false;
+    let i = 0;
+    function speakNext() {
+      if (stoppedRef.current) return;
+      if (i >= chunks.length) { setState("idle"); return; }
+      const utt = new SpeechSynthesisUtterance(chunks[i]);
+      if (langCode) utt.lang = langCode;
+      if (voice) utt.voice = voice;
+      utt.rate = 0.92;
+      utt.onend = () => { i += 1; speakNext(); };
+      utt.onerror = () => { setState("idle"); };
+      synth.speak(utt);
+    }
+    setState("speaking");
+    speakNext();
+  }
+
+  // "Read Page" — reads the VISIBLE BOOK PAGE verbatim (cleaned of OCR
+  // noise/math-symbol junk via sanitizeForSpeech), never an AI-generated
+  // summary and never the AI Companion's response — see "Read AI
+  // Response" below for that. Starting this stops any AI-response
+  // speech first, since only one can really be speaking at a time.
+  function stopPageSpeech() {
+    pageSpeechStoppedRef.current = true;
+    setSpeechState("idle");
+  }
+  function stopAiSpeech() {
+    aiSpeechStoppedRef.current = true;
+    setAiSpeechState("idle");
+  }
+  function handleReadPage() {
     if (typeof window === "undefined") return;
     const synth = window.speechSynthesis;
     if (speechState === "speaking") { synth.pause(); setSpeechState("paused"); return; }
     if (speechState === "paused")  { synth.resume(); setSpeechState("speaking"); return; }
+
+    stopAiSpeech();
+    synth.cancel();
     setSpeechState("loading");
-    let text = "";
-    try {
-      const content = getVisiblePageText().length > 50
-        ? `Content from page ${readerPage} of "${book}":\n\n${getVisiblePageText()}`
-        : `Viewing page ${readerPage} of "${book}".`;
-      text = await callAskAI("Give a 3–4 sentence spoken summary. No markdown.", book, readerPage, content, language);
-      trackAIUsage("summarize");
-      logActivity("ai", `AI Read Aloud summary generated for "${book}"`);
-    } catch { text = `Reading page ${readerPage} of ${book}.`; }
-    const utt = new SpeechSynthesisUtterance(text);
-    utt.rate = 0.92;
-    utt.onend = () => setSpeechState("idle");
-    utt.onerror = () => setSpeechState("idle");
-    utteranceRef.current = utt;
-    synth.cancel(); synth.speak(utt);
-    setSpeechState("speaking");
+
+    // Read ONLY the extracted page text — never the book title, header,
+    // printed page number, or any other UI label. If extraction genuinely
+    // found nothing, say exactly this and nothing else.
+    const rawText = getVisiblePageText();
+    const spokenText = rawText.trim().length > 0
+      ? sanitizeForSpeech(cleanOcrTextForAi(rawText))
+      : "No readable text found.";
+    const chunks = splitIntoSpeechChunks(spokenText);
+    if (chunks.length === 0) { setSpeechState("idle"); return; }
+
+    speakSequence(chunks, null, undefined, setSpeechState, pageSpeechStoppedRef);
   }
   function handleStopReadAloud() {
-    window.speechSynthesis?.cancel(); setSpeechState("idle"); utteranceRef.current = null;
+    stopPageSpeech();
+    window.speechSynthesis?.cancel();
+  }
+
+  // "Read AI Response" — reads ONLY the AI Companion's current output
+  // (markdown stripped first), in the response's own language via the
+  // existing response-language selector, with proper Hindi/Indic voice
+  // selection (Phase C2 fix). Starting this stops page speech first.
+  async function handleReadAiResponse() {
+    if (typeof window === "undefined") return;
+    const synth = window.speechSynthesis;
+    if (aiSpeechState === "speaking") { synth.pause(); setAiSpeechState("paused"); return; }
+    if (aiSpeechState === "paused")  { synth.resume(); setAiSpeechState("speaking"); return; }
+    if (!aiResponse.trim() || aiLoading) return;
+
+    stopPageSpeech();
+    synth.cancel();
+    setAiVoiceNotice(null);
+    setAiSpeechState("loading");
+
+    const plainText = stripMarkdownForSpeech(aiResponse);
+    const langCode = getSpeechLanguage(language);
+    const voices = await loadVoices();
+    const { voice, tier } = pickVoiceForLanguage(voices, langCode);
+
+    // Only non-English languages get a notice — an exact/prefix match
+    // (or simply "English", which virtually every engine supports)
+    // never needs one. Never silently fall back to an English voice
+    // for a non-English response without saying so.
+    if (language !== "English" && tier !== "exact" && tier !== "prefix") {
+      setAiVoiceNotice(`A ${language} system voice is not installed on this device.`);
+    }
+
+    const chunks = splitIntoSpeechChunks(plainText);
+    if (chunks.length === 0) { setAiSpeechState("idle"); return; }
+
+    speakSequence(chunks, voice, langCode, setAiSpeechState, aiSpeechStoppedRef);
+  }
+  function handleStopAiResponse() {
+    stopAiSpeech();
+    window.speechSynthesis?.cancel();
   }
 
   // ── Voice Assistant integration ─────────────────────────────────────
@@ -745,7 +1419,7 @@ export default function PremiumReaderPreviewContent() {
   // imports anything from this file — it only ever broadcasts a
   // "ndl-voice-command" CustomEvent on window. This is the ONLY place
   // that turns that event into calls to this reader's OWN existing
-  // functions (goNext, fitScreen, handleReadAloud, runQuickAction, …).
+  // functions (goNext, fitScreen, handleReadPage, runQuickAction, …).
   // Nothing about page rendering or the page-turn engine itself changes.
   //
   // A ref kept fresh every render (rather than depending on these
@@ -755,13 +1429,13 @@ export default function PremiumReaderPreviewContent() {
   const voiceStateRef = useRef({
     speechState, language,
     goNext, goPrev, goToPage, setZoom, fitScreen,
-    handleReadAloud, handleStopReadAloud, runQuickAction, setLanguage,
+    handleReadPage, handleStopReadAloud, runQuickAction, setLanguage,
   });
   useEffect(() => {
     voiceStateRef.current = {
       speechState, language,
       goNext, goPrev, goToPage, setZoom, fitScreen,
-      handleReadAloud, handleStopReadAloud, runQuickAction, setLanguage,
+      handleReadPage, handleStopReadAloud, runQuickAction, setLanguage,
     };
   });
 
@@ -775,38 +1449,40 @@ export default function PremiumReaderPreviewContent() {
         switch (detail.action) {
           case "nextPage": v.goNext(); break;
           case "prevPage": v.goPrev(); break;
+          // Voice "go to page N" always means the printed page — there
+          // is only one meaning for "go to page" now.
           case "goToPage": if (detail.page) v.goToPage(String(detail.page)); break;
           case "zoomIn": v.setZoom(z => Math.min(ZOOM_MAX, z + ZOOM_STEP)); break;
           case "zoomOut": v.setZoom(z => Math.max(ZOOM_MIN, z - ZOOM_STEP)); break;
           case "fitPage": v.fitScreen(); break;
           case "fullscreen": if (!document.fullscreenElement) document.documentElement.requestFullscreen?.(); break;
           case "exitFullscreen": if (document.fullscreenElement) document.exitFullscreen(); break;
-          case "read": if (v.speechState === "idle") v.handleReadAloud(); break;
-          case "pause": if (v.speechState === "speaking") v.handleReadAloud(); break;
-          case "resume": if (v.speechState === "paused") v.handleReadAloud(); break;
+          case "read": if (v.speechState === "idle") v.handleReadPage(); break;
+          case "pause": if (v.speechState === "speaking") v.handleReadPage(); break;
+          case "resume": if (v.speechState === "paused") v.handleReadPage(); break;
           case "stop": v.handleStopReadAloud(); break;
         }
       } else if (detail.kind === "ai") {
         const lang = v.language;
         switch (detail.action) {
           case "explain":
-            v.runQuickAction("🧠 Explain", `Explain this page/spread clearly for a student in simple language. Respond ONLY in: ${lang}.`, "page");
+            v.runQuickAction("🧠 Explain", `Explain this clearly for a student in simple language. Respond ONLY in: ${lang}.`);
             break;
           case "summarize":
-            v.runQuickAction("📝 Summarize", `Summarize this page/spread in at most 8 concise bullet points. Respond ONLY in: ${lang}.`, "page");
+            v.runQuickAction("📝 Summarize", `Summarize this in at most 8 concise bullet points. Respond ONLY in: ${lang}.`);
             break;
           case "translate": {
             const target = LANGUAGES.find(l => l.toLowerCase() === (detail.language || "").toLowerCase());
             const targetLang = target || lang;
             if (target) v.setLanguage(target);
-            v.runQuickAction("🌍 Translate", `Rewrite and explain the content of this page/spread in ${targetLang}. Write entirely in ${targetLang}. Respond ONLY in: ${targetLang}.`, "page");
+            v.runQuickAction("🌍 Translate", `Rewrite and explain the content in ${targetLang}. Write entirely in ${targetLang}. Respond ONLY in: ${targetLang}.`);
             break;
           }
           case "quiz":
-            v.runQuickAction("❓ Quiz", `Create exactly 5 multiple-choice quiz questions from this page/spread. Respond ONLY in: ${lang}.`, "page");
+            v.runQuickAction("❓ Quiz", `Create multiple-choice quiz questions — 5 for a page or chapter, 8 for the entire book. Respond ONLY in: ${lang}.`);
             break;
           case "flashcards":
-            v.runQuickAction("🎴 Flashcards", `Create 5 flashcards (FRONT: / BACK: format) from this page/spread. Respond ONLY in: ${lang}.`, "page");
+            v.runQuickAction("🎴 Flashcards", `Create flashcards (FRONT: / BACK: format) — 5 for a page or chapter, 10 for the entire book. Respond ONLY in: ${lang}.`);
             break;
           case "studyTab":
             setOpenStudyTabSignal(s => (s || 0) + 1);
@@ -851,12 +1527,15 @@ export default function PremiumReaderPreviewContent() {
   // ── FEATURE 1: Kindle-style Highlights ──────────────────────────────
   function addHighlight(color: HighlightColor) {
     if (!activeSelection || activeSelection.type !== "text") return;
-    let sourceRects = selectionRects;
-    // Defensive fallback: selectionRects is the snapshot the selection
-    // engine captured at drag-time. If it's ever empty when the color is
-    // picked (should not normally happen, but a highlight must never be
-    // silently saved with zero visible area), fall back to whatever the
-    // browser's live selection reports right now.
+    // Use the snapshot captured when "⭐ Highlight" was clicked, NOT live
+    // selectionRects state — see pendingSelectionRectsRef's comment for why.
+    let sourceRects = pendingSelectionRectsRef.current.length > 0
+      ? pendingSelectionRectsRef.current
+      : selectionRects;
+    // Defensive fallback: if it's STILL empty when the color is picked
+    // (should not normally happen, but a highlight must never be silently
+    // saved with zero visible area), fall back to whatever the browser's
+    // live selection reports right now.
     if (sourceRects.length === 0) {
       try {
         const sel = window.getSelection();
@@ -885,6 +1564,7 @@ export default function PremiumReaderPreviewContent() {
       return next;
     });
     setShowColorPicker(false);
+    pendingSelectionRectsRef.current = [];
   }
 
   function removeHighlight(id: string) {
@@ -898,7 +1578,9 @@ export default function PremiumReaderPreviewContent() {
   // ── FEATURE 2 & 3: Notes + AI Notes ─────────────────────────────────
   function saveNote(text: string, aiImproved: boolean) {
     if (!activeSelection || activeSelection.type !== "text") return;
-    const rectPct = selectionRects[0] ? screenRectToPct(selectionRects[0], activeSelection.pageNumber) ?? undefined : undefined;
+    // Same snapshot-ref fix as addHighlight — see pendingSelectionRectsRef.
+    const noteSourceRect = pendingSelectionRectsRef.current[0] ?? selectionRects[0];
+    const rectPct = noteSourceRect ? screenRectToPct(noteSourceRect, activeSelection.pageNumber) ?? undefined : undefined;
     const note: StoredNote = {
       id: newId(),
       bookId,
@@ -915,6 +1597,7 @@ export default function PremiumReaderPreviewContent() {
       return next;
     });
     setShowNotePopover(false);
+    pendingSelectionRectsRef.current = [];
   }
 
   function removeNote(id: string) {
@@ -990,7 +1673,10 @@ export default function PremiumReaderPreviewContent() {
 
   // ── FEATURE 5: Study Workspace — jump + "scroll to" (flash) ─────────
   function studyJumpToPage(page: number, flashId?: string) {
-    if (page !== readerPage) goToPage(String(page));
+    // `page` here is already the stable internal pdfPage a highlight/
+    // note/bookmark is keyed by — navigate directly, no printed-page
+    // resolution (that's only for user-typed/spoken Go to Page input).
+    if (page !== readerPage) navigateToPdfPage(page);
     if (flashId) {
       setFlashItemId(flashId);
       setTimeout(() => setFlashItemId(id => (id === flashId ? null : id)), 1800);
@@ -1021,32 +1707,42 @@ export default function PremiumReaderPreviewContent() {
   // is why none of that machinery is needed anymore: percentages inside
   // the same box automatically stay correct across zoom, fullscreen, and
   // page turns with zero extra JS.
-  const currentBookHighlights = highlights.filter(h => h.bookId === bookId);
-  const currentBookNotes = notes.filter(n => n.bookId === bookId && n.rectPct);
+  // Perf pass (Phase C1): PdfBookSpread's PageBox is now React.memo'd
+  // (canvas + PDF text-layer rendering — genuinely expensive), but that
+  // only helps if the arrays it receives keep the SAME reference across
+  // renders that don't actually touch highlights/notes — e.g. every pan
+  // or zoom tick. Without useMemo here, .filter()/.map() built a brand
+  // new array every single render regardless, defeating the memo.
+  const currentBookHighlights = useMemo(
+    () => highlights.filter(h => h.bookId === bookId),
+    [highlights, bookId]
+  );
+  const currentBookNotes = useMemo(
+    () => notes.filter(n => n.bookId === bookId && n.rectPct),
+    [notes, bookId]
+  );
 
-  const pageHighlightsForSpread: PageOverlayHighlight[] = currentBookHighlights.map(h => ({
-    id: h.id,
-    page: h.page,
-    fill: HIGHLIGHT_COLOR_HEX[h.color].fill,
-    border: HIGHLIGHT_COLOR_HEX[h.color].border,
-    rectsPct: h.rectsPct,
-    flashing: flashItemId === h.id,
-  }));
-  const pageNotesForSpread: PageOverlayNote[] = currentBookNotes.map(n => ({
-    id: n.id,
-    page: n.page,
-    rectPct: n.rectPct as RectPct,
-    flashing: flashItemId === n.id,
-  }));
+  const pageHighlightsForSpread: PageOverlayHighlight[] = useMemo(
+    () => currentBookHighlights.map(h => ({
+      id: h.id,
+      page: h.page,
+      fill: HIGHLIGHT_COLOR_HEX[h.color].fill,
+      border: HIGHLIGHT_COLOR_HEX[h.color].border,
+      rectsPct: h.rectsPct,
+      flashing: flashItemId === h.id,
+    })),
+    [currentBookHighlights, flashItemId]
+  );
+  const pageNotesForSpread: PageOverlayNote[] = useMemo(
+    () => currentBookNotes.map(n => ({
+      id: n.id,
+      page: n.page,
+      rectPct: n.rectPct as RectPct,
+      flashing: flashItemId === n.id,
+    })),
+    [currentBookNotes, flashItemId]
+  );
 
-  // ── TEMPORARY DEBUG (Phase 2 highlight-overlay bugfix) ───────────────
-  // Safe to remove once highlight rendering is confirmed working.
-  if (typeof window !== "undefined" && currentBookHighlights.length > 0) {
-    console.log(
-      `[HighlightOverlay] ${currentBookHighlights.length} highlight(s) loaded for book="${bookId}", viewing page ${readerPage}`,
-      currentBookHighlights.map(h => ({ id: h.id, page: h.page, color: h.color, rectsPct: h.rectsPct }))
-    );
-  }
 
   // ── Unified drag finalize (mouseup) ───────────────────────────────────
   // ONE handler for BOTH modes. It always knows both what a drag physically
@@ -1164,7 +1860,7 @@ export default function PremiumReaderPreviewContent() {
           "Return ONLY the extracted text, preserving line breaks and spacing. " +
           "No explanation, no commentary, no formatting — just the text.",
           book, readerPage,
-          `Image region from page ${readerPage} of "${book}".`,
+          `Image region from ${pageDescription(readerPage)} of "${book}".`,
           language, cropped.dataUrl,
           "Selected Region"
         );
@@ -1186,6 +1882,17 @@ export default function PremiumReaderPreviewContent() {
         setAiLoading(false);
       }
     })();
+  }
+
+  // ── Wheel zoom (Phase C1) — Ctrl/Cmd+scroll, matching the OS trackpad-
+  // pinch convention, so it never hijacks a plain scroll gesture. Calls
+  // the exact same setZoom the +/- buttons already use — no new zoom
+  // behavior, just a second input path to the existing one.
+  function onCenterWheel(e: React.WheelEvent) {
+    if (!(e.ctrlKey || e.metaKey)) return;
+    e.preventDefault();
+    const delta = e.deltaY > 0 ? -ZOOM_STEP : ZOOM_STEP;
+    setZoom(z => Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, z + delta)));
   }
 
   // ── Pan / drag-start ──────────────────────────────────────────────────
@@ -1294,6 +2001,26 @@ export default function PremiumReaderPreviewContent() {
     setTimeout(() => { setBookOpened(true); setBookOpening(false); }, 900);
   }
 
+  // Upload intended (?source=upload with a pointer id already in
+  // sessionStorage) but the IndexedDB payload hasn't resolved yet —
+  // show a small loading state instead of flashing the default catalog
+  // book (Nalanda) while the read is in flight.
+  if (isHydrated && uploadedSource && uploadedPdfId && !uploadedPdfData && !uploadedPdfLoadFailed) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-slate-950 text-white">
+        <p className="text-sm font-semibold text-slate-300">Loading your document…</p>
+      </div>
+    );
+  }
+  if (uploadedPdfLoadFailed) {
+    return (
+      <div className="flex h-screen flex-col items-center justify-center gap-3 bg-slate-950 text-white">
+        <p className="text-sm font-semibold text-red-300">Couldn't load your uploaded document. Please upload it again.</p>
+        <a href="/read" className="ndl-press rounded-full bg-white/10 px-4 py-2 text-xs font-bold hover:bg-white/20">← Back to Upload</a>
+      </div>
+    );
+  }
+
   if (bookOpening) return <BookOpeningAnimation title={book} />;
   if (!bookOpened) {
     return (
@@ -1308,33 +2035,40 @@ export default function PremiumReaderPreviewContent() {
   const readLabel = speechState === "loading" ? "⏳ Preparing…"
     : speechState === "speaking" ? "⏸ Pause"
     : speechState === "paused"   ? "▶ Resume"
-    : "🔊 Read";
+    : "🔊 Read Page";
+
+  // Printed-page label — the SAME pure lookup PdfBookSpread used to do
+  // internally (Phase C3 moved the surrounding chrome, not the lookup
+  // itself: same printedPageMap, same getDisplayLabel/getSpreadDisplayLabel).
+  const safePageForLabel = Math.max(1, readerPage || 1);
+  const rightPageForLabel = safePageForLabel + 1;
+  const isSpreadForLabel = isSpreadBook && safePageForLabel > 1;
+  const displayLabel = isSpreadForLabel
+    ? getSpreadDisplayLabel(safePageForLabel, rightPageForLabel <= totalPages ? rightPageForLabel : null, printedPageMap)
+    : getDisplayLabel(safePageForLabel, printedPageMap);
+
+  const availableToolbarLanguages = LANGUAGES.filter((l) => enabledLanguageCodes.includes(LANGUAGE_NAME_TO_CODE[l]));
+
+  // Mobile: no permanent AI-panel column at all — it either shows as a
+  // full-screen overlay (explicitly opened) or not at all (a small
+  // floating trigger reopens it), so the book always gets the full
+  // viewport width on a phone-sized screen.
+  const aiPanelWidthPx = isMobileViewport ? 0 : (aiPanelCompact ? AI_PANEL_COMPACT_PX : AI_PANEL_EXPANDED_PX);
+  const aiPanelOverlay = isMobileViewport && !aiPanelCompact;
 
   return (
     <>
-    <ReaderLayout
-      leftPanel={
-        <div>
-          <h2 className="text-2xl font-black">{currentBook.title}</h2>
-          <p className="mt-3 text-sm text-slate-400">{currentBook.author}</p>
-          <p className="mt-5 text-sm leading-7 text-slate-300">{currentBook.description}</p>
-          <div className="mt-6 rounded-2xl bg-white/10 p-4">
-            <p className="text-xs font-bold uppercase tracking-widest text-slate-400">Book Details</p>
-            <p className="mt-3 text-sm">Pages: {currentBook.pages}</p>
-            <p className="mt-2 text-sm">Language: {currentBook.language}</p>
-          </div>
-          <a href={currentBook.pdf} target="_blank" rel="noopener noreferrer"
-            className="mt-6 inline-block rounded-xl bg-amber-500 px-5 py-3 text-sm font-black text-white">
-            Open PDF
-          </a>
-        </div>
-      }
+    <PremiumReaderLayout
+      ref={layoutRef}
+      aiPanelWidthPx={aiPanelWidthPx}
+      aiPanelOverlay={aiPanelOverlay}
       center={
         <div
           ref={bookAreaRef}
           onMouseDown={onCenterMouseDown}
           onMouseMove={onCenterMouseMove}
           onMouseUp={(e) => { onCenterMouseUp(); handleMouseUp(e); }}
+          onWheel={onCenterWheel}
           style={{
             height: "100%", display: "flex", flexDirection: "column",
             cursor: imageSelectMode ? "crosshair"
@@ -1347,53 +2081,81 @@ export default function PremiumReaderPreviewContent() {
             overscrollBehavior: "contain",
           }}
         >
-          {/* ── Controls strip ─────────────────────────────── */}
-          <div className="mx-auto mb-2 flex w-full max-w-[1340px] flex-shrink-0 flex-wrap items-center gap-2">
-            <button onClick={handleReadAloud} disabled={speechState === "loading"}
-              className="rounded-full bg-slate-950 px-4 py-2 text-xs font-bold text-white shadow hover:bg-slate-800 disabled:opacity-50">
+          {/* ── Top row: Back / title / printed-page badge — rendered
+              identically in fullscreen: fullscreen is a layout mode only,
+              never a reduced-capability mode. ─────────────────────────── */}
+          <div className="mx-auto mb-2 flex w-full max-w-[1340px] flex-shrink-0 items-center justify-between gap-3 px-1">
+              <div className="flex min-w-0 items-center gap-3">
+                <Link href="/library"
+                  className="ndl-press inline-flex h-9 items-center gap-1 rounded-full bg-white px-3 text-xs font-bold text-slate-700 shadow ring-1 ring-slate-200 hover:bg-amber-50">
+                  ← Back
+                </Link>
+                <h1 className="truncate text-base font-black text-slate-900">{book}</h1>
+              </div>
+              {displayLabel && (
+                <span className="flex-shrink-0 rounded-full bg-white px-3 py-1.5 text-xs font-bold text-slate-600 shadow ring-1 ring-amber-100">
+                  {displayLabel}
+                </span>
+              )}
+            </div>
+
+          {/* ── Controls strip — page-level tools live here (one logical
+              home each): Read Page, zoom, Fit, Go to page, Text/Image
+              Select, Bookmark, response language. Rendered identically in
+              fullscreen — same component, same handlers, no duplicate. ── */}
+          <div className="mx-auto mb-2 flex w-full max-w-[1340px] flex-shrink-0 flex-wrap items-center gap-2 px-1">
+            <button onClick={handleReadPage} disabled={speechState === "loading"}
+              title="Read the visible book page aloud"
+              className="ndl-press inline-flex h-9 items-center gap-1.5 rounded-full bg-slate-900 px-4 text-xs font-bold text-white shadow hover:bg-slate-800 disabled:opacity-50">
               {readLabel}
             </button>
             {(speechState === "speaking" || speechState === "paused") && (
               <button onClick={handleStopReadAloud}
-                className="rounded-full bg-red-600 px-4 py-2 text-xs font-bold text-white shadow">⏹ Stop</button>
+                className="ndl-press inline-flex h-9 items-center gap-1.5 rounded-full bg-red-600 px-4 text-xs font-bold text-white shadow hover:bg-red-700">⏹ Stop</button>
             )}
-            <span className="h-5 w-px bg-slate-300" />
+            <span className="h-5 w-px bg-amber-200" />
             <button onClick={() => setZoom(z => Math.max(z - ZOOM_STEP, ZOOM_MIN))} disabled={zoom <= ZOOM_MIN}
-              className="rounded-full bg-white px-3 py-2 text-xs font-bold text-slate-800 shadow ring-1 ring-slate-200 hover:bg-slate-50 disabled:opacity-40">−</button>
-            <span className="min-w-[44px] text-center text-xs font-bold text-slate-700">{zoom}%</span>
+              title="Zoom out (or Ctrl/Cmd + scroll)"
+              className="ndl-press inline-flex h-9 w-9 items-center justify-center rounded-full bg-white text-xs font-bold text-slate-800 shadow ring-1 ring-slate-200 hover:bg-amber-50 disabled:opacity-40">−</button>
+            <span className="min-w-[44px] text-center text-xs font-bold tabular-nums text-slate-700 transition-all duration-150">{zoom}%</span>
             <button onClick={() => setZoom(z => Math.min(z + ZOOM_STEP, ZOOM_MAX))} disabled={zoom >= ZOOM_MAX}
-              className="rounded-full bg-white px-3 py-2 text-xs font-bold text-slate-800 shadow ring-1 ring-slate-200 hover:bg-slate-50 disabled:opacity-40">+</button>
+              title="Zoom in (or Ctrl/Cmd + scroll)"
+              className="ndl-press inline-flex h-9 w-9 items-center justify-center rounded-full bg-white text-xs font-bold text-slate-800 shadow ring-1 ring-slate-200 hover:bg-amber-50 disabled:opacity-40">+</button>
             <button onClick={fitScreen}
-              className="rounded-full bg-white px-4 py-2 text-xs font-bold text-slate-800 shadow ring-1 ring-slate-200 hover:bg-slate-50">Fit</button>
-            <span className="h-5 w-px bg-slate-300" />
+              className="ndl-press inline-flex h-9 items-center rounded-full bg-white px-4 text-xs font-bold text-slate-800 shadow ring-1 ring-slate-200 hover:bg-amber-50">Fit</button>
+            <span className="h-5 w-px bg-amber-200" />
             <form onSubmit={(e) => { e.preventDefault(); goToPage(goToInput); }} className="flex items-center gap-1">
-              <input type="number" min={1} max={totalPages} value={goToInput}
-                onChange={(e) => setGoToInput(e.target.value)} placeholder="Page #"
-                className="w-16 rounded-full bg-white px-3 py-2 text-xs text-slate-800 shadow ring-1 ring-slate-200 outline-none" />
+              <input type="number" min={1}
+                value={goToInput}
+                onChange={(e) => setGoToInput(e.target.value)}
+                placeholder="Page #"
+                title="Go to a printed page number"
+                className="h-9 w-20 rounded-full bg-white px-3 text-xs text-slate-800 shadow ring-1 ring-slate-200 outline-none transition-shadow focus:ring-2 focus:ring-amber-400" />
               <button type="submit"
-                className="rounded-full bg-white px-3 py-2 text-xs font-bold text-slate-800 shadow ring-1 ring-slate-200 hover:bg-slate-50">Go</button>
+                className="ndl-press inline-flex h-9 items-center rounded-full bg-white px-3 text-xs font-bold text-slate-800 shadow ring-1 ring-slate-200 hover:bg-amber-50">Go</button>
             </form>
-            <span className="h-5 w-px bg-slate-300" />
+            <span className="h-5 w-px bg-amber-200" />
 
             {/* Mode buttons — ALL use switchInteractionMode via toggleMode */}
             <button onClick={() => toggleMode("text")}
-              className={`rounded-full px-4 py-2 text-xs font-bold shadow transition-colors ${
-                textSelectMode ? "bg-amber-500 text-white" : "bg-white text-slate-800 ring-1 ring-slate-200 hover:bg-slate-50"}`}>
+              className={`ndl-press inline-flex h-9 items-center gap-1.5 rounded-full px-4 text-xs font-bold shadow ${
+                textSelectMode ? "bg-orange-600 text-white" : "bg-white text-slate-800 ring-1 ring-slate-200 hover:bg-amber-50"}`}>
               {textSelectMode ? "📖 Page Turn" : "📝 Text Select"}
             </button>
             <button onClick={() => toggleMode("image")}
-              className={`rounded-full px-4 py-2 text-xs font-bold shadow transition-colors ${
-                imageSelectMode ? "bg-blue-600 text-white" : "bg-white text-slate-800 ring-1 ring-slate-200 hover:bg-slate-50"}`}>
+              className={`ndl-press inline-flex h-9 items-center gap-1.5 rounded-full px-4 text-xs font-bold shadow ${
+                imageSelectMode ? "bg-slate-900 text-white" : "bg-white text-slate-800 ring-1 ring-slate-200 hover:bg-amber-50"}`}>
               {imageSelectMode ? "✕ Cancel" : "📐 Image Select"}
             </button>
-            <span className="h-5 w-px bg-slate-300" />
+            <span className="h-5 w-px bg-amber-200" />
             {/* Phase 2 — Feature 4: Bookmarks. Bookmarks the CURRENT page;
                 tapping again while already bookmarked removes it. */}
             <button onClick={toggleBookmarkCurrentPage}
-              className={`rounded-full px-4 py-2 text-xs font-bold shadow transition-colors ${
-                isCurrentPageBookmarked ? "bg-amber-600 text-white" : "bg-white text-slate-800 ring-1 ring-slate-200 hover:bg-slate-50"}`}>
+              className={`ndl-press inline-flex h-9 items-center gap-1.5 rounded-full px-4 text-xs font-bold shadow ${
+                isCurrentPageBookmarked ? "bg-amber-500 text-white" : "bg-white text-slate-800 ring-1 ring-slate-200 hover:bg-amber-50"}`}>
               {isCurrentPageBookmarked ? "🔖 Bookmarked" : "🔖 Bookmark"}
             </button>
+            <LanguagePopover language={language} onLanguageChange={setLanguage} availableLanguages={availableToolbarLanguages} />
           </div>
 
           {/* ── DRAG / SELECTION VISUAL OVERLAYS ───────────────
@@ -1483,6 +2245,7 @@ export default function PremiumReaderPreviewContent() {
 
             return (
             <div
+              className="ndl-fade-in-scale"
               onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); }}
               style={{
                 position: "fixed",
@@ -1518,7 +2281,7 @@ export default function PremiumReaderPreviewContent() {
                 {activeSelection.type === "text" ? (
                   <>
                     {["explain","summarize","translate","quiz","notes","flashcards"].map(action => (
-                      <button key={action} onClick={() => handleSelectionAction(action)}
+                      <button key={action} className="ndl-press" onClick={() => handleSelectionAction(action)}
                         style={{ background: "#0f172a", color: "#fff", border: "none",
                                   borderRadius: 12, padding: "8px 14px", fontSize: 12,
                                   fontWeight: 700, cursor: "pointer" }}>
@@ -1534,13 +2297,21 @@ export default function PremiumReaderPreviewContent() {
                         popovers (color picker / note editor) rather than
                         going through the AI router — they don't call an
                         AI action at all. */}
-                    <button onClick={() => { setShowNotePopover(false); setShowColorPicker(true); }}
+                    <button className="ndl-press" onClick={() => {
+                        // Snapshot NOW — before this click's own mouseup
+                        // bubbles to handleMouseUp and clears selectionRects.
+                        pendingSelectionRectsRef.current = selectionRects;
+                        setShowNotePopover(false); setShowColorPicker(true);
+                      }}
                       style={{ background: "#c18a3f", color: "#fff", border: "none",
                                 borderRadius: 12, padding: "8px 14px", fontSize: 12,
                                 fontWeight: 700, cursor: "pointer" }}>
                       ⭐ Highlight
                     </button>
-                    <button onClick={() => { setShowColorPicker(false); setLastNoteWasImproved(false); setShowNotePopover(true); }}
+                    <button className="ndl-press" onClick={() => {
+                        pendingSelectionRectsRef.current = selectionRects;
+                        setShowColorPicker(false); setLastNoteWasImproved(false); setShowNotePopover(true);
+                      }}
                       style={{ background: "#334155", color: "#fff", border: "none",
                                 borderRadius: 12, padding: "8px 14px", fontSize: 12,
                                 fontWeight: 700, cursor: "pointer" }}>
@@ -1640,10 +2411,27 @@ export default function PremiumReaderPreviewContent() {
             />
           )}
 
-          {/* ── PDF Spread ─────────────────────────────────── */}
-          <div style={{ flex: 1, minHeight: 0 }}>
+          {/* ── PDF Spread — Previous/Next as side arrows near the page
+              edges rather than inline buttons, per the redesign; same
+              goPrev/goNext handlers, nothing about page logic changed. ── */}
+          <div style={{ flex: 1, minHeight: 0, position: "relative" }}>
+            <button
+              onClick={goPrev}
+              title="Previous"
+              aria-label="Previous page"
+              className="ndl-press absolute left-1 top-1/2 z-30 flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded-full bg-white/90 text-lg text-slate-700 shadow-lg ring-1 ring-amber-100 hover:bg-white"
+            >
+              ‹
+            </button>
+            <button
+              onClick={goNext}
+              title="Next"
+              aria-label="Next page"
+              className="ndl-press absolute right-1 top-1/2 z-30 flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded-full bg-white/90 text-lg text-slate-700 shadow-lg ring-1 ring-amber-100 hover:bg-white"
+            >
+              ›
+            </button>
             <PdfBookSpread
-              title={book}
               pdfPath={currentBook.pdf}
               pageNumber={readerPage}
               totalPages={String(totalPages)}
@@ -1656,14 +2444,94 @@ export default function PremiumReaderPreviewContent() {
               bookId={bookId}
               onPageRendered={handlePageRendered}
               onTextExtracted={handleTextExtracted}
-              isFlipping={isFlipping}
-              onPrevious={goPrev}
-              onNext={goNext}
+              isPanning={isPanning}
             />
           </div>
+
+          {/* ── Mobile: floating trigger to reopen the AI Companion
+              overlay (no permanent column on a phone-sized screen). ──── */}
+          {isMobileViewport && aiPanelCompact && !isFullscreenLayout && (
+            <button
+              onClick={toggleAiPanelCompact}
+              className="ndl-press fixed bottom-20 right-4 z-40 flex h-12 w-12 items-center justify-center rounded-full bg-orange-600 text-xl text-white shadow-lg hover:bg-orange-700"
+              title="Open AI Companion"
+              aria-label="Open AI Companion"
+            >
+              🤖
+            </button>
+          )}
+
+          {/* ── Bottom reading bar — Contents, printed page number,
+              progress slider, zoom, fullscreen toggle. Rendered identically
+              in fullscreen: this is the SAME bar, not a separate duplicate —
+              fullscreen changes layout only, never capability. ─────────── */}
+          <div className="mx-auto mt-2 flex w-full max-w-[1340px] flex-shrink-0 items-center gap-3 rounded-full bg-white px-4 py-2 shadow ring-1 ring-amber-100">
+              <button
+                onClick={() => setContentsOpen(true)}
+                className="ndl-press flex flex-shrink-0 items-center gap-1.5 rounded-full bg-amber-50 px-3 py-1.5 text-xs font-bold text-slate-700 hover:bg-amber-100"
+              >
+                📚 Contents
+              </button>
+              <span className="flex-shrink-0 text-xs font-bold tabular-nums text-slate-500">
+                {displayLabel || `${readerPage} / ${totalPages}`}
+              </span>
+              <div className="h-1.5 flex-1 rounded-full bg-amber-100">
+                <div
+                  className="h-1.5 rounded-full bg-gradient-to-r from-amber-400 to-orange-500 transition-[width] duration-300 ease-out"
+                  style={{ width: `${Math.min(100, Math.round((readerPage / totalPages) * 100))}%` }}
+                />
+              </div>
+              <div className="flex flex-shrink-0 items-center gap-1.5">
+                <button onClick={() => setZoom(z => Math.max(z - ZOOM_STEP, ZOOM_MIN))} disabled={zoom <= ZOOM_MIN}
+                  title="Zoom out" className="ndl-press flex h-7 w-7 items-center justify-center rounded-full bg-amber-50 text-xs font-bold text-slate-700 hover:bg-amber-100 disabled:opacity-40">−</button>
+                <span className="w-9 text-center text-[11px] font-bold tabular-nums text-slate-500">{zoom}%</span>
+                <button onClick={() => setZoom(z => Math.min(z + ZOOM_STEP, ZOOM_MAX))} disabled={zoom >= ZOOM_MAX}
+                  title="Zoom in" className="ndl-press flex h-7 w-7 items-center justify-center rounded-full bg-amber-50 text-xs font-bold text-slate-700 hover:bg-amber-100 disabled:opacity-40">+</button>
+              </div>
+              <button
+                onClick={() => layoutRef.current?.toggleFullscreen()}
+                title={isFullscreenLayout ? "Exit fullscreen" : "Fullscreen"}
+                className="ndl-press flex-shrink-0 flex h-7 w-7 items-center justify-center rounded-full bg-amber-50 text-xs text-slate-700 hover:bg-amber-100"
+              >
+                ⛶
+              </button>
+            </div>
+
+          {/* ── Contents — book info (title/author/description/pages/
+              language + Open PDF), the same content the old leftPanel
+              slide-out showed, now a compact modal reachable from the
+              bottom bar's "Contents" button in either screen mode. ──── */}
+          {contentsOpen && (
+            <div
+              className="ndl-fade-in-scale fixed inset-0 z-[70] flex items-center justify-center bg-black/40 p-4"
+              onClick={() => setContentsOpen(false)}
+            >
+              <div
+                className="ndl-fade-in-scale w-full max-w-sm rounded-3xl bg-white p-6 shadow-2xl"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <h2 className="text-xl font-black text-slate-900">{currentBook.title}</h2>
+                  <button onClick={() => setContentsOpen(false)}
+                    className="ndl-press flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-amber-50 text-slate-500 hover:bg-amber-100">✕</button>
+                </div>
+                {currentBook.author && <p className="mt-1 text-sm text-slate-500">{currentBook.author}</p>}
+                {currentBook.description && <p className="mt-4 text-sm leading-6 text-slate-600">{currentBook.description}</p>}
+                <div className="mt-5 rounded-2xl bg-amber-50 p-4">
+                  <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Book Details</p>
+                  <p className="mt-2 text-sm text-slate-700">Pages: {currentBook.pages}</p>
+                  {currentBook.language && <p className="mt-1 text-sm text-slate-700">Language: {currentBook.language}</p>}
+                </div>
+                <a href={currentBook.pdf} target="_blank" rel="noopener noreferrer"
+                  className="ndl-press mt-5 inline-block rounded-xl bg-orange-600 px-5 py-2.5 text-sm font-bold text-white hover:bg-orange-700">
+                  Open PDF
+                </a>
+              </div>
+            </div>
+          )}
         </div>
       }
-      rightPanel={
+      aiPanel={
         <AICompanion
           aiResponse={aiResponse}
           isLoading={aiLoading}
@@ -1672,14 +2540,27 @@ export default function PremiumReaderPreviewContent() {
           onAsk={askPremiumAI}
           onQuickAction={runQuickAction}
           bookTitle={book}
-          pageNumber={readerPage}
-          pageText={getVisiblePageText()}
           language={language}
           onLanguageChange={setLanguage}
+          availableLanguages={availableToolbarLanguages}
+          scope={scope}
+          onScopeChange={setScope}
+          depth={depth}
+          onDepthChange={setDepth}
+          hasActiveSelection={activeSelection?.type === "text"}
+          aiFailed={aiFailed}
+          onRetry={() => lastAiCallRef.current?.()}
+          aiSpeechState={aiSpeechState}
+          onReadAiResponse={handleReadAiResponse}
+          onStopAiResponse={handleStopAiResponse}
+          aiVoiceNotice={aiVoiceNotice}
+          compact={aiPanelCompact}
+          onToggleCompact={toggleAiPanelCompact}
           openStudyTabSignal={openStudyTabSignal}
           studyHighlights={highlights.filter(h => h.bookId === bookId)}
           studyNotes={notes.filter(n => n.bookId === bookId)}
           studyBookmarks={bookmarks.filter(b => b.bookId === bookId)}
+          printedPageMap={printedPageMap}
           onStudyJumpToPage={studyJumpToPage}
           onStudyDeleteHighlight={removeHighlight}
           onStudyDeleteNote={removeNote}

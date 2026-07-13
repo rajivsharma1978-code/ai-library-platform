@@ -44,6 +44,7 @@ export function getPublicCatalog(): CatalogBook[] {
         pages: o.pages ?? b.pages,
         category: o.category ?? b.category,
         status: o.status ?? "Published",
+        pageNumbering: o.pageNumbering ?? b.pageNumbering,
       };
     })
     .filter((b): b is CatalogBook => b !== null);
@@ -65,6 +66,7 @@ export function getPublicCatalog(): CatalogBook[] {
       pages: o.pages || 0,
       status: o.status || "Draft",
       isCustom: true,
+      pageNumbering: o.pageNumbering,
     }));
 
   return [...fromCatalog, ...customBooks].filter(b => (b.status ?? "Published") === "Published");

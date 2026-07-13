@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 
 // ── PHASE 2 (visual-only): highlight & note overlay shapes ─────────────
 // Deliberately generic/agnostic — PdfBookSpread doesn't know anything
@@ -26,12 +26,9 @@ export type PageOverlayNote = {
 };
 
 export type PdfBookSpreadProps = {
-  title: string;
   pdfPath: string;
   pageNumber: number;
   totalPages: string;
-  onPrevious: () => void;
-  onNext: () => void;
   zoom?: number;
   pan?: { x: number; y: number };
   textSelectMode?: boolean;
@@ -41,7 +38,12 @@ export type PdfBookSpreadProps = {
    *  list for the current book. */
   pageHighlights?: PageOverlayHighlight[];
   pageNotes?: PageOverlayNote[];
-  /** Current book id — only used for the temporary debug logging below. */
+  /** Current book id — threaded through to PageBox for highlight/note
+   *  keying. Title and the printed-page label are computed by the
+   *  caller now (Phase C3 — this component no longer renders its own
+   *  header/footer chrome; PremiumReaderPreviewContent owns the
+   *  surrounding toolbar/bottom-bar and computes the same printed label
+   *  itself via lib/printedPageMap.ts's pure functions). */
   bookId?: string;
   /**
    * Fires after first render with canvas CSS dims AND the inner book-card
@@ -51,8 +53,10 @@ export type PdfBookSpreadProps = {
   /** Fires with extracted text keyed by page number after each render. */
   onTextExtracted?: (texts: Record<number, string>) => void;
   layoutMode?: "single" | "spread";
-  /** Triggers a brief fade-slide animation (used by parent on page change). */
-  isFlipping?: boolean;
+  /** True while the user is actively drag-panning — suppresses the zoom
+   *  CSS transition so panning tracks the cursor instantly instead of
+   *  lagging behind a smoothed transform. */
+  isPanning?: boolean;
 };
 
 // ── Render size: conservative so canvas fits on typical laptops ─────
@@ -166,29 +170,10 @@ async function renderPdfPage(params: {
     const allItems = (textContent.items as any[]);
     const textItems = allItems.filter((item: any) => item.str?.trim());
 
-    console.log(
-      `[TextLayer] page=${pageNo}` +
-      ` | spans=${textItems.length}` +
-      ` | textLen=${text.length}` +
-      ` | canvas=${dW}×${dH}` +
-      ` | cropOffset=(${cropOffsetX.toFixed(1)},${cropOffsetY.toFixed(1)})` +
-      ` | src=(${srcX},${srcY},${srcW},${srcH})`
-    );
-
-    // The text layer div is always sized to exactly cover the canvas —
-    // even on image-only pages with zero text spans. This matters under
-    // the current architecture: the div (not just its spans) is the
-    // drag surface that both text selection AND image-crop dragging rely
-    // on, so it must never collapse to 0×0 just because a page has no
-    // extractable text.
-    textLayer.style.width  = dW + "px";
-    textLayer.style.height = dH + "px";
-
     if (textItems.length === 0) {
       // Image-based or scanned page — no selectable text. AI text-mode
       // actions fall back to OCR on the dragged region (handled by the
       // parent component); this div still exists purely as a drag surface.
-      console.warn(`[TextLayer] page=${pageNo}: No text spans — image-based page. Native text selection unavailable; OCR fallback will be used.`);
     } else {
       try {
         const task = (pdfjsLib as any).renderTextLayer({
@@ -231,18 +216,68 @@ async function renderPdfPage(params: {
   return { cssW: dW, cssH: dH, text };
 }
 
+// ── Page cache — instant Next/Previous ───────────────────────────────
+// renderPdfPage above is the expensive part (2× offscreen rasterize +
+// whitespace-crop pixel scan + text-layer build). Once a page has been
+// rendered, its finished canvas + text-layer HTML is cached here so
+// revisiting it is a single synchronous drawImage() instead of redoing
+// all of that work. Keyed by pdfPath+pageNo+variant so single/spread
+// halves never collide; cleared whenever the book changes.
+type CachedPageEntry = { canvas: HTMLCanvasElement; cssW: number; cssH: number; text: string; textHTML: string };
+
+async function getOrRenderPage(
+  cache: Map<string, CachedPageEntry>, cacheKey: string,
+  pdf: any, pageNo: number, pdfjsLib: any, maxW: number, maxH: number,
+  cancelled: () => boolean
+): Promise<CachedPageEntry | null> {
+  const hit = cache.get(cacheKey);
+  if (hit) return hit;
+  const offCanvas = document.createElement("canvas");
+  const offText = document.createElement("div");
+  const result = await renderPdfPage({ pdf, pageNo, canvas: offCanvas, textLayer: offText, pdfjsLib, maxW, maxH, cancelled });
+  if (!result || cancelled()) return null;
+  const entry: CachedPageEntry = { canvas: offCanvas, cssW: result.cssW, cssH: result.cssH, text: result.text, textHTML: offText.innerHTML };
+  cache.set(cacheKey, entry);
+  return entry;
+}
+
+// Paints an already-rendered entry onto the LIVE canvas/text-layer — a
+// cheap synchronous drawImage + innerHTML swap, not an async re-render.
+function paintEntry(entry: CachedPageEntry, canvas: HTMLCanvasElement, textLayer: HTMLDivElement | null) {
+  canvas.width = entry.canvas.width;
+  canvas.height = entry.canvas.height;
+  canvas.style.width = entry.cssW + "px";
+  canvas.style.height = entry.cssH + "px";
+  const ctx = canvas.getContext("2d");
+  if (ctx) ctx.drawImage(entry.canvas, 0, 0);
+  if (textLayer) {
+    textLayer.innerHTML = entry.textHTML;
+    textLayer.style.width = entry.cssW + "px";
+    textLayer.style.height = entry.cssH + "px";
+    textLayer.style.transform = "none";
+    textLayer.classList.remove("textLayer");
+  }
+}
+
 // ── Per-page box: canvas + text layer ───────────────────────────────
 // NOTE ON ARCHITECTURE: there is deliberately no separate "image capture
-// overlay" here anymore. Both Text Select and Image Select modes share
-// the exact same drag surface (the text layer div, which is always sized
-// to cover the canvas). The parent component (which owns interactionMode)
-// reads window.getSelection() AND is able to crop the canvas from the
-// same drag — which one it actually USES is decided purely by mode, in
-// one router function. We are not trying to physically stop the browser
-// from selecting text in Image Select mode, and we are not trying to stop
-// image cropping from working in Text Select mode — both are always
-// physically possible; only the AI-facing router cares which mode is on.
-function PageBox({ canvasRef, textLayerRef, size, textSelectMode, imageSelectMode, pageNumber, bookId, highlights, notes }: {
+// overlay" element here. The text layer div is the drag surface, but it
+// is only pointer-interactive in Text Select mode — in Image Select mode
+// it has pointerEvents:none so a drag passes straight through to the
+// canvas/outer container beneath, where the parent component's own
+// mouse handlers (which own interactionMode) already track the drag and
+// crop the canvas. This is what keeps the two modes fully isolated: Image
+// Select can never start a native text selection, and Text Select never
+// needs to — a browser text selection is the ONLY thing it ever reads.
+// The parent's AI-facing router still decides which of the two results
+// (selected text vs. cropped image) an action actually uses, based purely
+// on interactionMode, never on what's physically under the drag.
+// Memoized — Perf pass (Phase C1): this re-renders on every zoom/pan tick
+// of its parent otherwise, despite its own props (refs, page size,
+// highlights for THIS page) rarely changing that often. React.memo's
+// default shallow-prop comparison is enough here since every prop is
+// either a stable ref or a primitive/small derived array.
+const PageBox = memo(function PageBox({ canvasRef, textLayerRef, size, textSelectMode, imageSelectMode, pageNumber, bookId, highlights, notes }: {
   canvasRef: React.RefObject<HTMLCanvasElement | null>;
   textLayerRef: React.RefObject<HTMLDivElement | null>;
   size: { w: number; h: number } | null;
@@ -269,17 +304,6 @@ function PageBox({ canvasRef, textLayerRef, size, textSelectMode, imageSelectMod
     h.rectsPct.map((r, i) => ({ boxKey: `${h.id}-${i}`, rect: r, fill: h.fill, border: h.border, flashing: h.flashing }))
   );
 
-  // ── TEMPORARY DEBUG (Phase 2 highlight-overlay bugfix) ───────────────
-  // Exactly the values requested: bookId, page, rectsPct, and the final
-  // rendered overlay count for this page. Safe to remove once confirmed.
-  if (typeof window !== "undefined" && (pageHighlights.length > 0 || pageNoteMarkers.length > 0)) {
-    console.log(
-      `[HighlightOverlay] bookId=${bookId ?? "?"} page=${pageNumber} ` +
-      `highlightsForPage=${pageHighlights.length} renderedBoxes=${highlightBoxes.length} notes=${pageNoteMarkers.length}`,
-      { rectsPct: pageHighlights.map(h => ({ id: h.id, rectsPct: h.rectsPct })) }
-    );
-  }
-
   return (
     // userSelect:contain is critical in spread mode: it creates a
     // selection boundary so dragging across the spine never bleeds
@@ -290,7 +314,10 @@ function PageBox({ canvasRef, textLayerRef, size, textSelectMode, imageSelectMod
       width: size?.w || undefined,
       height: size?.h || undefined,
       display: size ? "block" : "none",
-      userSelect: isModeActive ? "text" : "none",
+      // Native text selection is only ever allowed in Text Select mode —
+      // Image Select must never let the browser start a text selection
+      // (that's what let a drag in Image mode visibly highlight text).
+      userSelect: textSelectMode ? "text" : "none",
     }}>
       <canvas
         ref={canvasRef}
@@ -355,21 +382,24 @@ function PageBox({ canvasRef, textLayerRef, size, textSelectMode, imageSelectMod
       <div style={{ position: "absolute", inset: 0, overflow: "hidden", zIndex: 3 }}>
         <div ref={textLayerRef} className="ndl-text-layer" style={{
           position: "absolute", top: 0, left: 0,
-          // Interactive in EITHER select mode — this is the shared drag
-          // surface for both native text selection and image cropping.
-          pointerEvents: isModeActive ? "auto" : "none",
-          userSelect: isModeActive ? "text" : "none",
+          // Interactive ONLY in Text Select mode — this is the native
+          // text-selection surface. Image Select must never let the
+          // browser start a text selection, so its drag is handled
+          // entirely by the parent's mouse handlers on the elements
+          // beneath this one (pointerEvents:none lets the drag pass
+          // straight through instead of being captured here).
+          pointerEvents: textSelectMode ? "auto" : "none",
+          userSelect: textSelectMode ? "text" : "none",
           cursor: imageSelectMode ? "crosshair" : textSelectMode ? "text" : "default",
         }} />
       </div>
     </div>
   );
-}
+});
 
 // ── Main component ──────────────────────────────────────────────────
 export default function PdfBookSpread({
-  title, pdfPath, pageNumber, totalPages,
-  onPrevious, onNext,
+  pdfPath, pageNumber, totalPages,
   zoom = 100, pan = { x: 0, y: 0 },
   textSelectMode = false,
   imageSelectMode = false,
@@ -379,7 +409,7 @@ export default function PdfBookSpread({
   onPageRendered,
   onTextExtracted,
   layoutMode = "single",
-  isFlipping = false,
+  isPanning = false,
 }: PdfBookSpreadProps) {
   const canvasRef  = useRef<HTMLCanvasElement | null>(null);
   const textRef    = useRef<HTMLDivElement | null>(null);
@@ -392,6 +422,8 @@ export default function PdfBookSpread({
 
   const renderIdRef = useRef(0);
   const renderedCallbackFired = useRef(false);
+  // "loading" only ever drives a small non-blocking indicator now — it
+  // never hides or clears the page that's already on screen.
   const [loading, setLoading] = useState(false);
   const [singleSize, setSingleSize] = useState<{ w: number; h: number } | null>(null);
   const [leftSize,   setLeftSize]   = useState<{ w: number; h: number } | null>(null);
@@ -402,16 +434,61 @@ export default function PdfBookSpread({
   const isSpread = layoutMode === "spread" && safePage > 1;
   const rightPage = safePage + 1;
 
+  const [reduceMotion, setReduceMotion] = useState(false);
+  useEffect(() => {
+    const mq = window.matchMedia("(prefers-reduced-motion: reduce)");
+    setReduceMotion(mq.matches);
+    const onChange = () => setReduceMotion(mq.matches);
+    mq.addEventListener?.("change", onChange);
+    return () => mq.removeEventListener?.("change", onChange);
+  }, []);
+
+  // ── Page cache + fast Next/Previous ──────────────────────────────────
+  // Persists across navigations within the same book; cleared whenever
+  // the book (pdfPath) changes.
+  const pageCacheRef = useRef<Map<string, CachedPageEntry>>(new Map());
+  useEffect(() => {
+    pageCacheRef.current.clear();
+  }, [pdfPath]);
+
+  // Direction is derived from the raw page-number delta — no parent-owned
+  // animation phase/timeout is involved in changing the page anymore.
+  const prevPageRef = useRef(safePage);
+  const enterDirRef = useRef<"next" | "prev">("next");
+
+  // Lightweight entrance-only pulse (no "outgoing" phase, nothing delays
+  // the page-state change itself): "start" is the synchronous pre-pose
+  // (no transition) applied the instant new content is painted, "end" is
+  // the eased resting pose, flipped to on the very next frame so the
+  // browser actually paints the "start" pose first.
+  const [enterPhase, setEnterPhase] = useState<"start" | "end">("end");
+  function pulseEnter(dir: "next" | "prev", isCancelled: () => boolean) {
+    if (isCancelled()) return;
+    enterDirRef.current = dir;
+    setEnterPhase("start");
+    requestAnimationFrame(() => {
+      if (isCancelled()) return;
+      requestAnimationFrame(() => { if (!isCancelled()) setEnterPhase("end"); });
+    });
+  }
+
   useEffect(() => {
     const id = ++renderIdRef.current;
     let cancelled = false;
     const isCancelled = () => cancelled || renderIdRef.current !== id;
 
-    setSingleSize(null); setLeftSize(null); setRightSize(null);
+    const direction: "next" | "prev" = safePage === prevPageRef.current
+      ? enterDirRef.current
+      : safePage > prevPageRef.current ? "next" : "prev";
+    prevPageRef.current = safePage;
+
     renderedCallbackFired.current = false;
-    setLoading(true);
+    // Deliberately NOT clearing singleSize/leftSize/rightSize here — the
+    // canvas keeps showing the outgoing page's pixels until the new page
+    // is actually ready to paint over it, so there is never a blank frame.
 
     async function go() {
+      const cache = pageCacheRef.current;
       try {
         const pdfjsLib = await import("pdfjs-dist");
         pdfjsLib.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
@@ -424,45 +501,43 @@ export default function PdfBookSpread({
 
         if (!isSpread) {
           if (!canvasRef.current) return;
-          const result = await renderPdfPage({
-            pdf, pageNo: safePage, canvas: canvasRef.current,
-            textLayer: textRef.current, pdfjsLib,
-            maxW: PAGE_MAX_W, maxH: PAGE_MAX_H, cancelled: isCancelled,
-          });
-          if (result && !isCancelled()) {
-            setSingleSize({ w: result.cssW, h: result.cssH });
-            extractedTexts[safePage] = result.text;
-            console.log(`[AI] Page ${safePage} text extracted: ${result.text.length} chars`);
+          const key = `${pdfPath}::${safePage}::s`;
+          const cached = cache.get(key);
+          if (!cached) setLoading(true);
+          const entry = cached ?? await getOrRenderPage(cache, key, pdf, safePage, pdfjsLib, PAGE_MAX_W, PAGE_MAX_H, isCancelled);
+          if (isCancelled()) return;
+          setLoading(false);
+          if (entry) {
+            paintEntry(entry, canvasRef.current, textRef.current);
+            setSingleSize({ w: entry.cssW, h: entry.cssH });
+            extractedTexts[safePage] = entry.text;
+            pulseEnter(direction, isCancelled);
             if (!renderedCallbackFired.current) {
               renderedCallbackFired.current = true;
-              // Fire after a tick so bookCardRef has laid out
               requestAnimationFrame(() => {
                 const card = bookCardRef.current;
-                const cardW = card?.clientWidth  || 0;
-                const cardH = card?.clientHeight || 0;
-                onPageRendered?.(result.cssW, result.cssH, cardW, cardH);
+                onPageRendered?.(entry.cssW, entry.cssH, card?.clientWidth || 0, card?.clientHeight || 0);
               });
             }
           }
         } else {
           const halfW = Math.floor(PAGE_MAX_W * 0.50);
+          const lKey = `${pdfPath}::${safePage}::l`;
+          const rKey = `${pdfPath}::${rightPage}::r`;
+          const lCached = cache.get(lKey);
+          const rCached = rightPage <= total ? cache.get(rKey) : null;
+          if (!lCached || (rightPage <= total && !rCached)) setLoading(true);
           const [lResult, rResult] = await Promise.all([
-            leftCanvasRef.current ? renderPdfPage({
-              pdf, pageNo: safePage, canvas: leftCanvasRef.current,
-              textLayer: leftTextRef.current, pdfjsLib,
-              maxW: halfW, maxH: PAGE_MAX_H, cancelled: isCancelled,
-            }) : Promise.resolve(null),
-            rightPage <= total && rightCanvasRef.current ? renderPdfPage({
-              pdf, pageNo: rightPage, canvas: rightCanvasRef.current,
-              textLayer: rightTextRef.current, pdfjsLib,
-              maxW: halfW, maxH: PAGE_MAX_H, cancelled: isCancelled,
-            }) : Promise.resolve(null),
+            lCached ?? (leftCanvasRef.current ? getOrRenderPage(cache, lKey, pdf, safePage, pdfjsLib, halfW, PAGE_MAX_H, isCancelled) : Promise.resolve(null)),
+            rCached ?? (rightPage <= total && rightCanvasRef.current ? getOrRenderPage(cache, rKey, pdf, rightPage, pdfjsLib, halfW, PAGE_MAX_H, isCancelled) : Promise.resolve(null)),
           ]);
-          if (!isCancelled()) {
-            if (lResult) { setLeftSize({ w: lResult.cssW, h: lResult.cssH }); extractedTexts[safePage] = lResult.text; }
-            if (rResult) { setRightSize({ w: rResult.cssW, h: rResult.cssH }); extractedTexts[rightPage] = rResult.text; }
-            console.log(`[AI] Spread pages ${safePage}-${rightPage} extracted: ${(lResult?.text?.length||0) + (rResult?.text?.length||0)} chars`);
-            if ((lResult || rResult) && !renderedCallbackFired.current) {
+          if (isCancelled()) return;
+          setLoading(false);
+          if (lResult && leftCanvasRef.current) { paintEntry(lResult, leftCanvasRef.current, leftTextRef.current); setLeftSize({ w: lResult.cssW, h: lResult.cssH }); extractedTexts[safePage] = lResult.text; }
+          if (rResult && rightCanvasRef.current) { paintEntry(rResult, rightCanvasRef.current, rightTextRef.current); setRightSize({ w: rResult.cssW, h: rResult.cssH }); extractedTexts[rightPage] = rResult.text; }
+          if (lResult || rResult) {
+            pulseEnter(direction, isCancelled);
+            if (!renderedCallbackFired.current) {
               renderedCallbackFired.current = true;
               const totalW = (lResult?.cssW || 0) + (rResult?.cssW || 0) + 4;
               const maxH   = Math.max(lResult?.cssH || 0, rResult?.cssH || 0);
@@ -477,9 +552,37 @@ export default function PdfBookSpread({
         if (!isCancelled() && Object.keys(extractedTexts).length > 0) {
           onTextExtracted?.(extractedTexts);
         }
+
+        // ── Background preload of adjacent pages ─────────────────────
+        // Starts only after the current page above is fully painted, and
+        // renders sequentially (not in parallel) so it never competes
+        // with a fresh user-triggered navigation for CPU. Each iteration
+        // re-checks isCancelled() so a new page/book change aborts it.
+        if (!isCancelled()) {
+          const neighbors: Array<{ pageNo: number; key: string; maxW: number; maxH: number }> = [];
+          if (!isSpread) {
+            if (safePage + 1 <= total) neighbors.push({ pageNo: safePage + 1, key: `${pdfPath}::${safePage + 1}::s`, maxW: PAGE_MAX_W, maxH: PAGE_MAX_H });
+            if (safePage - 1 >= 1)     neighbors.push({ pageNo: safePage - 1, key: `${pdfPath}::${safePage - 1}::s`, maxW: PAGE_MAX_W, maxH: PAGE_MAX_H });
+          } else {
+            const halfW = Math.floor(PAGE_MAX_W * 0.50);
+            const nextLeft = safePage + 2, prevLeft = safePage - 2;
+            if (nextLeft <= total) {
+              neighbors.push({ pageNo: nextLeft, key: `${pdfPath}::${nextLeft}::l`, maxW: halfW, maxH: PAGE_MAX_H });
+              if (nextLeft + 1 <= total) neighbors.push({ pageNo: nextLeft + 1, key: `${pdfPath}::${nextLeft + 1}::r`, maxW: halfW, maxH: PAGE_MAX_H });
+            }
+            if (prevLeft >= 1) {
+              neighbors.push({ pageNo: prevLeft, key: `${pdfPath}::${prevLeft}::l`, maxW: halfW, maxH: PAGE_MAX_H });
+              if (prevLeft + 1 <= total) neighbors.push({ pageNo: prevLeft + 1, key: `${pdfPath}::${prevLeft + 1}::r`, maxW: halfW, maxH: PAGE_MAX_H });
+            }
+          }
+          for (const n of neighbors) {
+            if (isCancelled()) break;
+            if (cache.has(n.key)) continue;
+            await getOrRenderPage(cache, n.key, pdf, n.pageNo, pdfjsLib, n.maxW, n.maxH, isCancelled);
+          }
+        }
       } catch (err) {
         console.error("PDF render error:", err);
-      } finally {
         if (!cancelled && renderIdRef.current === id) setLoading(false);
       }
     }
@@ -489,21 +592,52 @@ export default function PdfBookSpread({
   }, [pdfPath, safePage, isSpread, total]); // eslint-disable-line
 
   const zoomTransform = `translate(${pan.x}px, ${pan.y}px) scale(${zoom / 100})`;
-  const pageLabel = isSpread
-    ? `Pages ${safePage}–${Math.min(rightPage, total)} of ${total}`
-    : `Page ${safePage} of ${total}`;
+
+  // Zoom/pan share one `transform`, but only zoom (button/wheel-driven)
+  // should ever animate — while actively drag-panning, the transform must
+  // track the cursor with zero transition lag, or the drag feels rubbery.
+  const zoomTransition = isPanning
+    ? "none"
+    : "transform 220ms cubic-bezier(0.22, 1, 0.36, 1)";
+
+  // ── Lightweight page-change transition ───────────────────────────────
+  // Deliberately NOT a page-turn animation: no rotateY, no lift/curl, no
+  // staged out→in sequence. The page-state change itself already
+  // happened (synchronously, in the effect above) — this only decorates
+  // however the new content settles in: a short slide + fade so it
+  // doesn't feel like the page popped in with no acknowledgement, but
+  // fast enough that navigating never feels delayed.
+  const ENTER_MS = 150; // within the requested 120-180ms window
+  const ENTER_EASE = "cubic-bezier(0.22, 1, 0.36, 1)";
+  const enterDirSign = enterDirRef.current === "prev" ? -1 : 1;
+
+  function getEnterStyle(): React.CSSProperties {
+    if (reduceMotion) return { transform: zoomTransform, opacity: 1, transition: zoomTransition };
+    if (enterPhase === "start") {
+      // Synchronous pre-pose, no transition — the very next frame flips
+      // to "end" so the browser actually paints this frame first.
+      return { transform: `${zoomTransform} translateX(${enterDirSign * 8}px)`, opacity: 0.92, transition: "none" };
+    }
+    return { transform: zoomTransform, opacity: 1, transition: `transform ${ENTER_MS}ms ${ENTER_EASE}, opacity ${ENTER_MS}ms ${ENTER_EASE}` };
+  }
+
+  function getCardShadow(): { boxShadow: string; transition: string } {
+    if (reduceMotion) return { boxShadow: "inset 0 1px 3px rgba(0,0,0,0.08)", transition: "none" };
+    if (enterPhase === "start") {
+      return { boxShadow: `${enterDirSign * 6}px 8px 20px rgba(75,45,12,0.18), inset 0 1px 3px rgba(0,0,0,0.05)`, transition: "none" };
+    }
+    return { boxShadow: "inset 0 1px 3px rgba(0,0,0,0.08)", transition: `box-shadow ${ENTER_MS}ms ${ENTER_EASE}` };
+  }
+  const flipStyle = getEnterStyle();
+  const cardShadow = getCardShadow();
 
   return (
     <section className="flex h-full flex-col bg-[radial-gradient(circle_at_center,#fff8e8_0%,#ead2a6_50%,#c18a3f_100%)] px-6 py-3">
-      <header className="mx-auto mb-3 flex w-full max-w-[1500px] flex-shrink-0 items-center justify-between">
-        <div>
-          <p className="text-xs font-black uppercase tracking-[0.35em] text-amber-800">National Digital Library AI</p>
-          <h1 className="mt-0.5 text-2xl font-black text-slate-950">{title}</h1>
-        </div>
-        <div className="rounded-full bg-white/80 px-4 py-1.5 text-sm font-bold text-slate-700 shadow">
-          {pageLabel}
-        </div>
-      </header>
+      {/* Header/footer chrome (title, printed-page badge, Previous/Next,
+          progress bar) moved OUT to PremiumReaderPreviewContent (Phase
+          C3) — this component now owns only the book card itself, so it
+          gets the maximum available reading space. Nothing about how a
+          page renders, caches, or transitions changed. */}
 
       {/* Book card — flex-1 min-h-0 so it fills available column height */}
       <main ref={bookCardRef} className="relative mx-auto flex w-full max-w-[1500px] flex-1 min-h-0 items-center justify-center">
@@ -511,41 +645,54 @@ export default function PdfBookSpread({
 
         <div
           className="relative z-10 flex h-full w-full max-w-[1340px] items-center justify-center rounded-[2.5rem] border border-amber-200 bg-[#fffaf0] p-3 shadow-[0_25px_70px_rgba(75,45,12,0.28)]"
-          style={{ overflow: zoom > 100 ? "auto" : "hidden" }}
+          style={{ overflow: zoom > 100 ? "auto" : "hidden", perspective: 1800 }}
         >
           {imageSelectMode && !textSelectMode && (
-            <div className="absolute left-4 top-4 z-40 rounded-full bg-blue-600 px-4 py-1.5 text-xs font-bold text-white shadow">
+            <div className="absolute left-4 top-4 z-40 rounded-full bg-blue-600 px-4 py-1.5 text-xs font-bold text-white shadow ndl-fade-in-scale">
               📐 Image Select Mode
             </div>
           )}
           {textSelectMode && (
-            <div className="absolute left-4 top-4 z-40 rounded-full bg-amber-500 px-4 py-1.5 text-xs font-bold text-white shadow">
+            <div className="absolute left-4 top-4 z-40 rounded-full bg-amber-500 px-4 py-1.5 text-xs font-bold text-white shadow ndl-fade-in-scale">
               📝 Text Select
             </div>
           )}
 
-          {loading && (
-            <div className="absolute inset-0 z-30 flex items-center justify-center bg-[#fffaf0]/80">
-              <div className="flex items-center gap-3 rounded-2xl bg-white px-6 py-3 shadow-lg">
-                <div className="h-5 w-5 animate-spin rounded-full border-2 border-amber-200 border-t-amber-600" />
-                <span className="text-sm font-bold text-slate-600">Loading…</span>
+          {/* Only the true first-load (nothing has ever been painted yet in
+              this reader session) shows a full placeholder — there is no
+              "current page" to keep visible in that case. Every later
+              navigation keeps the outgoing page on screen and shows just
+              this small corner badge instead, per the "no blank frame"
+              requirement. */}
+          {loading && !singleSize && !leftSize && !rightSize && (
+            <div className="absolute inset-0 z-30 flex items-center justify-center bg-[#fffaf0]/90 ndl-fade-in-scale">
+              <div className="flex flex-col items-center gap-3">
+                <div className="ndl-skeleton h-[520px] w-[380px] rounded-[1.5rem] shadow-lg" />
+                <div className="flex items-center gap-2 text-xs font-bold text-slate-500">
+                  <div className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-amber-200 border-t-amber-600" />
+                  Loading page…
+                </div>
               </div>
+            </div>
+          )}
+          {loading && (singleSize || leftSize || rightSize) && (
+            <div className="absolute right-4 top-4 z-40 flex items-center gap-1.5 rounded-full bg-white/90 px-3 py-1 text-[11px] font-bold text-slate-500 shadow ndl-fade-in-scale">
+              <div className="h-3 w-3 animate-spin rounded-full border-2 border-amber-200 border-t-amber-600" />
+              Loading…
             </div>
           )}
 
           <div style={{
-            transform: zoomTransform,
+            ...flipStyle,
             transformOrigin: "center center",
-            transition: "transform 100ms ease",
+            transformStyle: "preserve-3d",
             display: "inline-flex",
             position: "relative",
-            opacity: isFlipping ? 0 : 1,
-            scale: isFlipping ? "0.97" : "1",
-            transitionProperty: "transform, opacity, scale",
-            transitionDuration: "150ms",
-            transitionTimingFunction: "ease",
           }}>
-            <div className="relative flex items-center justify-center rounded-[2rem] bg-white p-3 shadow-inner">
+            <div
+              className="relative flex items-center justify-center rounded-[2rem] bg-white p-3"
+              style={cardShadow}
+            >{/* directional shadow during out/enterStart, settles to a flat inset shadow at rest */}
               {!isSpread ? (
                 <PageBox
                   canvasRef={canvasRef} textLayerRef={textRef} size={singleSize}
@@ -581,21 +728,6 @@ export default function PdfBookSpread({
         </div>
       </main>
 
-      <footer className="mx-auto mt-3 flex w-full max-w-[1300px] flex-shrink-0 items-center justify-between gap-5">
-        <button onClick={onPrevious} className="rounded-full bg-slate-950 px-7 py-2.5 text-sm font-black text-white shadow-xl">
-          ← Previous
-        </button>
-        <div className="flex-1">
-          <div className="h-2.5 rounded-full bg-white/75 shadow-inner">
-            <div className="h-2.5 rounded-full bg-amber-500"
-              style={{ width: `${Math.min(100, Math.round((safePage / total) * 100))}%` }} />
-          </div>
-        </div>
-        <button onClick={onNext} className="rounded-full bg-blue-600 px-7 py-2.5 text-sm font-black text-white shadow-xl">
-          Next →
-        </button>
-      </footer>
-
       <style>{`
         /*
           PDF.js v4+ injects a global stylesheet with:
@@ -626,10 +758,9 @@ export default function PdfBookSpread({
           color:transparent (above) keeps the text invisible whether
           selected or not — we only need the background here.
 
-          We are not trying to hide or fight this native highlight in
-          Image Select mode anymore — it may legitimately show while the
-          user drags to crop an image, and that's fine; the AI router
-          simply ignores it in that mode.
+          This selection highlight only ever renders in Text Select mode —
+          the text layer has pointerEvents:none in Image Select mode, so
+          the browser has nothing to select there in the first place.
         */
         .ndl-text-layer span::selection,
         .ndl-text-layer br::selection,

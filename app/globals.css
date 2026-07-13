@@ -74,6 +74,53 @@
   animation: shimmer 3s ease-in-out infinite;
 }
 
+/* ── Phase C1: Premium Reader polish — shared, reusable primitives ─────
+   Skeleton shimmer (page/AI-panel loading placeholders) and a soft
+   fade+scale entrance (page-load settle, AI response appearing, panels
+   opening) — reused across PdfBookSpread/AICompanion instead of each
+   defining its own one-off animation. */
+@keyframes ndl-skeleton-shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+.ndl-skeleton {
+  background: linear-gradient(90deg, #ecdfc2 25%, #f8f0dd 37%, #ecdfc2 63%);
+  background-size: 400% 100%;
+  animation: ndl-skeleton-shimmer 1.6s ease-in-out infinite;
+}
+/* Same shimmer, tuned for dark panels (AI Companion's response area). */
+.ndl-skeleton-dark {
+  background: linear-gradient(90deg, #334155 25%, #475569 37%, #334155 63%);
+  background-size: 400% 100%;
+  animation: ndl-skeleton-shimmer 1.6s ease-in-out infinite;
+}
+
+@keyframes ndl-fade-in-scale {
+  from { opacity: 0; transform: scale(0.98); }
+  to { opacity: 1; transform: scale(1); }
+}
+.ndl-fade-in-scale {
+  animation: ndl-fade-in-scale 280ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+/* Tasteful micro-interaction for interactive controls — 150-250ms,
+   scale-based so it reads as "press" feedback without any layout shift. */
+.ndl-press {
+  transition: transform 150ms cubic-bezier(0.22, 1, 0.36, 1), box-shadow 150ms ease, background-color 150ms ease;
+}
+.ndl-press:hover {
+  transform: translateY(-1px);
+}
+.ndl-press:active {
+  transform: scale(0.96);
+}
+@media (prefers-reduced-motion: reduce) {
+  .ndl-press, .ndl-fade-in-scale, .ndl-skeleton, .ndl-skeleton-dark {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
 body {
   background: var(--background);
   color: var(--foreground);

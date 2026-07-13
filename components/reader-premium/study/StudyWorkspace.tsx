@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { StoredHighlight, StoredNote, StoredBookmark, HIGHLIGHT_COLOR_HEX } from "./studyData";
+import { getDisplayLabel, type PrintedPageMap } from "@/lib/printedPageMap";
 
 type StudySubTab = "highlights" | "notes" | "bookmarks" | "search";
 // Kept for prop-compatibility with AICompanion's existing pass-through —
@@ -11,6 +12,7 @@ export type RevisionAction = "flashcards" | "quiz" | "mcqs" | "revision";
 export default function StudyWorkspace({
   bookTitle,
   highlights, notes, bookmarks,
+  printedPageMap,
   onJumpToPage, onDeleteHighlight, onDeleteNote, onDeleteBookmark,
   onGenerateFromHighlight, generatingId,
 }: {
@@ -19,6 +21,10 @@ export default function StudyWorkspace({
   highlights: StoredHighlight[];
   notes: StoredNote[];
   bookmarks: StoredBookmark[];
+  /** Static per-book printed-page map (lib/printedPageMap.ts).
+   *  highlight.page/note.page/bookmark.page stay the stable internal
+   *  pdfPage key regardless — this is display-only. */
+  printedPageMap?: PrintedPageMap;
   onJumpToPage: (page: number, flashId?: string) => void;
   onDeleteHighlight: (id: string) => void;
   onDeleteNote: (id: string) => void;
@@ -35,6 +41,16 @@ export default function StudyWorkspace({
 }) {
   const [subTab, setSubTab] = useState<StudySubTab>("highlights");
   const [query, setQuery] = useState("");
+
+  // Printed page number only (e.g. "184", or "38–39" for a scanned
+  // two-up spread) — the internal PDF page index is never shown, even as
+  // a fallback. pdfPage (the stable key highlights/notes/bookmarks are
+  // stored under) never changes regardless of what's shown here; a plain
+  // placeholder covers the rare case this book/page isn't mapped, so the
+  // card never renders a blank line.
+  function pageLabelText(pdfPage: number): string {
+    return getDisplayLabel(pdfPage, printedPageMap ?? {}) || "Page —";
+  }
 
   const filteredHighlights = useMemo(() => {
     const list = [...highlights].sort((a, b) => b.createdAt - a.createdAt);
@@ -124,7 +140,7 @@ export default function StudyWorkspace({
         </p>
 
         <p style={{ fontSize: 10, color: "#64748b", marginTop: 6, fontWeight: 700 }}>
-          Page {h.page}
+          {pageLabelText(h.page)}
         </p>
 
         <div style={{ display: "flex", gap: 6, marginTop: 10 }}>
@@ -195,7 +211,7 @@ export default function StudyWorkspace({
                 📝 {n.note}
               </p>
               <p style={{ fontSize: 10, color: "#64748b", marginTop: 4, fontWeight: 700 }}>
-                Page {n.page} · tap to jump{n.aiImproved ? " · ✨ AI-improved" : ""}
+                {pageLabelText(n.page)} · tap to jump{n.aiImproved ? " · ✨ AI-improved" : ""}
               </p>
             </button>
             <div style={{ textAlign: "right", marginTop: 6 }}>
@@ -219,9 +235,9 @@ export default function StudyWorkspace({
               style={{ flex: 1, textAlign: "left", background: "none", border: "none", cursor: "pointer", padding: 0 }}
             >
               <p style={{ fontSize: 12, color: "#e2e8f0", fontWeight: 700 }}>
-                🔖 {b.title?.trim() ? b.title : `Page ${b.page}`}
+                🔖 {b.title?.trim() ? b.title : pageLabelText(b.page)}
               </p>
-              <p style={{ fontSize: 10, color: "#64748b", marginTop: 2, fontWeight: 700 }}>Page {b.page} · tap to jump</p>
+              <p style={{ fontSize: 10, color: "#64748b", marginTop: 2, fontWeight: 700 }}>{pageLabelText(b.page)} · tap to jump</p>
             </button>
             <button onClick={() => onDeleteBookmark(b.id)}
               style={{ background: "none", border: "none", color: "#64748b", cursor: "pointer", fontSize: 13, flexShrink: 0 }}>

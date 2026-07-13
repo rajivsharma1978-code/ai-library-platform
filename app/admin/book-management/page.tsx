@@ -10,6 +10,7 @@ import {
   loadBookOverrides, saveBookOverrides, logActivity, buildDisplayBooks, newId,
   type AdminBookOverride, type DisplayBook, type BookStatus,
 } from "@/components/admin/adminData";
+import type { PageNumberingConfig } from "@/lib/pageNumbering";
 import PageHeader from "@/components/ui/PageHeader";
 import StatCard from "@/components/ui/StatCard";
 import InfoCard from "@/components/ui/InfoCard";
@@ -30,11 +31,53 @@ type FormFields = {
   title: string; author: string; language: string; category: string;
   status: BookStatus; format: string; pages: string;
   coverFileName: string; pdfFileName: string;
+  /** Simple page-numbering config (lib/pageNumbering.ts, "offset" model
+   *  only — demo scope). frontMatterCount = how many PDF pages come
+   *  before the printed "1"; pageLabels = optional front-matter labels,
+   *  one "pdfPage: Label" per line (e.g. "1: Cover"). Both blank means
+   *  "no mapping", same as a book that never set this at all. */
+  frontMatterCount: string;
+  pageLabels: string;
 };
 const EMPTY_FORM: FormFields = {
   title: "", author: "", language: "English", category: "General",
   status: "Draft", format: "PDF", pages: "", coverFileName: "", pdfFileName: "",
+  frontMatterCount: "", pageLabels: "",
 };
+
+/** "1: Cover\n2: Title Page" -> {1: "Cover", 2: "Title Page"}. Blank/
+ *  unparseable lines are silently skipped — this is a demo textarea, not
+ *  a strict format. */
+function parsePageLabels(text: string): Record<number, string> {
+  const labels: Record<number, string> = {};
+  for (const line of text.split("\n")) {
+    const m = line.match(/^\s*(\d+)\s*[:.\-]\s*(.+?)\s*$/);
+    if (m) labels[Number(m[1])] = m[2];
+  }
+  return labels;
+}
+function formatPageLabels(labels?: Record<number, string>): string {
+  if (!labels) return "";
+  return Object.entries(labels).map(([pdfPage, label]) => `${pdfPage}: ${label}`).join("\n");
+}
+/** Builds the config from the form's two simple fields, or undefined if
+ *  the admin left both blank — omitting the key lets a catalog book's own
+ *  static pageNumbering (if any) keep applying (see getPublicCatalog()'s
+ *  `o.pageNumbering ?? b.pageNumbering` merge), instead of an empty
+ *  override silently erasing it. */
+function buildPageNumbering(form: FormFields): PageNumberingConfig | undefined {
+  const frontMatterCount = parseInt(form.frontMatterCount, 10);
+  const hasFrontMatter = !isNaN(frontMatterCount) && frontMatterCount > 0;
+  const labels = parsePageLabels(form.pageLabels);
+  const hasLabels = Object.keys(labels).length > 0;
+  if (!hasFrontMatter && !hasLabels) return undefined;
+  return {
+    type: "offset",
+    startPdfPage: hasFrontMatter ? frontMatterCount + 1 : 1,
+    startBookPage: 1,
+    ...(hasLabels ? { labels } : {}),
+  };
+}
 
 function upsertOverride(overrides: AdminBookOverride[], id: string, patch: Partial<AdminBookOverride>, isNewCustom = false): AdminBookOverride[] {
   const now = Date.now();
@@ -95,10 +138,13 @@ function BookManagementContent() {
   function openEditForm(book: DisplayBook) {
     setFormMode("edit");
     setFormTargetId(book.id);
+    const pn = book.pageNumbering;
     setForm({
       title: book.title, author: book.author, language: book.language, category: book.category,
       status: book.status, format: book.format, pages: String(book.pages || ""),
       coverFileName: book.coverFileName || "", pdfFileName: book.pdfFileName || "",
+      frontMatterCount: pn?.startPdfPage && pn.startPdfPage > 1 ? String(pn.startPdfPage - 1) : "",
+      pageLabels: formatPageLabels(pn?.labels),
     });
     setFormOpen(true);
   }
@@ -121,6 +167,7 @@ function BookManagementContent() {
       pages: Number(form.pages) || 0,
       coverFileName: form.coverFileName || undefined,
       pdfFileName: form.pdfFileName || undefined,
+      pageNumbering: buildPageNumbering(form),
     };
 
     if (formMode === "add") {
@@ -243,6 +290,23 @@ function BookManagementContent() {
                 <span className="mb-1 block text-xs font-bold text-slate-500">Pages</span>
                 <input type="number" value={form.pages} onChange={(e) => setForm(f => ({ ...f, pages: e.target.value }))}
                   className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-amber-400 focus:border-transparent" />
+              </label>
+              <label className="block">
+                <span className="mb-1 block text-xs font-bold text-slate-500">Front-matter pages (before printed page 1)</span>
+                <input type="number" min={0} value={form.frontMatterCount}
+                  onChange={(e) => setForm(f => ({ ...f, frontMatterCount: e.target.value }))}
+                  placeholder="e.g. 6 — cover/title/contents/preface"
+                  className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-amber-400 focus:border-transparent" />
+                <p className="mt-1 text-[11px] text-slate-400">
+                  Leave blank if this book has no separate printed page numbering — the PDF page number is shown as-is.
+                </p>
+              </label>
+              <label className="block md:col-span-2">
+                <span className="mb-1 block text-xs font-bold text-slate-500">Front-matter labels (optional, one per line: "PDF page: Label")</span>
+                <textarea rows={3} value={form.pageLabels}
+                  onChange={(e) => setForm(f => ({ ...f, pageLabels: e.target.value }))}
+                  placeholder={"1: Cover\n2: Title Page\n3: Contents"}
+                  className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-amber-400 focus:border-transparent font-mono" />
               </label>
 
               {/* Upload cover/PDF UI mock — remembers the filename only,
