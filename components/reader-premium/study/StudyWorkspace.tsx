@@ -9,6 +9,27 @@ type StudySubTab = "highlights" | "notes" | "bookmarks" | "search";
 // no longer used to render anything (see note below).
 export type RevisionAction = "flashcards" | "quiz" | "mcqs" | "revision";
 
+// Calm, card-based empty state — matches AICompanion's own amber-tinted
+// card language (Phase D theme unification) instead of the old bare
+// centered gray text on a dark background.
+function EmptyState({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="rounded-2xl bg-amber-50/40 px-4 py-8 text-center text-xs font-semibold text-slate-400">
+      {children}
+    </div>
+  );
+}
+
+// Shared button treatments — matches AICompanion's response-action pills
+// (Copy/Read AI Response) so Ask AI ⇄ Study feels like one panel. Delete
+// stays visually distinct (light red) but no louder than it needs to be.
+const SECONDARY_ACTION_CLASS =
+  "ndl-press whitespace-nowrap rounded-lg bg-amber-50 px-2.5 py-1.5 text-[11px] font-bold text-slate-600 hover:bg-amber-100";
+const DELETE_ACTION_CLASS =
+  "ndl-press whitespace-nowrap rounded-lg bg-red-50 px-2.5 py-1.5 text-[11px] font-bold text-red-600 hover:bg-red-100";
+const DELETE_ICON_ONLY_CLASS =
+  "ndl-press flex-shrink-0 rounded-lg px-2 py-1 text-[13px] text-slate-400 hover:bg-red-50 hover:text-red-600";
+
 export default function StudyWorkspace({
   bookTitle,
   highlights, notes, bookmarks,
@@ -81,25 +102,18 @@ export default function StudyWorkspace({
     return notes.find(n => n.page === h.page && n.selectedText === h.selectedText);
   }
 
+  // Same pill-switcher pattern as AICompanion's own Ask AI / Study tabs
+  // (bg-amber-50 track, bg-orange-600 active pill) so the transition
+  // between the two outer tabs feels like one continuous panel.
   const tabBtn = (tab: StudySubTab, label: string) => (
     <button
       onClick={() => setSubTab(tab)}
-      style={{
-        flex: 1, padding: "6px 4px", fontSize: 11, fontWeight: 700,
-        borderRadius: 10, border: "none", cursor: "pointer",
-        background: subTab === tab ? "#2563eb" : "transparent",
-        color: subTab === tab ? "#fff" : "#94a3b8",
-      }}
+      className={`ndl-press flex-1 rounded-full px-2 py-1.5 text-[11px] font-bold transition-colors ${
+        subTab === tab ? "bg-orange-600 text-white" : "text-slate-500 hover:text-slate-800"}`}
     >
       {label}
     </button>
   );
-
-  const actionBtnStyle: React.CSSProperties = {
-    background: "#1e293b", color: "#cbd5e1", border: "none",
-    borderRadius: 8, padding: "5px 10px", fontSize: 11, fontWeight: 700,
-    cursor: "pointer", whiteSpace: "nowrap",
-  };
 
   // ── Simplified highlight card ────────────────────────────────────────
   // ONLY: highlighted text (2-3 lines, ellipsis), book title, page number,
@@ -110,52 +124,38 @@ export default function StudyWorkspace({
   function HighlightCard({ h }: { h: StoredHighlight }) {
     const note = findNoteForHighlight(h);
     return (
-      <div style={{ background: "#0f172a", borderRadius: 14, padding: 12 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          <span style={{
-            width: 10, height: 10, borderRadius: "50%", flexShrink: 0,
-            background: HIGHLIGHT_COLOR_HEX[h.color].fill,
-            border: `2px solid ${HIGHLIGHT_COLOR_HEX[h.color].border}`,
-          }} />
-          <span style={{
-            fontSize: 10, fontWeight: 700, color: "#94a3b8",
-            textTransform: "uppercase", letterSpacing: "0.04em",
-            overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-          }}>
+      <div className="rounded-2xl bg-white p-3.5 shadow-[0_2px_10px_rgba(75,45,12,0.06)] ring-1 ring-amber-100/70">
+        <div className="flex items-center gap-2">
+          <span
+            className="h-2.5 w-2.5 flex-shrink-0 rounded-full"
+            style={{ background: HIGHLIGHT_COLOR_HEX[h.color].fill, border: `2px solid ${HIGHLIGHT_COLOR_HEX[h.color].border}` }}
+          />
+          <span className="truncate text-[10px] font-bold uppercase tracking-wide text-slate-400">
             📖 {bookTitle?.trim() ? bookTitle : "This book"}
           </span>
           {note && (
-            <span title="Note attached" style={{ marginLeft: "auto", fontSize: 12, flexShrink: 0 }}>📝</span>
+            <span title="Note attached" className="ml-auto flex-shrink-0 text-xs">📝</span>
           )}
         </div>
 
-        <p style={{
-          fontSize: 13, color: "#e2e8f0", lineHeight: 1.5, margin: "8px 0 0",
-          display: "-webkit-box",
-          WebkitLineClamp: 3,
-          WebkitBoxOrient: "vertical",
-          overflow: "hidden",
-        }}>
+        <p className="mt-2 line-clamp-3 text-[13px] leading-relaxed text-slate-700">
           “{h.selectedText}”
         </p>
 
-        <p style={{ fontSize: 10, color: "#64748b", marginTop: 6, fontWeight: 700 }}>
+        <p className="mt-1.5 text-[10px] font-bold text-slate-400">
           {pageLabelText(h.page)}
         </p>
 
-        <div style={{ display: "flex", gap: 6, marginTop: 10 }}>
-          <button onClick={() => onJumpToPage(h.page, h.id)} style={actionBtnStyle}>
+        <div className="mt-2.5 flex items-center gap-1.5">
+          <button onClick={() => onJumpToPage(h.page, h.id)} className={SECONDARY_ACTION_CLASS}>
             📖 Open Page
           </button>
           {note && (
-            <button onClick={() => onJumpToPage(h.page, note.id)} style={actionBtnStyle}>
+            <button onClick={() => onJumpToPage(h.page, note.id)} className={SECONDARY_ACTION_CLASS}>
               ✏️ Edit Note
             </button>
           )}
-          <button
-            onClick={() => onDeleteHighlight(h.id)}
-            style={{ ...actionBtnStyle, marginLeft: "auto", background: "#3f1d1d", color: "#fca5a5" }}
-          >
+          <button onClick={() => onDeleteHighlight(h.id)} className={`${DELETE_ACTION_CLASS} ml-auto`}>
             🗑 Delete
           </button>
         </div>
@@ -164,8 +164,8 @@ export default function StudyWorkspace({
   }
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
-      <div style={{ display: "flex", gap: 4, background: "#0f172a", borderRadius: 12, padding: 4 }}>
+    <div className="flex h-full flex-col">
+      <div className="flex flex-shrink-0 gap-1 rounded-full bg-amber-50 p-1">
         {tabBtn("highlights", "Highlights")}
         {tabBtn("notes", "Notes")}
         {tabBtn("bookmarks", "Bookmarks")}
@@ -173,88 +173,74 @@ export default function StudyWorkspace({
       </div>
 
       {subTab === "search" && (
-        <div style={{ marginTop: 10 }}>
+        <div className="mt-2.5 flex-shrink-0">
           <input
             autoFocus
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search highlights, notes, bookmarks…"
-            style={{
-              width: "100%", boxSizing: "border-box", borderRadius: 12,
-              padding: "9px 12px", fontSize: 13, border: "none", outline: "none",
-              background: "#fff", color: "#0f172a",
-            }}
+            className="w-full rounded-2xl border border-amber-200 bg-white px-4 py-2.5 text-[13px] text-slate-900 outline-none transition-shadow focus:ring-2 focus:ring-orange-400"
           />
         </div>
       )}
 
-      <div style={{ flex: 1, overflowY: "auto", marginTop: 10, display: "flex", flexDirection: "column", gap: 8 }}>
+      <div className="mt-3 flex flex-1 flex-col gap-2.5 overflow-y-auto">
         {(subTab === "highlights" || subTab === "search") && filteredHighlights.map(h => (
           <HighlightCard key={h.id} h={h} />
         ))}
         {subTab === "highlights" && filteredHighlights.length === 0 && (
-          <p style={{ fontSize: 12, color: "#64748b", textAlign: "center", marginTop: 20 }}>
-            No highlights yet. Select text on the page and tap ⭐ Highlight.
-          </p>
+          <EmptyState>No highlights yet. Select text on the page and tap ⭐ Highlight.</EmptyState>
         )}
 
         {(subTab === "notes" || subTab === "search") && filteredNotes.map(n => (
-          <div key={n.id} style={{ background: "#0f172a", borderRadius: 14, padding: 10 }}>
+          <div key={n.id} className="rounded-2xl bg-white p-3 shadow-[0_2px_10px_rgba(75,45,12,0.06)] ring-1 ring-amber-100/70">
             <button
               onClick={() => onJumpToPage(n.page, n.id)}
-              style={{ width: "100%", textAlign: "left", background: "none", border: "none", cursor: "pointer", padding: 0 }}
+              className="block w-full text-left"
             >
-              <p style={{ fontSize: 11, color: "#64748b", fontStyle: "italic" }}>
+              <p className="text-[11px] italic text-slate-400">
                 “{n.selectedText.slice(0, 70)}{n.selectedText.length > 70 ? "…" : ""}”
               </p>
-              <p style={{ fontSize: 12, color: "#e2e8f0", marginTop: 4, lineHeight: 1.5 }}>
+              <p className="mt-1 text-[12px] leading-relaxed text-slate-700">
                 📝 {n.note}
               </p>
-              <p style={{ fontSize: 10, color: "#64748b", marginTop: 4, fontWeight: 700 }}>
+              <p className="mt-1.5 text-[10px] font-bold text-slate-400">
                 {pageLabelText(n.page)} · tap to jump{n.aiImproved ? " · ✨ AI-improved" : ""}
               </p>
             </button>
-            <div style={{ textAlign: "right", marginTop: 6 }}>
-              <button onClick={() => onDeleteNote(n.id)}
-                style={{ background: "none", border: "none", color: "#64748b", cursor: "pointer", fontSize: 13 }}>
+            <div className="mt-1.5 text-right">
+              <button onClick={() => onDeleteNote(n.id)} className={DELETE_ICON_ONLY_CLASS}>
                 🗑️
               </button>
             </div>
           </div>
         ))}
         {subTab === "notes" && filteredNotes.length === 0 && (
-          <p style={{ fontSize: 12, color: "#64748b", textAlign: "center", marginTop: 20 }}>
-            No notes yet. Select text and tap 📝 Add Note.
-          </p>
+          <EmptyState>No notes yet. Select text and tap 📝 Add Note.</EmptyState>
         )}
 
         {(subTab === "bookmarks" || subTab === "search") && filteredBookmarks.map(b => (
-          <div key={b.id} style={{ background: "#0f172a", borderRadius: 14, padding: 10, display: "flex", alignItems: "center", gap: 8 }}>
+          <div key={b.id} className="flex items-center gap-2 rounded-2xl bg-white p-3 shadow-[0_2px_10px_rgba(75,45,12,0.06)] ring-1 ring-amber-100/70">
             <button
               onClick={() => onJumpToPage(b.page)}
-              style={{ flex: 1, textAlign: "left", background: "none", border: "none", cursor: "pointer", padding: 0 }}
+              className="flex-1 text-left"
             >
-              <p style={{ fontSize: 12, color: "#e2e8f0", fontWeight: 700 }}>
+              <p className="text-[12px] font-bold text-slate-700">
                 🔖 {b.title?.trim() ? b.title : pageLabelText(b.page)}
               </p>
-              <p style={{ fontSize: 10, color: "#64748b", marginTop: 2, fontWeight: 700 }}>{pageLabelText(b.page)} · tap to jump</p>
+              <p className="mt-0.5 text-[10px] font-bold text-slate-400">{pageLabelText(b.page)} · tap to jump</p>
             </button>
-            <button onClick={() => onDeleteBookmark(b.id)}
-              style={{ background: "none", border: "none", color: "#64748b", cursor: "pointer", fontSize: 13, flexShrink: 0 }}>
+            <button onClick={() => onDeleteBookmark(b.id)} className={DELETE_ICON_ONLY_CLASS}>
               🗑️
             </button>
           </div>
         ))}
         {subTab === "bookmarks" && filteredBookmarks.length === 0 && (
-          <p style={{ fontSize: 12, color: "#64748b", textAlign: "center", marginTop: 20 }}>
-            No bookmarks yet. Tap 🔖 Bookmark in the toolbar.
-          </p>
+          <EmptyState>No bookmarks yet. Tap 🔖 Bookmark in the toolbar.</EmptyState>
         )}
 
         {subTab === "search" && query.trim() && filteredHighlights.length === 0 && filteredNotes.length === 0 && filteredBookmarks.length === 0 && (
-          <p style={{ fontSize: 12, color: "#64748b", textAlign: "center", marginTop: 20 }}>
-            No matches for “{query}”.
-          </p>
+          <EmptyState>No matches for “{query}”.</EmptyState>
         )}
       </div>
     </div>

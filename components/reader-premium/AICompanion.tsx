@@ -95,13 +95,18 @@ type AICompanionProps = {
 // the `scope` pills below) and wraps each of these with the right
 // framing + content block before sending it to the AI. This is what lets
 // the SAME six buttons work for all three scopes.
-const QUICK_ACTIONS: { label: string; short: string; prompt: (lang: string) => string }[] = [
-  { label: "🧠 Explain",    short: "Explain",    prompt: (lang) => `Explain this clearly for a student in simple language. Respond ONLY in: ${lang}.` },
-  { label: "📝 Summarize",  short: "Summarize",  prompt: (lang) => `Summarize this in at most 8 concise bullet points. Respond ONLY in: ${lang}.` },
+//
+// `primary` is presentation-only (Phase D visual polish) — it decides
+// whether a pill renders with slightly more visual weight so the panel
+// doesn't give every action identical emphasis. It has no effect on the
+// prompt, the handler, or which scope/depth/language apply.
+const QUICK_ACTIONS: { label: string; short: string; prompt: (lang: string) => string; primary?: boolean }[] = [
+  { label: "🧠 Explain",    short: "Explain",    primary: true, prompt: (lang) => `Explain this clearly for a student in simple language. Respond ONLY in: ${lang}.` },
+  { label: "📝 Summarize",  short: "Summarize",  primary: true, prompt: (lang) => `Summarize this in at most 8 concise bullet points. Respond ONLY in: ${lang}.` },
   { label: "🌍 Translate",  short: "Translate",  prompt: (lang) => `Rewrite and explain the content in ${lang}. Write entirely in ${lang}. Respond ONLY in: ${lang}.` },
-  { label: "❓ Quiz",       short: "Quiz",       prompt: (lang) => `Create multiple-choice quiz questions — 5 for a page or chapter, 8 for the entire book. Respond ONLY in: ${lang}.` },
+  { label: "❓ Quiz",       short: "Quiz",       primary: true, prompt: (lang) => `Create multiple-choice quiz questions — 5 for a page or chapter, 8 for the entire book. Respond ONLY in: ${lang}.` },
   { label: "🎴 Flashcards", short: "Flashcards", prompt: (lang) => `Create flashcards (FRONT: / BACK: format) — 5 for a page or chapter, 10 for the entire book. Respond ONLY in: ${lang}.` },
-  { label: "📌 Notes",      short: "Notes",      prompt: (lang) => `Create clean, structured revision notes. Respond ONLY in: ${lang}.` },
+  { label: "📌 Revision Notes", short: "Revision Notes", prompt: (lang) => `Create clean, structured revision notes. Respond ONLY in: ${lang}.` },
 ];
 
 const SCOPE_OPTIONS: { value: "page" | "chapter" | "book"; label: string; icon: string }[] = [
@@ -295,50 +300,56 @@ export default function AICompanion({
         </div>
       ) : (
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-        <div className="flex-shrink-0 space-y-3 overflow-y-auto px-5 pt-4">
-          {/* 1–2. Scope + Response depth — compact control row, single line. */}
-          <div className="flex items-center gap-2">
-            <div className="min-w-0 flex-1">
-              <p className="mb-1 text-[10px] font-black uppercase tracking-widest text-slate-400">Scope</p>
-              <select
-                value={hasActiveSelection ? "selection" : scope}
-                disabled={hasActiveSelection}
-                onChange={(e) => onScopeChange(e.target.value as "page" | "chapter" | "book")}
-                title={hasActiveSelection ? "Selecting text on the page always answers from that selection" : undefined}
-                className="ndl-press w-full rounded-xl border border-amber-100 bg-amber-50 px-2.5 py-2 text-xs font-bold text-slate-700 outline-none disabled:cursor-not-allowed disabled:opacity-70"
-              >
-                {hasActiveSelection && <option value="selection">📎 Selection</option>}
-                {SCOPE_OPTIONS.map((opt) => (
-                  <option key={opt.value} value={opt.value}>{opt.icon} {opt.label}</option>
-                ))}
-              </select>
+        <div className="flex-shrink-0 space-y-2.5 overflow-y-auto px-5 pt-4">
+          {/* 1–3. Scope + Depth + Language — grouped into one quiet
+              "current settings" card so they read as secondary/compact,
+              not primary content competing with the response below.
+              Same select/onChange contracts and same shared
+              LanguagePopover as before — layout only changed. */}
+          <div className="rounded-2xl bg-amber-50/60 p-2.5">
+            <div className="flex items-center gap-2">
+              <div className="flex min-w-0 flex-1 items-center gap-1.5">
+                <label className="flex-shrink-0 text-[10px] font-bold uppercase tracking-wide text-slate-400">Scope</label>
+                <select
+                  value={hasActiveSelection ? "selection" : scope}
+                  disabled={hasActiveSelection}
+                  onChange={(e) => onScopeChange(e.target.value as "page" | "chapter" | "book")}
+                  title={hasActiveSelection ? "Selecting text on the page always answers from that selection" : undefined}
+                  className="ndl-press w-full min-w-0 rounded-lg bg-white/80 px-2 py-1.5 text-[11px] font-bold text-slate-700 outline-none disabled:cursor-not-allowed disabled:opacity-70"
+                >
+                  {hasActiveSelection && <option value="selection">📎 Selection</option>}
+                  {SCOPE_OPTIONS.map((opt) => (
+                    <option key={opt.value} value={opt.value}>{opt.icon} {opt.label}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="flex min-w-0 flex-1 items-center gap-1.5">
+                <label className="flex-shrink-0 text-[10px] font-bold uppercase tracking-wide text-slate-400">Depth</label>
+                <select
+                  value={depth}
+                  onChange={(e) => onDepthChange(e.target.value as "Beginner" | "Exam-focused" | "Research-level")}
+                  className="ndl-press w-full min-w-0 rounded-lg bg-white/80 px-2 py-1.5 text-[11px] font-bold text-slate-700 outline-none"
+                >
+                  {DEPTH_OPTIONS.map((opt) => (
+                    <option key={opt.value} value={opt.value}>{opt.icon} {opt.label}</option>
+                  ))}
+                </select>
+              </div>
             </div>
-            <div className="min-w-0 flex-1">
-              <p className="mb-1 text-[10px] font-black uppercase tracking-widest text-slate-400">Depth</p>
-              <select
-                value={depth}
-                onChange={(e) => onDepthChange(e.target.value as "Beginner" | "Exam-focused" | "Research-level")}
-                className="ndl-press w-full rounded-xl border border-amber-100 bg-amber-50 px-2.5 py-2 text-xs font-bold text-slate-700 outline-none"
-              >
-                {DEPTH_OPTIONS.map((opt) => (
-                  <option key={opt.value} value={opt.value}>{opt.icon} {opt.label}</option>
-                ))}
-              </select>
+
+            {/* Language — shown as text with a "Change" link that opens the
+                SAME popover/state as the reader toolbar's globe icon (not a
+                second independent selector). */}
+            <div className="mt-2 flex items-center gap-1.5 text-[11px] font-semibold text-slate-500">
+              <span>🌐</span>
+              <span>Responding in <span className="font-bold text-slate-700">{language}</span></span>
+              <LanguagePopover variant="link" language={language} onLanguageChange={onLanguageChange} availableLanguages={availableLanguages} />
             </div>
-          </div>
 
-          {/* 3. Language — shown as text with a "Change" link that opens the
-              SAME popover/state as the reader toolbar's globe icon (not a
-              second independent selector). */}
-          <div className="flex items-center gap-1.5 text-[11px] font-semibold text-slate-500">
-            <span>🌐</span>
-            <span>Responding in <span className="font-bold text-slate-700">{language}</span></span>
-            <LanguagePopover variant="link" language={language} onLanguageChange={onLanguageChange} availableLanguages={availableLanguages} />
+            {hasActiveSelection && (
+              <p className="mt-2 text-[11px] font-bold text-orange-700">📎 Text selected — Ask AI will answer from that selection.</p>
+            )}
           </div>
-
-          {hasActiveSelection && (
-            <p className="text-[11px] font-bold text-orange-700">📎 Text selected — Ask AI will answer from that selection.</p>
-          )}
 
           {/* 4. Current request */}
           {aiQuestion.trim() && (
@@ -348,22 +359,24 @@ export default function AICompanion({
           )}
         </div>
 
-        {/* 5. Large AI response area — gets the most vertical space. */}
+        {/* 5. Large AI response area — gets the most vertical space and
+            the most visual weight in the panel; everything else here is
+            deliberately quieter than this card. */}
         <div className="mt-3 min-h-0 flex-1 overflow-auto px-5">
-          <div className="rounded-3xl bg-amber-50/50 p-5 text-[14px] text-slate-800 shadow-inner">
+          <div className={`rounded-[1.75rem] p-6 text-[14px] text-slate-800 shadow-inner ${aiFailed ? "bg-red-50/40" : "bg-amber-50/50"}`}>
             {!isLoading && aiResponse.trim() && (
-              <p className="mb-2 text-[10px] font-black uppercase tracking-widest text-slate-400">AI Response</p>
+              <p className="mb-2.5 text-[10px] font-black uppercase tracking-widest text-slate-400">AI Response</p>
             )}
             {aiVoiceNotice && (
               <p className="mb-3 text-[11px] font-semibold text-orange-700">⚠️ {aiVoiceNotice}</p>
             )}
             {isLoading ? (
-              <div className="flex flex-col gap-2.5" aria-label="AI is thinking">
+              <div className="flex flex-col gap-3" aria-label="AI is thinking">
                 <div className="ndl-skeleton h-3.5 w-[85%] rounded-full" />
                 <div className="ndl-skeleton h-3.5 w-full rounded-full" />
                 <div className="ndl-skeleton h-3.5 w-[70%] rounded-full" />
                 <div className="ndl-skeleton h-3.5 w-[92%] rounded-full" />
-                <p className="mt-1 text-xs font-semibold text-slate-400">AI is thinking…</p>
+                <p className="mt-1.5 text-xs font-semibold text-slate-400">AI is thinking…</p>
               </div>
             ) : (
               <div key={aiResponse.slice(0, 40)} className="ndl-fade-in-scale">
@@ -371,7 +384,7 @@ export default function AICompanion({
                 {aiFailed && onRetry && (
                   <button
                     onClick={onRetry}
-                    className="ndl-press mt-3 rounded-full bg-red-50 px-3 py-1.5 text-[11px] font-bold text-red-600 hover:bg-red-100"
+                    className="ndl-press mt-3 inline-flex items-center gap-1 rounded-full bg-red-100 px-3 py-1.5 text-[11px] font-bold text-red-700 hover:bg-red-200"
                   >
                     🔁 Retry
                   </button>
@@ -379,7 +392,7 @@ export default function AICompanion({
               </div>
             )}
             {!isLoading && aiResponse.trim() && onReadAiResponse && (
-              <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-amber-100 pt-3">
+              <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-amber-100/80 pt-3.5">
                 <button
                   onClick={onReadAiResponse}
                   title="Read this AI response aloud"
@@ -432,8 +445,13 @@ export default function AICompanion({
           </div>
         </div>
 
-        {/* 7. Compact quick actions + 8. Ask AI input, fixed near bottom */}
-        <div className="flex-shrink-0 border-t border-amber-100 px-5 pb-4 pt-3">
+        {/* 7. Compact quick actions + 8. Ask AI input, fixed near bottom.
+            Explain/Summarize/Quiz (primary: true) carry slightly more
+            visual weight than Translate/Flashcards/Revision Notes — the
+            everyday actions vs. the more occasional ones — purely a
+            styling distinction, every action, handler, and prompt is
+            unchanged. */}
+        <div className="flex-shrink-0 border-t border-amber-100 px-5 pb-4 pt-3.5">
           <div className="flex flex-wrap gap-1.5">
             {QUICK_ACTIONS.map((a) => (
               <button
@@ -441,14 +459,15 @@ export default function AICompanion({
                 disabled={isLoading}
                 onClick={() => onQuickAction(a.label, a.prompt(language))}
                 title={a.short}
-                className="ndl-press rounded-full bg-amber-50 px-3 py-1.5 text-[11px] font-bold leading-tight text-slate-700 hover:bg-orange-100 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:translate-y-0"
+                className={`ndl-press rounded-full px-3 py-1.5 text-[11px] leading-tight hover:bg-orange-100 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:translate-y-0 ${
+                  a.primary ? "bg-amber-100 font-bold text-slate-800" : "bg-amber-50/70 font-semibold text-slate-600"}`}
               >
                 {a.label}
               </button>
             ))}
           </div>
 
-          <div data-dock-avoid className="mt-3 flex gap-2">
+          <div data-dock-avoid className="mt-3.5 flex gap-2">
             <input
               value={aiQuestion}
               onChange={(e) => setAiQuestion(e.target.value)}
