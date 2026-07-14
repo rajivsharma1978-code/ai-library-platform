@@ -2056,6 +2056,23 @@ export default function PremiumReaderPreviewContent() {
   const aiPanelWidthPx = isMobileViewport ? 0 : (aiPanelCompact ? AI_PANEL_COMPACT_PX : AI_PANEL_EXPANDED_PX);
   const aiPanelOverlay = isMobileViewport && !aiPanelCompact;
 
+  // ── Phase D Task 4: fullscreen-only compact chrome ──────────────────
+  // Static size/spacing tokens only — no control is removed, no state
+  // changes, no page/zoom/pan/selection logic touched. Normal mode is
+  // untouched (these all resolve to the exact same classes Tasks 1–3
+  // already shipped). In fullscreen, the same three chrome bars render
+  // with tighter margins and slightly smaller buttons so the freed
+  // height goes to the book — PdfBookSpread's own flex-1 column already
+  // reclaims whatever height these bars give up, with zero changes to
+  // that component.
+  const fsBtnH = isFullscreenLayout ? "h-8" : "h-9";
+  const fsSquareW = isFullscreenLayout ? "w-8" : "w-9";
+  const fsBtnText = isFullscreenLayout ? "text-[11px]" : "text-xs";
+  const fsBarGapY = isFullscreenLayout ? "mb-1" : "mb-1.5";
+  const fsGroupGap = isFullscreenLayout ? "gap-2" : "gap-2.5";
+  const fsBottomMt = isFullscreenLayout ? "mt-1" : "mt-1.5";
+  const fsBottomPy = isFullscreenLayout ? "py-1.5" : "py-2";
+
   return (
     <>
     <PremiumReaderLayout
@@ -2081,19 +2098,19 @@ export default function PremiumReaderPreviewContent() {
             overscrollBehavior: "contain",
           }}
         >
-          {/* ── Top row: Back / title / printed-page badge — rendered
-              identically in fullscreen: fullscreen is a layout mode only,
-              never a reduced-capability mode. ─────────────────────────── */}
-          <div className="mx-auto mb-1.5 flex w-full max-w-[1340px] flex-shrink-0 items-center justify-between gap-3 px-1">
+          {/* ── Top row: Back / title / printed-page badge. Same component
+              in both modes — fullscreen only compacts sizing/spacing via
+              the fs* tokens above, nothing is removed or hidden. ──────── */}
+          <div className={`mx-auto ${fsBarGapY} flex w-full max-w-[1340px] flex-shrink-0 items-center justify-between gap-3 px-1`}>
               <div className="flex min-w-0 items-center gap-3">
                 <Link href="/library"
-                  className="ndl-press inline-flex h-9 items-center gap-1 rounded-full bg-white px-3 text-xs font-bold text-slate-700 shadow ring-1 ring-slate-200 hover:bg-amber-50">
+                  className={`ndl-press inline-flex ${fsBtnH} items-center gap-1 rounded-full bg-white px-3 ${fsBtnText} font-bold text-slate-700 shadow ring-1 ring-slate-200 hover:bg-amber-50`}>
                   ← Back
                 </Link>
-                <h1 className="truncate text-base font-black text-slate-900">{book}</h1>
+                <h1 className={`truncate font-black text-slate-900 ${isFullscreenLayout ? "text-sm" : "text-base"}`}>{book}</h1>
               </div>
               {displayLabel && (
-                <span className="flex-shrink-0 rounded-full bg-white px-3 py-1.5 text-xs font-bold text-slate-600 shadow ring-1 ring-amber-100">
+                <span className={`flex-shrink-0 rounded-full bg-white px-3 ${isFullscreenLayout ? "py-1" : "py-1.5"} ${fsBtnText} font-bold text-slate-600 shadow ring-1 ring-amber-100`}>
                   {displayLabel}
                 </span>
               )}
@@ -2104,18 +2121,19 @@ export default function PremiumReaderPreviewContent() {
               separated by whitespace + a hairline divider rather than one
               long row of visually identical buttons. Zoom lives here ONLY
               — the bottom reading bar no longer duplicates it (Phase D
-              polish). Rendered identically in fullscreen — same
-              component, same handlers, no duplicate. ─────────────────── */}
-          <div className="mx-auto mb-1.5 flex w-full max-w-[1340px] flex-shrink-0 flex-wrap items-center gap-2.5 px-1">
+              Task 1). Same component and handlers in fullscreen — only
+              sizing/spacing compacts via the fs* tokens (Phase D Task 4),
+              no control is removed. ──────────────────────────────────── */}
+          <div className={`mx-auto ${fsBarGapY} flex w-full max-w-[1340px] flex-shrink-0 flex-wrap items-center ${fsGroupGap} px-1`}>
             <div className="flex items-center gap-1.5">
               <button onClick={handleReadPage} disabled={speechState === "loading"}
                 title="Read the visible book page aloud"
-                className="ndl-press inline-flex h-9 items-center gap-1.5 rounded-full bg-slate-900 px-4 text-xs font-bold text-white shadow hover:bg-slate-800 disabled:opacity-50">
+                className={`ndl-press inline-flex ${fsBtnH} items-center gap-1.5 rounded-full bg-slate-900 px-4 ${fsBtnText} font-bold text-white shadow hover:bg-slate-800 disabled:opacity-50`}>
                 {readLabel}
               </button>
               {(speechState === "speaking" || speechState === "paused") && (
                 <button onClick={handleStopReadAloud}
-                  className="ndl-press inline-flex h-9 items-center gap-1.5 rounded-full bg-red-600 px-4 text-xs font-bold text-white shadow hover:bg-red-700">⏹ Stop</button>
+                  className={`ndl-press inline-flex ${fsBtnH} items-center gap-1.5 rounded-full bg-red-600 px-4 ${fsBtnText} font-bold text-white shadow hover:bg-red-700`}>⏹ Stop</button>
               )}
             </div>
             <span className="h-5 w-px bg-amber-200/70" />
@@ -2123,13 +2141,13 @@ export default function PremiumReaderPreviewContent() {
             <div className="flex items-center gap-1.5">
               <button onClick={() => setZoom(z => Math.max(z - ZOOM_STEP, ZOOM_MIN))} disabled={zoom <= ZOOM_MIN}
                 title="Zoom out (or Ctrl/Cmd + scroll)"
-                className="ndl-press inline-flex h-9 w-9 items-center justify-center rounded-full bg-amber-50/70 text-xs font-bold text-slate-700 ring-1 ring-amber-100 hover:bg-amber-100 disabled:opacity-40">−</button>
+                className={`ndl-press inline-flex ${fsBtnH} ${fsSquareW} items-center justify-center rounded-full bg-amber-50/70 ${fsBtnText} font-bold text-slate-700 ring-1 ring-amber-100 hover:bg-amber-100 disabled:opacity-40`}>−</button>
               <span className="min-w-[40px] text-center text-xs font-bold tabular-nums text-slate-600 transition-all duration-150">{zoom}%</span>
               <button onClick={() => setZoom(z => Math.min(z + ZOOM_STEP, ZOOM_MAX))} disabled={zoom >= ZOOM_MAX}
                 title="Zoom in (or Ctrl/Cmd + scroll)"
-                className="ndl-press inline-flex h-9 w-9 items-center justify-center rounded-full bg-amber-50/70 text-xs font-bold text-slate-700 ring-1 ring-amber-100 hover:bg-amber-100 disabled:opacity-40">+</button>
+                className={`ndl-press inline-flex ${fsBtnH} ${fsSquareW} items-center justify-center rounded-full bg-amber-50/70 ${fsBtnText} font-bold text-slate-700 ring-1 ring-amber-100 hover:bg-amber-100 disabled:opacity-40`}>+</button>
               <button onClick={fitScreen}
-                className="ndl-press inline-flex h-9 items-center rounded-full bg-amber-50/70 px-4 text-xs font-bold text-slate-700 ring-1 ring-amber-100 hover:bg-amber-100">Fit</button>
+                className={`ndl-press inline-flex ${fsBtnH} items-center rounded-full bg-amber-50/70 px-4 ${fsBtnText} font-bold text-slate-700 ring-1 ring-amber-100 hover:bg-amber-100`}>Fit</button>
             </div>
             <span className="h-5 w-px bg-amber-200/70" />
 
@@ -2139,21 +2157,21 @@ export default function PremiumReaderPreviewContent() {
                 onChange={(e) => setGoToInput(e.target.value)}
                 placeholder="Page #"
                 title="Go to a printed page number"
-                className="h-9 w-20 rounded-full bg-white px-3 text-xs text-slate-800 ring-1 ring-slate-200 outline-none transition-shadow focus:ring-2 focus:ring-amber-400" />
+                className={`${fsBtnH} w-20 rounded-full bg-white px-3 ${fsBtnText} text-slate-800 ring-1 ring-slate-200 outline-none transition-shadow focus:ring-2 focus:ring-amber-400`} />
               <button type="submit"
-                className="ndl-press inline-flex h-9 items-center rounded-full bg-amber-50/70 px-3 text-xs font-bold text-slate-700 ring-1 ring-amber-100 hover:bg-amber-100">Go</button>
+                className={`ndl-press inline-flex ${fsBtnH} items-center rounded-full bg-amber-50/70 px-3 ${fsBtnText} font-bold text-slate-700 ring-1 ring-amber-100 hover:bg-amber-100`}>Go</button>
             </form>
             <span className="h-5 w-px bg-amber-200/70" />
 
             {/* Mode buttons — ALL use switchInteractionMode via toggleMode */}
             <div className="flex items-center gap-1.5">
               <button onClick={() => toggleMode("text")}
-                className={`ndl-press inline-flex h-9 items-center gap-1.5 rounded-full px-4 text-xs font-bold ${
+                className={`ndl-press inline-flex ${fsBtnH} items-center gap-1.5 rounded-full px-4 ${fsBtnText} font-bold ${
                   textSelectMode ? "bg-orange-600 text-white shadow" : "bg-amber-50/70 text-slate-700 ring-1 ring-amber-100 hover:bg-amber-100"}`}>
                 {textSelectMode ? "📖 Page Turn" : "📝 Text Select"}
               </button>
               <button onClick={() => toggleMode("image")}
-                className={`ndl-press inline-flex h-9 items-center gap-1.5 rounded-full px-4 text-xs font-bold ${
+                className={`ndl-press inline-flex ${fsBtnH} items-center gap-1.5 rounded-full px-4 ${fsBtnText} font-bold ${
                   imageSelectMode ? "bg-slate-900 text-white shadow" : "bg-amber-50/70 text-slate-700 ring-1 ring-amber-100 hover:bg-amber-100"}`}>
                 {imageSelectMode ? "✕ Cancel" : "📐 Image Select"}
               </button>
@@ -2164,7 +2182,7 @@ export default function PremiumReaderPreviewContent() {
               {/* Phase 2 — Feature 4: Bookmarks. Bookmarks the CURRENT page;
                   tapping again while already bookmarked removes it. */}
               <button onClick={toggleBookmarkCurrentPage}
-                className={`ndl-press inline-flex h-9 items-center gap-1.5 rounded-full px-4 text-xs font-bold ${
+                className={`ndl-press inline-flex ${fsBtnH} items-center gap-1.5 rounded-full px-4 ${fsBtnText} font-bold ${
                   isCurrentPageBookmarked ? "bg-amber-500 text-white shadow" : "bg-amber-50/70 text-slate-700 ring-1 ring-amber-100 hover:bg-amber-100"}`}>
                 {isCurrentPageBookmarked ? "🔖 Bookmarked" : "🔖 Bookmark"}
               </button>
@@ -2477,13 +2495,13 @@ export default function PremiumReaderPreviewContent() {
 
           {/* ── Bottom reading bar — Contents, printed page number,
               progress slider, fullscreen toggle. Zoom lives ONLY in the
-              controls strip above now (Phase D polish removed the
+              controls strip above now (Phase D Task 1 removed the
               duplicate zoom cluster that used to live here too — same
               `zoom` state, same setZoom calls, just one home instead of
-              two). Rendered identically in fullscreen: this is the SAME
-              bar, not a separate duplicate — fullscreen changes layout
-              only, never capability. ───────────────────────────────── */}
-          <div className="mx-auto mt-1.5 flex w-full max-w-[1340px] flex-shrink-0 items-center gap-3 rounded-full bg-white px-4 py-2 shadow ring-1 ring-amber-100">
+              two). Same bar in fullscreen — only its own margin/padding
+              compacts via the fs* tokens (Phase D Task 4), nothing is
+              removed. ─────────────────────────────────────────────── */}
+          <div className={`mx-auto ${fsBottomMt} flex w-full max-w-[1340px] flex-shrink-0 items-center gap-3 rounded-full bg-white px-4 ${fsBottomPy} shadow ring-1 ring-amber-100`}>
               <button
                 onClick={() => setContentsOpen(true)}
                 className="ndl-press flex flex-shrink-0 items-center gap-1.5 rounded-full bg-amber-50 px-3 py-1.5 text-xs font-bold text-slate-700 hover:bg-amber-100"
