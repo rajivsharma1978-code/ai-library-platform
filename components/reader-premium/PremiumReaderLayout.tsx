@@ -2,6 +2,8 @@
 
 import { ReactNode, forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
 import ReaderNav from "./ReaderNav";
+import { UI_TEXT } from "@/lib/i18n";
+import { useLanguage } from "@/lib/useLanguage";
 
 type PremiumReaderLayoutProps = {
   /** The whole central reading zone (toolbar + book + bottom bar) — the
@@ -49,6 +51,8 @@ const PremiumReaderLayout = forwardRef<PremiumReaderLayoutHandle, PremiumReaderL
   const [exitControlVisible, setExitControlVisible] = useState(true);
   const mainRef = useRef<HTMLDivElement>(null);
   const idleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const { language } = useLanguage();
+  const t = UI_TEXT[language];
 
   useEffect(() => {
     function handleChange() { setIsFullscreen(!!document.fullscreenElement); }
@@ -132,8 +136,8 @@ const PremiumReaderLayout = forwardRef<PremiumReaderLayoutHandle, PremiumReaderL
       {isFullscreen && (
         <button
           onClick={toggleFullscreen}
-          title="Exit fullscreen (Esc)"
-          aria-label="Exit fullscreen"
+          title={t.premiumReaderExitFullscreenEsc}
+          aria-label={t.readerExitFullscreen}
           className="ndl-press fixed right-4 top-4 z-[60] flex h-10 w-10 items-center justify-center rounded-full bg-slate-950/80 text-base text-white shadow-lg backdrop-blur-sm transition-opacity duration-300 hover:bg-slate-950"
           style={{
             opacity: exitControlVisible ? 1 : 0,

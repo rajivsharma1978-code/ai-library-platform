@@ -32,6 +32,8 @@ import { getUploadedPdf } from "@/lib/uploadedPdfStore";
 import { getSpeechLanguage } from "@/lib/premium-reader/aiActions";
 import { loadVoices, pickVoiceForLanguage, stripMarkdownForSpeech, splitIntoSpeechChunks } from "@/lib/premium-reader/speech";
 import { useEnabledLanguages, LANGUAGE_NAME_TO_CODE } from "@/lib/languageSettings";
+import { UI_TEXT } from "@/lib/i18n";
+import { useLanguage } from "@/lib/useLanguage";
 
 const PdfBookSpread = dynamic(
   () => import("@/components/reader-premium/PdfBookSpread"),
@@ -417,6 +419,13 @@ export default function PremiumReaderPreviewContent() {
   // Rules of Hooks — used by the toolbar's LanguagePopover near the
   // bottom of this component.
   const enabledLanguageCodes = useEnabledLanguages();
+  // Platform-wide UI language (Phase D Task 5) — deliberately a separate
+  // concept from `language`/`setLanguage` above, which is the AI response
+  // / content language driven by LanguagePopover. This one only drives the
+  // Reader chrome's own labels (top row, controls strip, bottom bar,
+  // Contents modal). Named `uiLanguage` to avoid any collision with the
+  // existing `language` state.
+  const { language: uiLanguage } = useLanguage();
 
   // ── AI ────────────────────────────────────────────────────────────
   const [aiResponse, setAiResponse] = useState(
@@ -2032,10 +2041,12 @@ export default function PremiumReaderPreviewContent() {
     );
   }
 
-  const readLabel = speechState === "loading" ? "⏳ Preparing…"
-    : speechState === "speaking" ? "⏸ Pause"
-    : speechState === "paused"   ? "▶ Resume"
-    : "🔊 Read Page";
+  const t = UI_TEXT[uiLanguage];
+
+  const readLabel = speechState === "loading" ? `⏳ ${t.readerPreparing}`
+    : speechState === "speaking" ? `⏸ ${t.premiumReaderPause}`
+    : speechState === "paused"   ? `▶ ${t.premiumReaderResume}`
+    : `🔊 ${t.premiumReaderReadPage}`;
 
   // Printed-page label — the SAME pure lookup PdfBookSpread used to do
   // internally (Phase C3 moved the surrounding chrome, not the lookup
@@ -2105,7 +2116,7 @@ export default function PremiumReaderPreviewContent() {
               <div className="flex min-w-0 items-center gap-3">
                 <Link href="/library"
                   className={`ndl-press inline-flex ${fsBtnH} items-center gap-1 rounded-full bg-white px-3 ${fsBtnText} font-bold text-slate-700 shadow ring-1 ring-slate-200 hover:bg-amber-50`}>
-                  ← Back
+                  ← {t.commonBack}
                 </Link>
                 <h1 className={`truncate font-black text-slate-900 ${isFullscreenLayout ? "text-sm" : "text-base"}`}>{book}</h1>
               </div>
@@ -2127,27 +2138,27 @@ export default function PremiumReaderPreviewContent() {
           <div className={`mx-auto ${fsBarGapY} flex w-full max-w-[1340px] flex-shrink-0 flex-wrap items-center ${fsGroupGap} px-1`}>
             <div className="flex items-center gap-1.5">
               <button onClick={handleReadPage} disabled={speechState === "loading"}
-                title="Read the visible book page aloud"
+                title={t.premiumReaderReadPageTitle}
                 className={`ndl-press inline-flex ${fsBtnH} items-center gap-1.5 rounded-full bg-slate-900 px-4 ${fsBtnText} font-bold text-white shadow hover:bg-slate-800 disabled:opacity-50`}>
                 {readLabel}
               </button>
               {(speechState === "speaking" || speechState === "paused") && (
                 <button onClick={handleStopReadAloud}
-                  className={`ndl-press inline-flex ${fsBtnH} items-center gap-1.5 rounded-full bg-red-600 px-4 ${fsBtnText} font-bold text-white shadow hover:bg-red-700`}>⏹ Stop</button>
+                  className={`ndl-press inline-flex ${fsBtnH} items-center gap-1.5 rounded-full bg-red-600 px-4 ${fsBtnText} font-bold text-white shadow hover:bg-red-700`}>⏹ {t.premiumReaderStop}</button>
               )}
             </div>
             <span className="h-5 w-px bg-amber-200/70" />
 
             <div className="flex items-center gap-1.5">
               <button onClick={() => setZoom(z => Math.max(z - ZOOM_STEP, ZOOM_MIN))} disabled={zoom <= ZOOM_MIN}
-                title="Zoom out (or Ctrl/Cmd + scroll)"
+                title={t.premiumReaderZoomOutTitle}
                 className={`ndl-press inline-flex ${fsBtnH} ${fsSquareW} items-center justify-center rounded-full bg-amber-50/70 ${fsBtnText} font-bold text-slate-700 ring-1 ring-amber-100 hover:bg-amber-100 disabled:opacity-40`}>−</button>
               <span className="min-w-[40px] text-center text-xs font-bold tabular-nums text-slate-600 transition-all duration-150">{zoom}%</span>
               <button onClick={() => setZoom(z => Math.min(z + ZOOM_STEP, ZOOM_MAX))} disabled={zoom >= ZOOM_MAX}
-                title="Zoom in (or Ctrl/Cmd + scroll)"
+                title={t.premiumReaderZoomInTitle}
                 className={`ndl-press inline-flex ${fsBtnH} ${fsSquareW} items-center justify-center rounded-full bg-amber-50/70 ${fsBtnText} font-bold text-slate-700 ring-1 ring-amber-100 hover:bg-amber-100 disabled:opacity-40`}>+</button>
               <button onClick={fitScreen}
-                className={`ndl-press inline-flex ${fsBtnH} items-center rounded-full bg-amber-50/70 px-4 ${fsBtnText} font-bold text-slate-700 ring-1 ring-amber-100 hover:bg-amber-100`}>Fit</button>
+                className={`ndl-press inline-flex ${fsBtnH} items-center rounded-full bg-amber-50/70 px-4 ${fsBtnText} font-bold text-slate-700 ring-1 ring-amber-100 hover:bg-amber-100`}>{t.premiumReaderFit}</button>
             </div>
             <span className="h-5 w-px bg-amber-200/70" />
 
@@ -2155,11 +2166,11 @@ export default function PremiumReaderPreviewContent() {
               <input type="number" min={1}
                 value={goToInput}
                 onChange={(e) => setGoToInput(e.target.value)}
-                placeholder="Page #"
-                title="Go to a printed page number"
+                placeholder={t.premiumReaderGoToPagePlaceholder}
+                title={t.premiumReaderGoToPageTitle}
                 className={`${fsBtnH} w-20 rounded-full bg-white px-3 ${fsBtnText} text-slate-800 ring-1 ring-slate-200 outline-none transition-shadow focus:ring-2 focus:ring-amber-400`} />
               <button type="submit"
-                className={`ndl-press inline-flex ${fsBtnH} items-center rounded-full bg-amber-50/70 px-3 ${fsBtnText} font-bold text-slate-700 ring-1 ring-amber-100 hover:bg-amber-100`}>Go</button>
+                className={`ndl-press inline-flex ${fsBtnH} items-center rounded-full bg-amber-50/70 px-3 ${fsBtnText} font-bold text-slate-700 ring-1 ring-amber-100 hover:bg-amber-100`}>{t.premiumReaderGo}</button>
             </form>
             <span className="h-5 w-px bg-amber-200/70" />
 
@@ -2168,12 +2179,12 @@ export default function PremiumReaderPreviewContent() {
               <button onClick={() => toggleMode("text")}
                 className={`ndl-press inline-flex ${fsBtnH} items-center gap-1.5 rounded-full px-4 ${fsBtnText} font-bold ${
                   textSelectMode ? "bg-orange-600 text-white shadow" : "bg-amber-50/70 text-slate-700 ring-1 ring-amber-100 hover:bg-amber-100"}`}>
-                {textSelectMode ? "📖 Page Turn" : "📝 Text Select"}
+                {textSelectMode ? `📖 ${t.premiumReaderPageTurn}` : `📝 ${t.premiumReaderTextSelect}`}
               </button>
               <button onClick={() => toggleMode("image")}
                 className={`ndl-press inline-flex ${fsBtnH} items-center gap-1.5 rounded-full px-4 ${fsBtnText} font-bold ${
                   imageSelectMode ? "bg-slate-900 text-white shadow" : "bg-amber-50/70 text-slate-700 ring-1 ring-amber-100 hover:bg-amber-100"}`}>
-                {imageSelectMode ? "✕ Cancel" : "📐 Image Select"}
+                {imageSelectMode ? `✕ ${t.commonCancel}` : `📐 ${t.premiumReaderImageSelect}`}
               </button>
             </div>
             <span className="h-5 w-px bg-amber-200/70" />
@@ -2184,7 +2195,7 @@ export default function PremiumReaderPreviewContent() {
               <button onClick={toggleBookmarkCurrentPage}
                 className={`ndl-press inline-flex ${fsBtnH} items-center gap-1.5 rounded-full px-4 ${fsBtnText} font-bold ${
                   isCurrentPageBookmarked ? "bg-amber-500 text-white shadow" : "bg-amber-50/70 text-slate-700 ring-1 ring-amber-100 hover:bg-amber-100"}`}>
-                {isCurrentPageBookmarked ? "🔖 Bookmarked" : "🔖 Bookmark"}
+                {isCurrentPageBookmarked ? `🔖 ${t.premiumReaderBookmarked}` : `🔖 ${t.premiumReaderBookmark}`}
               </button>
               <LanguagePopover language={language} onLanguageChange={setLanguage} availableLanguages={availableToolbarLanguages} />
             </div>
@@ -2449,16 +2460,16 @@ export default function PremiumReaderPreviewContent() {
           <div style={{ flex: 1, minHeight: 0, position: "relative" }}>
             <button
               onClick={goPrev}
-              title="Previous"
-              aria-label="Previous page"
+              title={t.commonPrevious}
+              aria-label={t.premiumReaderPreviousPage}
               className="ndl-press absolute left-1 top-1/2 z-30 flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded-full bg-white/90 text-lg text-slate-700 shadow-lg ring-1 ring-amber-100 hover:bg-white"
             >
               ‹
             </button>
             <button
               onClick={goNext}
-              title="Next"
-              aria-label="Next page"
+              title={t.commonNext}
+              aria-label={t.premiumReaderNextPage}
               className="ndl-press absolute right-1 top-1/2 z-30 flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded-full bg-white/90 text-lg text-slate-700 shadow-lg ring-1 ring-amber-100 hover:bg-white"
             >
               ›
@@ -2506,7 +2517,7 @@ export default function PremiumReaderPreviewContent() {
                 onClick={() => setContentsOpen(true)}
                 className="ndl-press flex flex-shrink-0 items-center gap-1.5 rounded-full bg-amber-50 px-3 py-1.5 text-xs font-bold text-slate-700 hover:bg-amber-100"
               >
-                📚 Contents
+                📚 {t.premiumReaderContents}
               </button>
               <span className="flex-shrink-0 text-xs font-bold tabular-nums text-slate-500">
                 {displayLabel || `${readerPage} / ${totalPages}`}
@@ -2519,7 +2530,7 @@ export default function PremiumReaderPreviewContent() {
               </div>
               <button
                 onClick={() => layoutRef.current?.toggleFullscreen()}
-                title={isFullscreenLayout ? "Exit fullscreen" : "Fullscreen"}
+                title={isFullscreenLayout ? t.readerExitFullscreen : t.readerFullscreen}
                 className="ndl-press flex-shrink-0 flex h-7 w-7 items-center justify-center rounded-full bg-amber-50 text-xs text-slate-700 hover:bg-amber-100"
               >
                 ⛶
@@ -2547,13 +2558,13 @@ export default function PremiumReaderPreviewContent() {
                 {currentBook.author && <p className="mt-1 text-sm text-slate-500">{currentBook.author}</p>}
                 {currentBook.description && <p className="mt-4 text-sm leading-6 text-slate-600">{currentBook.description}</p>}
                 <div className="mt-5 rounded-2xl bg-amber-50 p-4">
-                  <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Book Details</p>
-                  <p className="mt-2 text-sm text-slate-700">Pages: {currentBook.pages}</p>
-                  {currentBook.language && <p className="mt-1 text-sm text-slate-700">Language: {currentBook.language}</p>}
+                  <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">{t.premiumReaderBookDetails}</p>
+                  <p className="mt-2 text-sm text-slate-700">{t.readerPages}: {currentBook.pages}</p>
+                  {currentBook.language && <p className="mt-1 text-sm text-slate-700">{t.language}: {currentBook.language}</p>}
                 </div>
                 <a href={currentBook.pdf} target="_blank" rel="noopener noreferrer"
                   className="ndl-press mt-5 inline-block rounded-xl bg-orange-600 px-5 py-2.5 text-sm font-bold text-white hover:bg-orange-700">
-                  Open PDF
+                  {t.premiumReaderOpenPdf}
                 </a>
               </div>
             </div>
