@@ -31,11 +31,14 @@ type Card = {
   createdAt: number;
 };
 
-const SOURCE_META: Record<CardSource, { label: string; classes: string }> = {
-  highlight: { label: "Highlight",   classes: "bg-amber-100 text-amber-700" },
-  note:      { label: "Note",        classes: "bg-blue-100 text-blue-700" },
-  legacy:    { label: "Legacy Note", classes: "bg-slate-200 text-slate-600" },
-  demo:      { label: "Demo",        classes: "bg-amber-100 text-amber-700" },
+// `label` is resolved from UI_TEXT inside the component (see
+// `sourceMeta` below) — this map now only holds the language-independent
+// `classes` styling.
+const SOURCE_META: Record<CardSource, { classes: string }> = {
+  highlight: { classes: "bg-amber-100 text-amber-700" },
+  note:      { classes: "bg-blue-100 text-blue-700" },
+  legacy:    { classes: "bg-slate-200 text-slate-600" },
+  demo:      { classes: "bg-amber-100 text-amber-700" },
 };
 
 function readArray<T>(key: string): T[] {
@@ -65,7 +68,10 @@ type SourceFilter = "all" | CardSource;
 export default function FlashcardsPage() {
   const { language } = useLanguage();
   const t = UI_TEXT[language];
-  const isEn = t.navLibrary === "Library";
+  const sourceLabels: Record<CardSource, string> = {
+    highlight: t.flashcardsSourceHighlight, note: t.flashcardsSourceNote,
+    legacy: t.flashcardsSourceLegacyNote, demo: t.commonDemo,
+  };
 
   const [mounted, setMounted] = useState(false);
   const [highlights, setHighlights] = useState<StoredHighlightLite[]>([]);
@@ -91,7 +97,7 @@ export default function FlashcardsPage() {
   const allCards: Card[] = useMemo(() => {
     const fromHighlights: Card[] = highlights.map(h => ({
       id: `h-${h.id}`,
-      front: isEn ? `What does this highlighted passage explain?` : `यह हाइलाइट किया गया अंश क्या बताता है?`,
+      front: t.flashcardsFrontHighlightPrompt,
       back: h.selectedText,
       bookTitle: findBookTitle(h.bookId),
       page: h.page,
@@ -101,7 +107,7 @@ export default function FlashcardsPage() {
 
     const fromNotes: Card[] = notes.map(n => ({
       id: `n-${n.id}`,
-      front: isEn ? `“${truncate(n.selectedText, 90)}”` : `"${truncate(n.selectedText, 90)}"`,
+      front: `“${truncate(n.selectedText, 90)}”`,
       back: n.note,
       bookTitle: findBookTitle(n.bookId),
       page: n.page,
@@ -111,7 +117,7 @@ export default function FlashcardsPage() {
 
     const fromLegacy: Card[] = legacyNotes.map(n => ({
       id: `legacy-${n.id}`,
-      front: isEn ? `What is the key idea from ${n.chapter || n.bookTitle}?` : `${n.chapter || n.bookTitle} का मुख्य विचार क्या है?`,
+      front: t.flashcardsFrontLegacyPrompt.replace("{topic}", n.chapter || n.bookTitle),
       back: n.text,
       bookTitle: n.bookTitle,
       source: "legacy",
@@ -120,7 +126,7 @@ export default function FlashcardsPage() {
 
     const merged = [...fromHighlights, ...fromNotes, ...fromLegacy].sort((a, b) => b.createdAt - a.createdAt);
     return merged.length > 0 ? merged : DEMO_CARDS;
-  }, [highlights, notes, legacyNotes, isEn]);
+  }, [highlights, notes, legacyNotes, t]);
 
   const usingDemo = allCards === DEMO_CARDS;
 
@@ -170,34 +176,32 @@ export default function FlashcardsPage() {
     return (
       <main className="min-h-screen bg-[radial-gradient(circle_at_top,#fff8e8_0%,#f3e6c8_45%,#eaddc0_100%)] p-6">
         <div className="mx-auto max-w-4xl animate-pulse text-sm font-semibold text-slate-400">
-          {isEn ? "Loading flashcards…" : "फ्लैशकार्ड लोड हो रहे हैं…"}
+          {t.flashcardsLoading}
         </div>
       </main>
     );
   }
 
   const sourceOptions: { key: SourceFilter; label: string }[] = [
-    { key: "all", label: isEn ? "All Sources" : "सभी स्रोत" },
-    { key: "highlight", label: "⭐ " + SOURCE_META.highlight.label },
-    { key: "note", label: "📝 " + SOURCE_META.note.label },
-    { key: "legacy", label: "🗂 " + SOURCE_META.legacy.label },
-    { key: "demo", label: "✨ " + SOURCE_META.demo.label },
+    { key: "all", label: t.flashcardsAllSources },
+    { key: "highlight", label: "⭐ " + sourceLabels.highlight },
+    { key: "note", label: "📝 " + sourceLabels.note },
+    { key: "legacy", label: "🗂 " + sourceLabels.legacy },
+    { key: "demo", label: "✨ " + sourceLabels.demo },
   ];
 
   return (
     <main className="min-h-screen bg-[radial-gradient(circle_at_top,#fff8e8_0%,#f3e6c8_45%,#eaddc0_100%)] p-6">
       <div className="mx-auto max-w-4xl">
         <PageHeader
-          title={isEn ? "Flashcards" : "फ्लैशकार्ड"}
-          subtitle={isEn ? "Click a card to reveal the answer." : "उत्तर देखने के लिए कार्ड पर क्लिक करें।"}
-          homeLabel={isEn ? "Home" : "होम"}
+          title={t.commonFlashcards}
+          subtitle={t.flashcardsPageSubtitle}
+          homeLabel={t.commonHome}
         />
 
         {usingDemo && (
           <InfoCard tone="amber" className="mb-6 py-3 text-sm font-semibold">
-            {isEn
-              ? "📌 Showing demo flashcards — highlight text or add notes in the Reader to generate your own."
-              : "📌 डेमो फ्लैशकार्ड दिखाए जा रहे हैं — अपने खुद के बनाने के लिए रीडर में टेक्स्ट हाइलाइट करें या नोट्स जोड़ें।"}
+            {t.flashcardsDemoBanner}
           </InfoCard>
         )}
 
@@ -205,7 +209,7 @@ export default function FlashcardsPage() {
         <SearchBar
           value={search}
           onChange={setSearch}
-          placeholder={isEn ? "Search flashcards, book title…" : "फ्लैशकार्ड, पुस्तक शीर्षक खोजें…"}
+          placeholder={t.flashcardsSearchPlaceholder}
           className="mb-4"
         />
 
@@ -218,7 +222,7 @@ export default function FlashcardsPage() {
               onChange={(e) => setBookFilter(e.target.value)}
               className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm outline-none focus:ring-2 focus:ring-amber-400"
             >
-              <option value="">{isEn ? "All Books" : "सभी किताबें"}</option>
+              <option value="">{t.flashcardsAllBooks}</option>
               {uniqueBooks.map(b => <option key={b} value={b}>{b}</option>)}
             </select>
           )}
@@ -232,9 +236,9 @@ export default function FlashcardsPage() {
         ) : (
           <>
             <div className="mb-3 flex items-center justify-between text-xs font-bold text-slate-400">
-              <span>{isEn ? "Card" : "कार्ड"} {cursor + 1} {isEn ? "of" : "में से"} {visibleCards.length}</span>
+              <span>{cursor + 1} {t.commonOf} {visibleCards.length}</span>
               <span className={`rounded-full px-2.5 py-1 ${SOURCE_META[current.source].classes}`}>
-                {SOURCE_META[current.source].label}
+                {sourceLabels[current.source]}
               </span>
             </div>
 
@@ -243,24 +247,24 @@ export default function FlashcardsPage() {
               className="min-h-64 w-full rounded-3xl bg-white p-8 text-left shadow-[0_20px_60px_rgba(75,45,12,0.10)] ring-1 ring-black/5 hover:shadow-[0_20px_60px_rgba(75,45,12,0.16)] transition-shadow"
             >
               <p className="text-xs font-semibold text-slate-400">
-                📖 {current.bookTitle}{current.page ? ` · ${isEn ? "Page" : "पृष्ठ"} ${current.page}` : ""}
+                📖 {current.bookTitle}{current.page ? ` · ${t.commonPage} ${current.page}` : ""}
               </p>
 
               {!flipped ? (
                 <>
                   <h2 className="mt-4 text-xl font-bold text-slate-900">{current.front}</h2>
                   <p className="mt-6 text-sm text-slate-400">
-                    {isEn ? "Tap to reveal answer" : "उत्तर देखने के लिए टैप करें"}
+                    {t.flashcardsTapToReveal}
                   </p>
                 </>
               ) : (
                 <>
                   <p className="mt-4 text-xs font-bold uppercase tracking-wide text-emerald-600">
-                    {isEn ? "Answer" : "उत्तर"}
+                    {t.flashcardsAnswerLabel}
                   </p>
                   <p className="mt-2 text-lg leading-7 text-slate-800">{current.back}</p>
                   <p className="mt-6 text-sm text-slate-400">
-                    {isEn ? "Tap to flip back" : "वापस पलटने के लिए टैप करें"}
+                    {t.flashcardsTapToFlipBack}
                   </p>
                 </>
               )}
@@ -272,14 +276,14 @@ export default function FlashcardsPage() {
                 disabled={cursor === 0}
                 className="rounded-full bg-slate-950 px-6 py-2.5 text-sm font-bold text-white disabled:opacity-30"
               >
-                ← {isEn ? "Previous" : "पिछला"}
+                ← {t.commonPrevious}
               </button>
               <button
                 onClick={goNext}
                 disabled={cursor >= visibleCards.length - 1}
                 className="rounded-full bg-slate-950 px-6 py-2.5 text-sm font-bold text-white disabled:opacity-30"
               >
-                {isEn ? "Next" : "अगला"} →
+                {t.commonNext} →
               </button>
             </div>
           </>

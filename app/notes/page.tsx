@@ -110,7 +110,6 @@ export default function NotesPage() {
     setHydrated(true);
   }, []);
   const t = UI_TEXT[hydrated ? language : "en"];
-  const isEn = t.navLibrary === "Library";
   const [notes, setNotes] = useState<StoredNoteLite[]>([]);
   const [highlights, setHighlights] = useState<StoredHighlightLite[]>([]);
   const [bookmarks, setBookmarks] = useState<StoredBookmarkLite[]>([]);
@@ -205,10 +204,10 @@ export default function NotesPage() {
   }
 
   const filterOptions: { key: FilterTab; label: string }[] = [
-    { key: "all", label: isEn ? "All Notes" : "सभी नोट्स" },
-    { key: "ai", label: isEn ? "✨ AI-Improved" : "✨ एआई-सुधारित" },
-    { key: "book", label: isEn ? "📚 By Book" : "📚 पुस्तक अनुसार" },
-    { key: "recent", label: isEn ? "🕐 Recent" : "🕐 हाल के" },
+    { key: "all", label: t.notesFilterAll },
+    { key: "ai", label: `✨ ${t.notesAiImproved}` },
+    { key: "book", label: `📚 ${t.notesFilterByBook}` },
+    { key: "recent", label: `🕐 ${t.notesFilterRecent}` },
   ];
 
   return (
@@ -216,34 +215,30 @@ export default function NotesPage() {
       <div className="mx-auto max-w-6xl">
 
         <PageHeader
-          title={t.aiF2Title}
-          subtitle={isEn
-            ? "Every note you've saved from the Reader, in one polished place."
-            : "रीडर से सहेजे गए आपके सभी नोट्स, एक ही जगह पर।"}
-          homeLabel={isEn ? "Home" : "होम"}
+          title={t.notesPageTitle}
+          subtitle={t.notesPageSubtitle}
+          homeLabel={t.commonHome}
         />
 
         {usingDemo && (
           <InfoCard tone="amber" className="mb-6 py-3 text-sm font-semibold">
-            {isEn
-              ? "📌 Showing polished demo notes — select text in the Reader and tap 📝 Add Note to create your own."
-              : "📌 डेमो नोट्स दिखाए जा रहे हैं — रीडर में टेक्स्ट चुनें और अपना नोट बनाने के लिए 📝 पर टैप करें।"}
+            {t.notesDemoBanner}
           </InfoCard>
         )}
 
         {/* 1. Notes overview cards */}
         <div className="mb-8 grid grid-cols-2 gap-4 md:grid-cols-4">
-          <StatCard label={isEn ? "Total Notes" : "कुल नोट्स"} value={stats.total} />
-          <StatCard label={isEn ? "✨ AI-Improved" : "✨ एआई-सुधारित"} value={stats.aiImproved} />
-          <StatCard label={isEn ? "📚 Books with Notes" : "📚 नोट्स वाली किताबें"} value={stats.booksWithNotes} />
-          <StatCard label={isEn ? "🕐 Recent (7 days)" : "🕐 हाल के (7 दिन)"} value={stats.recent} />
+          <StatCard label={t.notesStatTotal} value={stats.total} />
+          <StatCard label={`✨ ${t.notesAiImproved}`} value={stats.aiImproved} />
+          <StatCard label={`📚 ${t.notesStatBooksWithNotes}`} value={stats.booksWithNotes} />
+          <StatCard label={`🕐 ${t.notesStatRecent}`} value={stats.recent} />
         </div>
 
         {/* 3. Search */}
         <SearchBar
           value={search}
           onChange={setSearch}
-          placeholder={isEn ? "Search by book, highlighted text, or your note…" : "किताब, हाइलाइट किए गए टेक्स्ट या नोट से खोजें…"}
+          placeholder={t.notesSearchPlaceholder}
           className="mb-4"
         />
 
@@ -256,7 +251,7 @@ export default function NotesPage() {
               onChange={(e) => setBookFilter(e.target.value)}
               className="rounded-full bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm ring-1 ring-slate-200 outline-none focus:ring-2 focus:ring-amber-400"
             >
-              <option value="">{isEn ? "Choose a book…" : "एक किताब चुनें…"}</option>
+              <option value="">{t.notesChooseBook}</option>
               {uniqueBooks.map(b => (
                 <option key={b.id} value={b.id}>{b.title}</option>
               ))}
@@ -286,7 +281,7 @@ export default function NotesPage() {
                         <h2 className="text-lg font-bold text-slate-900">{book?.title ?? n.bookId}</h2>
                         {n.aiImproved && (
                           <span className="rounded-full bg-blue-100 px-2.5 py-0.5 text-[11px] font-bold text-blue-700">
-                            ✨ {isEn ? "AI-Improved" : "एआई-सुधारित"}
+                            ✨ {t.notesAiImproved}
                           </span>
                         )}
                         {linkedHighlight && (
@@ -296,13 +291,13 @@ export default function NotesPage() {
                           <span className="rounded-full bg-slate-100 px-2.5 py-0.5 text-[11px] font-bold text-slate-600">🔖</span>
                         )}
                         {isDemo && (
-                          <span className="rounded-full bg-slate-100 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-slate-500">demo</span>
+                          <span className="rounded-full bg-slate-100 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-slate-500">{t.commonDemo}</span>
                         )}
                       </div>
-                      <p className="text-sm text-slate-500">{isEn ? "Page" : "पृष्ठ"} {n.page}</p>
+                      <p className="text-sm text-slate-500">{t.commonPage} {n.page}</p>
                     </div>
                     <p className="text-xs text-slate-400">
-                      {isEn ? "Saved on" : "सहेजा गया"} {new Date(n.createdAt).toLocaleDateString()}
+                      {t.notesSavedOn} {new Date(n.createdAt).toLocaleDateString()}
                     </p>
                   </div>
 
@@ -320,10 +315,10 @@ export default function NotesPage() {
                       />
                       <div className="mt-2 flex gap-2">
                         <AppButton onClick={() => saveEdit(n.id)} size="sm">
-                          {isEn ? "Save" : "सहेजें"}
+                          {t.commonSave}
                         </AppButton>
                         <AppButton onClick={() => setEditingId(null)} variant="secondary" size="sm">
-                          {isEn ? "Cancel" : "रद्द करें"}
+                          {t.commonCancel}
                         </AppButton>
                       </div>
                     </div>
@@ -334,25 +329,25 @@ export default function NotesPage() {
                   {!isEditing && (
                     <div className="mt-4 flex flex-wrap gap-2">
                       <AppButton href={`/reader-premium?book=${n.bookId}`} size="sm">
-                        📖 {isEn ? "Open Page" : "पेज खोलें"}
+                        📖 {t.notesOpenPage}
                       </AppButton>
                       <AppButton
                         onClick={() => startEdit(n)}
                         disabled={isDemo}
-                        title={isDemo ? (isEn ? "Demo note — not editable" : "डेमो नोट — संपादन योग्य नहीं") : undefined}
+                        title={isDemo ? t.notesDemoNoteNotEditable : undefined}
                         variant="secondary"
                         size="sm"
                       >
-                        ✏️ {isEn ? "Edit Note" : "नोट संपादित करें"}
+                        ✏️ {t.notesEditNote}
                       </AppButton>
                       <AppButton
                         onClick={() => deleteNote(n.id)}
                         disabled={isDemo}
-                        title={isDemo ? (isEn ? "Demo note — not deletable" : "डेमो नोट — हटाने योग्य नहीं") : undefined}
+                        title={isDemo ? t.notesDemoNoteNotDeletable : undefined}
                         variant="danger"
                         size="sm"
                       >
-                        🗑 {isEn ? "Delete" : "हटाएं"}
+                        🗑 {t.notesDelete}
                       </AppButton>
                     </div>
                   )}

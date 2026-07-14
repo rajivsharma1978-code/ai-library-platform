@@ -58,7 +58,6 @@ const DEMO_WEEK_COUNTS = [2, 4, 1, 5, 3, 6, 4];
 export default function AnalyticsPage() {
   const { language } = useLanguage();
   const t = UI_TEXT[language];
-  const isEn = t.navLibrary === "Library";
 
   const [mounted, setMounted] = useState(false);
   const [highlights, setHighlights] = useState<StoredHighlightLite[]>([]);
@@ -181,7 +180,7 @@ export default function AnalyticsPage() {
     return (
       <main className="min-h-screen bg-[radial-gradient(circle_at_top,#fff8e8_0%,#f3e6c8_45%,#eaddc0_100%)] p-10">
         <div className="mx-auto max-w-7xl animate-pulse text-sm font-semibold text-slate-400">
-          {isEn ? "Loading your analytics…" : "आपका विश्लेषण लोड हो रहा है…"}
+          {t.analyticsLoading}
         </div>
       </main>
     );
@@ -191,29 +190,25 @@ export default function AnalyticsPage() {
     <main className="min-h-screen bg-[radial-gradient(circle_at_top,#fff8e8_0%,#f3e6c8_45%,#eaddc0_100%)] px-6 py-10">
       <div className="max-w-7xl mx-auto">
         <PageHeader
-          title={isEn ? "Learning Analytics" : "शिक्षण विश्लेषण"}
-          subtitle={isEn
-            ? "Track reading progress, AI interactions, learning patterns, revision performance, and knowledge growth."
-            : "पठन प्रगति, एआई इंटरैक्शन, सीखने के पैटर्न, पुनरीक्षण प्रदर्शन और ज्ञान वृद्धि को ट्रैक करें।"}
+          title={t.analyticsPageTitle}
+          subtitle={t.analyticsPageSubtitle}
           homeLabel={t.navLibrary}
         />
 
         {!hasRealData && (
           <InfoCard tone="amber" className="mb-6 py-3 text-sm font-semibold">
-            {isEn
-              ? "📌 Showing polished demo analytics — read, highlight, and note in the Reader to see your real stats here."
-              : "📌 डेमो विश्लेषण दिखाया जा रहा है — अपने असली आंकड़े देखने के लिए रीडर में पढ़ें, हाइलाइट करें और नोट्स लें।"}
+            {t.analyticsDemoBanner}
           </InfoCard>
         )}
 
         {/* 1. Overview cards */}
         <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-6">
-          <StatCard icon="📖" label={isEn ? "Books Opened" : "खोली गई किताबें"} value={overview.booksOpened} badge={usingDemoBooksOpened ? "demo" : undefined} />
-          <StatCard icon="⭐" label={isEn ? "Highlights" : "हाइलाइट्स"} value={overview.highlights} />
-          <StatCard icon="📝" label={isEn ? "Notes" : "नोट्स"} value={overview.notes} />
-          <StatCard icon="🔖" label={isEn ? "Bookmarks" : "बुकमार्क"} value={overview.bookmarks} />
-          <StatCard icon="🤖" label={isEn ? "AI Questions" : "एआई प्रश्न"} value={overview.aiQuestions} />
-          <StatCard icon="🏆" label={isEn ? "Quiz Score" : "क्विज़ स्कोर"} value={overview.quizScore} />
+          <StatCard icon="📖" label={t.analyticsStatBooksOpened} value={overview.booksOpened} badge={usingDemoBooksOpened ? t.commonDemo : undefined} />
+          <StatCard icon="⭐" label={t.myLibraryHighlights} value={overview.highlights} />
+          <StatCard icon="📝" label={t.navNotes} value={overview.notes} />
+          <StatCard icon="🔖" label={t.myLibraryBookmarks} value={overview.bookmarks} />
+          <StatCard icon="🤖" label={t.analyticsStatAiQuestions} value={overview.aiQuestions} />
+          <StatCard icon="🏆" label={t.analyticsStatQuizScore} value={overview.quizScore} />
         </div>
 
         <div className="mt-10 grid gap-8 lg:grid-cols-3">
@@ -222,8 +217,8 @@ export default function AnalyticsPage() {
             {/* 2. Reading progress */}
             <InfoCard>
               <div className="mb-5 flex items-center justify-between">
-                <h2 className="text-2xl font-black text-slate-950">{isEn ? "Reading Progress" : "पठन प्रगति"}</h2>
-                {usingDemoProgress && <span className="rounded-full bg-amber-100 px-3 py-1 text-[10px] font-bold uppercase text-amber-700">demo</span>}
+                <h2 className="text-2xl font-black text-slate-950">{t.analyticsReadingProgressTitle}</h2>
+                {usingDemoProgress && <span className="rounded-full bg-amber-100 px-3 py-1 text-[10px] font-bold uppercase text-amber-700">{t.commonDemo}</span>}
               </div>
               <div className="space-y-5">
                 {readingProgressList.map(item => (
@@ -231,10 +226,10 @@ export default function AnalyticsPage() {
                     <div className="mb-2 flex items-center justify-between">
                       <div>
                         <p className="font-semibold text-slate-800">{item.book?.title ?? item.bookId}</p>
-                        <p className="text-xs text-slate-400">{item.pagesRead} / {item.totalPages} {isEn ? "pages" : "पृष्ठ"} · {item.pct}%</p>
+                        <p className="text-xs text-slate-400">{item.pagesRead} / {item.totalPages} {t.catalogPages} · {item.pct}%</p>
                       </div>
                       <AppButton href={`/reader-premium?book=${item.bookId}`} size="sm">
-                        {isEn ? "Continue Reading" : "पढ़ना जारी रखें"}
+                        {t.continueReading}
                       </AppButton>
                     </div>
                     <div className="bg-slate-200 rounded-full h-4">
@@ -248,11 +243,11 @@ export default function AnalyticsPage() {
             {/* 3. Study activity */}
             <InfoCard>
               <div className="mb-5 flex items-center justify-between">
-                <h2 className="text-2xl font-black text-slate-950">{isEn ? "Study Activity" : "अध्ययन गतिविधि"}</h2>
-                {usingDemoActivity && <span className="rounded-full bg-amber-100 px-3 py-1 text-[10px] font-bold uppercase text-amber-700">demo</span>}
+                <h2 className="text-2xl font-black text-slate-950">{t.analyticsStudyActivityTitle}</h2>
+                {usingDemoActivity && <span className="rounded-full bg-amber-100 px-3 py-1 text-[10px] font-bold uppercase text-amber-700">{t.commonDemo}</span>}
               </div>
               {usingDemoActivity ? (
-                <p className="text-slate-500">{isEn ? "No activity yet — start reading to build your timeline." : "अभी तक कोई गतिविधि नहीं — अपनी समयरेखा बनाने के लिए पढ़ना शुरू करें।"}</p>
+                <p className="text-slate-500">{t.analyticsNoActivityYet}</p>
               ) : (
                 <div className="space-y-1">
                   {studyActivity.map((a, i) => (
@@ -272,8 +267,8 @@ export default function AnalyticsPage() {
             {/* 6. Weekly learning chart */}
             <InfoCard>
               <div className="mb-5 flex items-center justify-between">
-                <h2 className="text-2xl font-black text-slate-950">{isEn ? "Weekly Learning" : "साप्ताहिक शिक्षण"}</h2>
-                {usingDemoWeek && <span className="rounded-full bg-amber-100 px-3 py-1 text-[10px] font-bold uppercase text-amber-700">demo</span>}
+                <h2 className="text-2xl font-black text-slate-950">{t.analyticsWeeklyLearningTitle}</h2>
+                {usingDemoWeek && <span className="rounded-full bg-amber-100 px-3 py-1 text-[10px] font-bold uppercase text-amber-700">{t.commonDemo}</span>}
               </div>
               <div className="flex items-end justify-between gap-3" style={{ height: 160 }}>
                 {weekCounts.map((c, i) => (
@@ -296,8 +291,8 @@ export default function AnalyticsPage() {
             {/* 4. Weak topics */}
             <InfoCard className="p-6">
               <div className="mb-4 flex items-center justify-between">
-                <h2 className="text-lg font-black text-slate-950">{isEn ? "Weak Topics" : "कमजोर विषय"}</h2>
-                {usingDemoWeakTopics && <span className="rounded-full bg-amber-100 px-2.5 py-0.5 text-[10px] font-bold uppercase text-amber-700">demo</span>}
+                <h2 className="text-lg font-black text-slate-950">{t.commonWeakTopics}</h2>
+                {usingDemoWeakTopics && <span className="rounded-full bg-amber-100 px-2.5 py-0.5 text-[10px] font-bold uppercase text-amber-700">{t.commonDemo}</span>}
               </div>
               <div className="flex flex-wrap gap-2">
                 {topics.map(topic => (
@@ -305,21 +300,21 @@ export default function AnalyticsPage() {
                 ))}
               </div>
               <Link href="/revision" className="mt-4 inline-block text-xs font-bold text-blue-600 hover:underline">
-                {isEn ? "Practice these in Revision →" : "पुनरीक्षण में अभ्यास करें →"}
+                {t.analyticsPracticeInRevision}
               </Link>
             </InfoCard>
 
             {/* 5. Language usage (demo data acceptable) */}
             <InfoCard className="p-6">
               <div className="mb-4 flex items-center justify-between">
-                <h2 className="text-lg font-black text-slate-950">{isEn ? "Language Usage" : "भाषा उपयोग"}</h2>
-                <span className="rounded-full bg-amber-100 px-2.5 py-0.5 text-[10px] font-bold uppercase text-amber-700">demo</span>
+                <h2 className="text-lg font-black text-slate-950">{t.analyticsLanguageUsageTitle}</h2>
+                <span className="rounded-full bg-amber-100 px-2.5 py-0.5 text-[10px] font-bold uppercase text-amber-700">{t.commonDemo}</span>
               </div>
               <div className="space-y-3">
                 {DEMO_LANGUAGE_USAGE.map(l => (
                   <div key={l.lang}>
                     <div className="mb-1 flex items-center justify-between text-xs font-semibold text-slate-600">
-                      <span>{l.lang}</span><span>{l.pct}%</span>
+                      <span>{l.lang === "Other" ? t.commonOther : l.lang}</span><span>{l.pct}%</span>
                     </div>
                     <div className="h-2.5 rounded-full bg-slate-100">
                       <div className="h-2.5 rounded-full bg-amber-500" style={{ width: `${l.pct}%` }} />
@@ -331,15 +326,15 @@ export default function AnalyticsPage() {
 
             {/* Quiz track record */}
             <InfoCard tone="dark" className="p-6">
-              <h2 className="text-lg font-black">{isEn ? "Quiz Track Record" : "क्विज़ रिकॉर्ड"}</h2>
+              <h2 className="text-lg font-black">{t.quizTrackRecordTitle}</h2>
               <div className="mt-4 grid grid-cols-2 gap-4">
                 <div>
                   <p className="text-3xl font-bold">{quizScore}</p>
-                  <p className="text-xs text-slate-400">{isEn ? "Score" : "स्कोर"}</p>
+                  <p className="text-xs text-slate-400">{t.commonScore}</p>
                 </div>
                 <div>
                   <p className="text-3xl font-bold">{completedQuizzes}</p>
-                  <p className="text-xs text-slate-400">{isEn ? "Completed" : "पूर्ण"}</p>
+                  <p className="text-xs text-slate-400">{t.myBooksCompleted}</p>
                 </div>
               </div>
             </InfoCard>

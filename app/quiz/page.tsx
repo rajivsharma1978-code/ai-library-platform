@@ -2,6 +2,11 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { UI_TEXT } from "@/lib/i18n";
+
+// Widened to plain `string` per key (rather than the literal English
+// values `typeof UI_TEXT.en` would infer) so this type accepts `t` for
+// any of the six languages, not just English.
+type UIText = { [K in keyof typeof UI_TEXT["en"]]: string };
 import { useLanguage } from "@/lib/useLanguage";
 import { directorBooks } from "@/lib/directorBooks";
 import { trackAIUsage, logActivity } from "@/components/admin/adminData";
@@ -242,7 +247,6 @@ const TIMER_SECONDS_PER_QUESTION = 30;
 export default function QuizPage() {
   const { language } = useLanguage();
   const t = UI_TEXT[language];
-  const isEn = t.navLibrary === "Library";
 
   const [mounted, setMounted] = useState(false);
   const [highlights, setHighlights] = useState<StoredHighlightLite[]>([]);
@@ -378,11 +382,11 @@ export default function QuizPage() {
         }),
       });
       const data = await res.json();
-      setExplanations(prev => ({ ...prev, [q.id]: data.answer || (isEn ? "No explanation available." : "कोई स्पष्टीकरण उपलब्ध नहीं।") }));
+      setExplanations(prev => ({ ...prev, [q.id]: data.answer || t.quizNoExplanationAvailable }));
       trackAIUsage("explain");
       logActivity("ai", `AI explained a quiz answer for "${q.item.bookTitle}"`);
     } catch {
-      setExplanations(prev => ({ ...prev, [q.id]: isEn ? "Could not fetch an explanation right now." : "अभी स्पष्टीकरण प्राप्त नहीं हो सका।" }));
+      setExplanations(prev => ({ ...prev, [q.id]: t.quizExplanationFetchError }));
     } finally {
       setExplaining(null);
     }
@@ -392,7 +396,7 @@ export default function QuizPage() {
     return (
       <main className="min-h-screen bg-[radial-gradient(circle_at_top,#fff8e8_0%,#f3e6c8_45%,#eaddc0_100%)] p-6">
         <div className="mx-auto max-w-4xl animate-pulse text-sm font-semibold text-slate-400">
-          {isEn ? "Loading quiz workspace…" : "क्विज़ वर्कस्पेस लोड हो रहा है…"}
+          {t.quizLoadingWorkspace}
         </div>
       </main>
     );
@@ -402,24 +406,24 @@ export default function QuizPage() {
   const currentAnswer = answers[cursor];
 
   const sourceOptions: { key: QuizSourceKey; label: string }[] = [
-    { key: "all", label: isEn ? "📚 Entire Study Material" : "📚 संपूर्ण अध्ययन सामग्री" },
-    { key: "highlights", label: isEn ? "⭐ Highlights" : "⭐ हाइलाइट्स" },
-    { key: "notes", label: isEn ? "📝 Notes" : "📝 नोट्स" },
-    { key: "current", label: isEn ? "📖 Current Book" : "📖 वर्तमान पुस्तक" },
+    { key: "all", label: t.quizSourceAll },
+    { key: "highlights", label: t.quizSourceHighlights },
+    { key: "notes", label: t.quizSourceNotes },
+    { key: "current", label: t.quizSourceCurrent },
   ];
   const difficultyOptions: { key: Difficulty; label: string }[] = [
-    { key: "easy", label: isEn ? "🟢 Easy" : "🟢 आसान" },
-    { key: "medium", label: isEn ? "🟡 Medium" : "🟡 मध्यम" },
-    { key: "hard", label: isEn ? "🔴 Hard" : "🔴 कठिन" },
+    { key: "easy", label: t.quizDifficultyEasy },
+    { key: "medium", label: t.quizDifficultyMedium },
+    { key: "hard", label: t.quizDifficultyHard },
   ];
 
   return (
     <main className="min-h-screen bg-[radial-gradient(circle_at_top,#fff8e8_0%,#f3e6c8_45%,#eaddc0_100%)] p-6">
       <div className="mx-auto max-w-4xl">
         <PageHeader
-          title={isEn ? "Quiz" : "क्विज़"}
-          subtitle={isEn ? "A premium AI-powered assessment, built from your study material." : "आपकी अध्ययन सामग्री से बना एक प्रीमियम एआई-संचालित मूल्यांकन।"}
-          homeLabel={isEn ? "Home" : "होम"}
+          title={t.quizPageTitle}
+          subtitle={t.quizPageSubtitle}
+          homeLabel={t.commonHome}
         />
 
         {/* ── SETUP ─────────────────────────────────────────────────── */}
@@ -427,13 +431,11 @@ export default function QuizPage() {
           <InfoCard className="p-8">
             {studyItems.length === 0 && (
               <InfoCard tone="amber" className="mb-6 py-3 text-sm font-semibold">
-                {isEn
-                  ? "📌 No study data yet — Start Quiz will show a polished demo quiz. Highlight text or add notes in the Reader to build your own."
-                  : "📌 अभी तक कोई अध्ययन डेटा नहीं — क्विज़ शुरू करने पर डेमो क्विज़ दिखेगा। अपनी खुद की सामग्री बनाने के लिए रीडर में हाइलाइट करें या नोट्स जोड़ें।"}
+                {t.quizNoStudyDataBanner}
               </InfoCard>
             )}
 
-            <h2 className="text-lg font-black text-slate-950">{isEn ? "Quiz Source" : "क्विज़ स्रोत"}</h2>
+            <h2 className="text-lg font-black text-slate-950">{t.quizSourceLabel}</h2>
             <div className="mt-3">
               <FilterBar options={sourceOptions} active={sourceKey} onChange={setSourceKey} />
             </div>
@@ -448,15 +450,13 @@ export default function QuizPage() {
                 </select>
                 {studyItems.filter(i => i.bookId === (currentBookId || catalogBooks[0].id)).length === 0 && (
                   <p className="mt-2 text-xs text-slate-400">
-                    {isEn
-                      ? "No highlights or notes for this book yet — Start Quiz will use its description and a demo fallback."
-                      : "इस किताब के लिए अभी तक कोई हाइलाइट या नोट्स नहीं — क्विज़ इसके विवरण और डेमो फ़ॉलबैक का उपयोग करेगी।"}
+                    {t.quizNoDataForBook}
                   </p>
                 )}
               </>
             )}
 
-            <h2 className="mt-8 text-lg font-black text-slate-950">{isEn ? "Difficulty" : "कठिनाई"}</h2>
+            <h2 className="mt-8 text-lg font-black text-slate-950">{t.quizDifficultyLabel}</h2>
             <div className="mt-3">
               <FilterBar options={difficultyOptions} active={difficulty} onChange={setDifficulty} />
             </div>
@@ -464,7 +464,7 @@ export default function QuizPage() {
             <label className="mt-8 flex items-center gap-3">
               <input type="checkbox" checked={timerEnabled} onChange={(e) => setTimerEnabled(e.target.checked)} className="h-5 w-5 rounded accent-amber-500" />
               <span className="text-sm font-semibold text-slate-700">
-                {isEn ? `⏱ Timer (${TIMER_SECONDS_PER_QUESTION}s per question)` : `⏱ टाइमर (${TIMER_SECONDS_PER_QUESTION} सेकंड प्रति प्रश्न)`}
+                {t.quizTimerLabel.replace("{seconds}", String(TIMER_SECONDS_PER_QUESTION))}
               </span>
             </label>
 
@@ -472,7 +472,7 @@ export default function QuizPage() {
               onClick={() => startQuiz()}
               className="mt-8 w-full rounded-2xl bg-orange-600 px-8 py-4 text-lg font-bold text-white shadow-md shadow-orange-500/25 hover:bg-orange-700"
             >
-              {isEn ? "🚀 Start Quiz" : "🚀 क्विज़ शुरू करें"}
+              {t.quizStartButton}
             </button>
           </InfoCard>
         )}
@@ -482,11 +482,11 @@ export default function QuizPage() {
           <div>
             {usingDemo && (
               <InfoCard tone="amber" className="mb-4 py-3 text-sm font-semibold">
-                {isEn ? "📌 Demo quiz — not enough study material for a full quiz from this source yet." : "📌 डेमो क्विज़ — इस स्रोत से पूर्ण क्विज़ हेतु अभी पर्याप्त सामग्री नहीं है।"}
+                {t.quizDemoBanner}
               </InfoCard>
             )}
             <div className="mb-3 flex items-center justify-between text-xs font-bold text-slate-400">
-              <span>{isEn ? "Question" : "प्रश्न"} {cursor + 1} {isEn ? "of" : "में से"} {questions.length}</span>
+              <span>{t.quizQuestionLabel} {cursor + 1} {t.commonOf} {questions.length}</span>
               {timerEnabled && (
                 <span className={`rounded-full px-3 py-1 ${secondsLeft <= 10 ? "bg-red-100 text-red-700" : "bg-slate-100 text-slate-600"}`}>
                   ⏱ {secondsLeft}s
@@ -495,27 +495,27 @@ export default function QuizPage() {
             </div>
 
             <InfoCard className="p-8">
-              <p className="text-xs font-semibold text-slate-400">📖 {current.item.bookTitle}{current.item.page ? ` · ${isEn ? "Page" : "पृष्ठ"} ${current.item.page}` : ""}</p>
+              <p className="text-xs font-semibold text-slate-400">📖 {current.item.bookTitle}{current.item.page ? ` · ${t.commonPage} ${current.item.page}` : ""}</p>
 
               <QuestionBody
                 question={current}
                 answer={currentAnswer}
                 onChange={(a) => updateAnswer(cursor, a)}
-                isEn={isEn}
+                t={t}
               />
             </InfoCard>
 
             <div className="mt-5 flex items-center justify-between gap-3">
               <button onClick={goPrev} disabled={cursor === 0} className="rounded-full bg-slate-200 px-6 py-2.5 text-sm font-bold text-slate-700 disabled:opacity-30">
-                ← {isEn ? "Previous" : "पिछला"}
+                ← {t.commonPrevious}
               </button>
               {cursor < questions.length - 1 ? (
                 <button onClick={goNext} className="rounded-full bg-slate-950 px-6 py-2.5 text-sm font-bold text-white hover:bg-slate-800">
-                  {isEn ? "Next" : "अगला"} →
+                  {t.commonNext} →
                 </button>
               ) : (
                 <button onClick={submitQuiz} className="rounded-full bg-orange-600 px-8 py-2.5 text-sm font-bold text-white hover:bg-orange-700">
-                  ✅ {isEn ? "Submit" : "सबमिट करें"}
+                  {t.quizSubmit}
                 </button>
               )}
             </div>
@@ -526,22 +526,22 @@ export default function QuizPage() {
         {stage === "results" && (
           <div>
             <InfoCard tone="dark" className="p-8 text-center">
-              <p className="text-sm font-bold uppercase tracking-widest text-slate-400">{isEn ? "Your Score" : "आपका स्कोर"}</p>
+              <p className="text-sm font-bold uppercase tracking-widest text-slate-400">{t.quizYourScore}</p>
               <h2 className="mt-2 text-5xl font-black">{score} / {questions.length}</h2>
               <p className="mt-2 text-lg font-bold text-amber-400">{percentage}%</p>
             </InfoCard>
 
             <div className="mt-6 flex flex-wrap gap-3">
               <button onClick={() => startQuiz()} className="rounded-full bg-slate-950 px-6 py-2.5 text-sm font-bold text-white hover:bg-slate-800">
-                🔄 {isEn ? "Generate New Quiz" : "नई क्विज़ बनाएं"}
+                {t.quizGenerateNew}
               </button>
               {score < questions.length && (
                 <button onClick={retryIncorrect} className="rounded-full bg-white px-6 py-2.5 text-sm font-bold text-slate-700 ring-1 ring-slate-200 hover:bg-slate-50">
-                  🔁 {isEn ? "Retry Incorrect" : "गलत प्रश्न फिर से करें"}
+                  {t.quizRetryIncorrect}
                 </button>
               )}
               <button onClick={() => setStage("setup")} className="rounded-full bg-white px-6 py-2.5 text-sm font-bold text-slate-700 ring-1 ring-slate-200 hover:bg-slate-50">
-                ⚙️ {isEn ? "Change Settings" : "सेटिंग्स बदलें"}
+                {t.quizChangeSettings}
               </button>
             </div>
 
@@ -551,14 +551,14 @@ export default function QuizPage() {
                 return (
                   <div key={q.id} className={`rounded-3xl bg-white p-6 shadow-[0_20px_60px_rgba(75,45,12,0.10)] ring-1 ${correct ? "ring-emerald-200" : "ring-red-200"}`}>
                     <div className="flex items-start justify-between gap-3">
-                      <p className="text-xs font-semibold text-slate-400">📖 {q.item.bookTitle}{q.item.page ? ` · ${isEn ? "Page" : "पृष्ठ"} ${q.item.page}` : ""}</p>
+                      <p className="text-xs font-semibold text-slate-400">📖 {q.item.bookTitle}{q.item.page ? ` · ${t.commonPage} ${q.item.page}` : ""}</p>
                       <span className={`flex-shrink-0 rounded-full px-3 py-1 text-xs font-bold ${correct ? "bg-emerald-100 text-emerald-700" : "bg-red-100 text-red-700"}`}>
-                        {correct ? `✓ ${isEn ? "Correct" : "सही"}` : `✗ ${isEn ? "Wrong" : "गलत"}`}
+                        {correct ? `✓ ${t.quizCorrectLabel}` : `✗ ${t.quizWrongLabel}`}
                       </span>
                     </div>
                     <p className="mt-3 whitespace-pre-line font-semibold text-slate-900">{questionSummary(q)}</p>
                     <p className="mt-2 text-sm text-slate-600">
-                      {isEn ? "Correct answer:" : "सही उत्तर:"} <span className="font-bold">{correctAnswerLabel(q)}</span>
+                      {t.quizCorrectAnswerLabel} <span className="font-bold">{correctAnswerLabel(q, t.commonTrue, t.commonFalse)}</span>
                     </p>
 
                     {!correct && (
@@ -569,7 +569,7 @@ export default function QuizPage() {
                             disabled={explaining === q.id}
                             className="rounded-full bg-blue-100 px-4 py-1.5 text-xs font-bold text-blue-700 hover:bg-blue-200 disabled:opacity-50"
                           >
-                            {explaining === q.id ? (isEn ? "Thinking…" : "सोच रहा है…") : `✨ ${isEn ? "AI Explanation" : "एआई स्पष्टीकरण"}`}
+                            {explaining === q.id ? t.quizThinking : t.quizAiExplanation}
                           </button>
                         ) : (
                           <p className="rounded-2xl bg-blue-50 p-3 text-sm text-blue-900">{explanations[q.id]}</p>
@@ -595,15 +595,15 @@ function questionSummary(q: Question): string {
   if (q.type === "fillblank") return `${q.before}____${q.after}`;
   return q.pairs.map(p => p.left).join(" · ");
 }
-function correctAnswerLabel(q: Question): string {
+function correctAnswerLabel(q: Question, trueLabel: string, falseLabel: string): string {
   if (q.type === "mcq") return q.options[q.correctIndex];
-  if (q.type === "truefalse") return q.correctAnswer ? "True" : "False";
+  if (q.type === "truefalse") return q.correctAnswer ? trueLabel : falseLabel;
   if (q.type === "fillblank") return q.correctAnswer;
   return q.pairs.map(p => `${p.left} → ${p.right}`).join("; ");
 }
 
 // ── Per-type question renderer (taking screen) ─────────────────────────
-function QuestionBody({ question, answer, onChange, isEn }: { question: Question; answer: Answer; onChange: (a: Answer) => void; isEn: boolean }) {
+function QuestionBody({ question, answer, onChange, t }: { question: Question; answer: Answer; onChange: (a: Answer) => void; t: UIText }) {
   if (question.type === "mcq" && answer.type === "mcq") {
     return (
       <div>
@@ -638,7 +638,7 @@ function QuestionBody({ question, answer, onChange, isEn }: { question: Question
                 answer.selected === v ? "border-blue-500 bg-blue-50 text-blue-900" : "border-slate-200 text-slate-700 hover:bg-slate-50"
               }`}
             >
-              {v ? (isEn ? "True" : "सत्य") : (isEn ? "False" : "असत्य")}
+              {v ? t.commonTrue : t.commonFalse}
             </button>
           ))}
         </div>
@@ -666,7 +666,7 @@ function QuestionBody({ question, answer, onChange, isEn }: { question: Question
   if (question.type === "match" && answer.type === "match") {
     return (
       <div>
-        <h2 className="mt-3 text-xl font-bold text-slate-900">{isEn ? "Match the Following" : "निम्नलिखित का मिलान करें"}</h2>
+        <h2 className="mt-3 text-xl font-bold text-slate-900">{t.quizMatchTheFollowing}</h2>
         <div className="mt-5 flex flex-col gap-3">
           {question.pairs.map((p, i) => (
             <div key={i} className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-4">
@@ -680,7 +680,7 @@ function QuestionBody({ question, answer, onChange, isEn }: { question: Question
                 }}
                 className="flex-1 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 outline-none"
               >
-                <option value="">{isEn ? "Choose a match…" : "एक मिलान चुनें…"}</option>
+                <option value="">{t.quizChooseMatch}</option>
                 {question.shuffledRight.map(r => <option key={r} value={r}>{r}</option>)}
               </select>
             </div>
