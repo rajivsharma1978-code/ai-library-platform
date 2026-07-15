@@ -3,6 +3,8 @@
 import { useMemo, useState } from "react";
 import { StoredHighlight, StoredNote, StoredBookmark, HIGHLIGHT_COLOR_HEX } from "./studyData";
 import { getDisplayLabel, type PrintedPageMap } from "@/lib/printedPageMap";
+import { UI_TEXT } from "@/lib/i18n";
+import { useLanguage } from "@/lib/useLanguage";
 
 type StudySubTab = "highlights" | "notes" | "bookmarks" | "search";
 // Kept for prop-compatibility with AICompanion's existing pass-through —
@@ -62,6 +64,8 @@ export default function StudyWorkspace({
 }) {
   const [subTab, setSubTab] = useState<StudySubTab>("highlights");
   const [query, setQuery] = useState("");
+  const { language } = useLanguage();
+  const t = UI_TEXT[language];
 
   // Printed page number only (e.g. "184", or "38–39" for a scanned
   // two-up spread) — the internal PDF page index is never shown, even as
@@ -70,7 +74,7 @@ export default function StudyWorkspace({
   // placeholder covers the rare case this book/page isn't mapped, so the
   // card never renders a blank line.
   function pageLabelText(pdfPage: number): string {
-    return getDisplayLabel(pdfPage, printedPageMap ?? {}) || "Page —";
+    return getDisplayLabel(pdfPage, printedPageMap ?? {}) || t.studyWorkspacePageFallback;
   }
 
   const filteredHighlights = useMemo(() => {
@@ -131,10 +135,10 @@ export default function StudyWorkspace({
             style={{ background: HIGHLIGHT_COLOR_HEX[h.color].fill, border: `2px solid ${HIGHLIGHT_COLOR_HEX[h.color].border}` }}
           />
           <span className="truncate text-[10px] font-bold uppercase tracking-wide text-slate-400">
-            📖 {bookTitle?.trim() ? bookTitle : "This book"}
+            📖 {bookTitle?.trim() ? bookTitle : t.studyWorkspaceThisBook}
           </span>
           {note && (
-            <span title="Note attached" className="ml-auto flex-shrink-0 text-xs">📝</span>
+            <span title={t.studyWorkspaceNoteAttached} className="ml-auto flex-shrink-0 text-xs">📝</span>
           )}
         </div>
 
@@ -148,15 +152,15 @@ export default function StudyWorkspace({
 
         <div className="mt-2.5 flex items-center gap-1.5">
           <button onClick={() => onJumpToPage(h.page, h.id)} className={SECONDARY_ACTION_CLASS}>
-            📖 Open Page
+            📖 {t.notesOpenPage}
           </button>
           {note && (
             <button onClick={() => onJumpToPage(h.page, note.id)} className={SECONDARY_ACTION_CLASS}>
-              ✏️ Edit Note
+              ✏️ {t.notesEditNote}
             </button>
           )}
           <button onClick={() => onDeleteHighlight(h.id)} className={`${DELETE_ACTION_CLASS} ml-auto`}>
-            🗑 Delete
+            🗑 {t.notesDelete}
           </button>
         </div>
       </div>
@@ -166,10 +170,10 @@ export default function StudyWorkspace({
   return (
     <div className="flex h-full flex-col">
       <div className="flex flex-shrink-0 gap-1 rounded-full bg-amber-50 p-1">
-        {tabBtn("highlights", "Highlights")}
-        {tabBtn("notes", "Notes")}
-        {tabBtn("bookmarks", "Bookmarks")}
-        {tabBtn("search", "Search")}
+        {tabBtn("highlights", t.myLibraryHighlights)}
+        {tabBtn("notes", t.navNotes)}
+        {tabBtn("bookmarks", t.myLibraryBookmarks)}
+        {tabBtn("search", t.commonSearch)}
       </div>
 
       {subTab === "search" && (
@@ -178,7 +182,7 @@ export default function StudyWorkspace({
             autoFocus
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search highlights, notes, bookmarks…"
+            placeholder={t.studyWorkspaceSearchPlaceholder}
             className="w-full rounded-2xl border border-amber-200 bg-white px-4 py-2.5 text-[13px] text-slate-900 outline-none transition-shadow focus:ring-2 focus:ring-orange-400"
           />
         </div>
@@ -189,7 +193,7 @@ export default function StudyWorkspace({
           <HighlightCard key={h.id} h={h} />
         ))}
         {subTab === "highlights" && filteredHighlights.length === 0 && (
-          <EmptyState>No highlights yet. Select text on the page and tap ⭐ Highlight.</EmptyState>
+          <EmptyState>{t.studyWorkspaceEmptyHighlights}</EmptyState>
         )}
 
         {(subTab === "notes" || subTab === "search") && filteredNotes.map(n => (
@@ -205,7 +209,7 @@ export default function StudyWorkspace({
                 📝 {n.note}
               </p>
               <p className="mt-1.5 text-[10px] font-bold text-slate-400">
-                {pageLabelText(n.page)} · tap to jump{n.aiImproved ? " · ✨ AI-improved" : ""}
+                {pageLabelText(n.page)} · {t.studyWorkspaceTapToJump}{n.aiImproved ? ` · ✨ ${t.notesAiImproved}` : ""}
               </p>
             </button>
             <div className="mt-1.5 text-right">
@@ -216,7 +220,7 @@ export default function StudyWorkspace({
           </div>
         ))}
         {subTab === "notes" && filteredNotes.length === 0 && (
-          <EmptyState>No notes yet. Select text and tap 📝 Add Note.</EmptyState>
+          <EmptyState>{t.studyWorkspaceEmptyNotes}</EmptyState>
         )}
 
         {(subTab === "bookmarks" || subTab === "search") && filteredBookmarks.map(b => (
@@ -228,7 +232,7 @@ export default function StudyWorkspace({
               <p className="text-[12px] font-bold text-slate-700">
                 🔖 {b.title?.trim() ? b.title : pageLabelText(b.page)}
               </p>
-              <p className="mt-0.5 text-[10px] font-bold text-slate-400">{pageLabelText(b.page)} · tap to jump</p>
+              <p className="mt-0.5 text-[10px] font-bold text-slate-400">{pageLabelText(b.page)} · {t.studyWorkspaceTapToJump}</p>
             </button>
             <button onClick={() => onDeleteBookmark(b.id)} className={DELETE_ICON_ONLY_CLASS}>
               🗑️
@@ -236,11 +240,11 @@ export default function StudyWorkspace({
           </div>
         ))}
         {subTab === "bookmarks" && filteredBookmarks.length === 0 && (
-          <EmptyState>No bookmarks yet. Tap 🔖 Bookmark in the toolbar.</EmptyState>
+          <EmptyState>{t.studyWorkspaceEmptyBookmarks}</EmptyState>
         )}
 
         {subTab === "search" && query.trim() && filteredHighlights.length === 0 && filteredNotes.length === 0 && filteredBookmarks.length === 0 && (
-          <EmptyState>No matches for “{query}”.</EmptyState>
+          <EmptyState>{t.studyWorkspaceNoMatches.replace("{query}", query)}</EmptyState>
         )}
       </div>
     </div>

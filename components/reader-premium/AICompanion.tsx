@@ -6,6 +6,8 @@ import type { StoredHighlight, StoredNote, StoredBookmark } from "./study/studyD
 import type { PrintedPageMap } from "@/lib/printedPageMap";
 import LanguagePopover from "./LanguagePopover";
 import { useEffect } from "react";
+import { UI_TEXT } from "@/lib/i18n";
+import { useLanguage } from "@/lib/useLanguage";
 
 const LANGUAGES = ["English", "Hindi", "Tamil", "Bengali", "Marathi", "Telugu"] as const;
 type Lang = typeof LANGUAGES[number];
@@ -100,25 +102,36 @@ type AICompanionProps = {
 // whether a pill renders with slightly more visual weight so the panel
 // doesn't give every action identical emphasis. It has no effect on the
 // prompt, the handler, or which scope/depth/language apply.
-const QUICK_ACTIONS: { label: string; short: string; prompt: (lang: string) => string; primary?: boolean }[] = [
-  { label: "🧠 Explain",    short: "Explain",    primary: true, prompt: (lang) => `Explain this clearly for a student in simple language. Respond ONLY in: ${lang}.` },
-  { label: "📝 Summarize",  short: "Summarize",  primary: true, prompt: (lang) => `Summarize this in at most 8 concise bullet points. Respond ONLY in: ${lang}.` },
-  { label: "🌍 Translate",  short: "Translate",  prompt: (lang) => `Rewrite and explain the content in ${lang}. Write entirely in ${lang}. Respond ONLY in: ${lang}.` },
-  { label: "❓ Quiz",       short: "Quiz",       primary: true, prompt: (lang) => `Create multiple-choice quiz questions — 5 for a page or chapter, 8 for the entire book. Respond ONLY in: ${lang}.` },
-  { label: "🎴 Flashcards", short: "Flashcards", prompt: (lang) => `Create flashcards (FRONT: / BACK: format) — 5 for a page or chapter, 10 for the entire book. Respond ONLY in: ${lang}.` },
-  { label: "📌 Revision Notes", short: "Revision Notes", prompt: (lang) => `Create clean, structured revision notes. Respond ONLY in: ${lang}.` },
+//
+// IMPORTANT — `label` here is intentionally NOT localized and must stay
+// exactly as-is: it's the first argument passed to `onQuickAction`, and
+// the parent (PremiumReaderPreviewContent.tsx, out of this batch's scope)
+// routes on it via `label.includes("Notes")` to identify the Revision
+// Notes action. Localizing this string per-language would silently break
+// that routing for every non-English UI language. The *visible* button
+// text and tooltip are localized separately via `QUICK_ACTION_TEXT`
+// (built from UI_TEXT inside the component) — see the render below.
+const QUICK_ACTIONS: { key: "explain" | "summarize" | "translate" | "quiz" | "flashcards" | "revision"; label: string; prompt: (lang: string) => string; primary?: boolean }[] = [
+  { key: "explain",    label: "🧠 Explain",         primary: true, prompt: (lang) => `Explain this clearly for a student in simple language. Respond ONLY in: ${lang}.` },
+  { key: "summarize",  label: "📝 Summarize",       primary: true, prompt: (lang) => `Summarize this in at most 8 concise bullet points. Respond ONLY in: ${lang}.` },
+  { key: "translate",  label: "🌍 Translate",       prompt: (lang) => `Rewrite and explain the content in ${lang}. Write entirely in ${lang}. Respond ONLY in: ${lang}.` },
+  { key: "quiz",       label: "❓ Quiz",            primary: true, prompt: (lang) => `Create multiple-choice quiz questions — 5 for a page or chapter, 8 for the entire book. Respond ONLY in: ${lang}.` },
+  { key: "flashcards", label: "🎴 Flashcards",      prompt: (lang) => `Create flashcards (FRONT: / BACK: format) — 5 for a page or chapter, 10 for the entire book. Respond ONLY in: ${lang}.` },
+  { key: "revision",   label: "📌 Revision Notes",  prompt: (lang) => `Create clean, structured revision notes. Respond ONLY in: ${lang}.` },
 ];
 
-const SCOPE_OPTIONS: { value: "page" | "chapter" | "book"; label: string; icon: string }[] = [
-  { value: "page", label: "Page", icon: "📄" },
-  { value: "chapter", label: "Chapter", icon: "📑" },
-  { value: "book", label: "Entire Book", icon: "📚" },
+// `value` (not `label`) is what onScopeChange/onDepthChange receive, so
+// localizing these `label`s carries none of the risk QUICK_ACTIONS has.
+const SCOPE_OPTIONS: { value: "page" | "chapter" | "book"; icon: string }[] = [
+  { value: "page", icon: "📄" },
+  { value: "chapter", icon: "📑" },
+  { value: "book", icon: "📚" },
 ];
 
-const DEPTH_OPTIONS: { value: "Beginner" | "Exam-focused" | "Research-level"; label: string; icon: string }[] = [
-  { value: "Beginner", label: "Beginner", icon: "🌱" },
-  { value: "Exam-focused", label: "Exam Focused", icon: "🎯" },
-  { value: "Research-level", label: "Research Level", icon: "🔬" },
+const DEPTH_OPTIONS: { value: "Beginner" | "Exam-focused" | "Research-level"; icon: string }[] = [
+  { value: "Beginner", icon: "🌱" },
+  { value: "Exam-focused", icon: "🎯" },
+  { value: "Research-level", icon: "🔬" },
 ];
 
 // ── Lightweight markdown renderer ────────────────────────────────────
@@ -213,6 +226,32 @@ export default function AICompanion({
   const [copied, setCopied] = useState(false);
   const [feedback, setFeedback] = useState<"like" | "dislike" | null>(null);
 
+  // Platform UI language — deliberately separate from the `language` prop
+  // above, which is the AI response language (see the prop's own doc
+  // comment). Named `uiLanguage` to avoid any collision, same convention
+  // used throughout the Reader (PremiumReaderPreviewContent.tsx, etc).
+  const { language: uiLanguage } = useLanguage();
+  const t = UI_TEXT[uiLanguage];
+
+  // Display text for QUICK_ACTIONS — keyed the same way as the
+  // module-level array above, built from UI_TEXT so it's translated.
+  // Deliberately NOT what's passed to onQuickAction (see that array's
+  // comment) — only what's rendered.
+  const QUICK_ACTION_TEXT: Record<typeof QUICK_ACTIONS[number]["key"], { label: string; short: string }> = {
+    explain: { label: `🧠 ${t.aiActionExplain}`, short: t.aiActionExplain },
+    summarize: { label: `📝 ${t.aiActionSummarize}`, short: t.aiActionSummarize },
+    translate: { label: `🌍 ${t.aiActionTranslate}`, short: t.aiActionTranslate },
+    quiz: { label: `❓ ${t.aiActionQuiz}`, short: t.aiActionQuiz },
+    flashcards: { label: `🎴 ${t.commonFlashcards}`, short: t.commonFlashcards },
+    revision: { label: `📌 ${t.aiActionRevision}`, short: t.aiActionRevision },
+  };
+  const SCOPE_TEXT: Record<"page" | "chapter" | "book", string> = {
+    page: t.commonPage, chapter: t.aiCompanionScopeChapter, book: t.aiCompanionScopeBook,
+  };
+  const DEPTH_TEXT: Record<"Beginner" | "Exam-focused" | "Research-level", string> = {
+    Beginner: t.aiCompanionDepthBeginner, "Exam-focused": t.aiCompanionDepthExamFocused, "Research-level": t.aiCompanionDepthResearchLevel,
+  };
+
   useEffect(() => {
     if (openStudyTabSignal !== undefined) setOuterTab("study");
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -238,8 +277,8 @@ export default function AICompanion({
         <span className="text-xl" aria-hidden>🤖</span>
         <button
           onClick={onToggleCompact}
-          title="Open AI Companion"
-          aria-label="Open AI Companion"
+          title={t.aiCompanionExpand}
+          aria-label={t.aiCompanionExpand}
           className="ndl-press flex h-9 w-9 items-center justify-center rounded-full bg-orange-50 text-orange-700 hover:bg-orange-100"
         >
           »
@@ -253,7 +292,7 @@ export default function AICompanion({
       {/* Header */}
       <div className="flex flex-shrink-0 items-center justify-between gap-2 border-b border-amber-100 px-5 py-4">
         <div className="min-w-0">
-          <h2 className="truncate text-lg font-black text-slate-900">🤖 AI Learning Companion</h2>
+          <h2 className="truncate text-lg font-black text-slate-900">🤖 {t.aiCompanionHeading}</h2>
         </div>
         <div className="flex flex-shrink-0 items-center gap-2">
           <div className="flex gap-1 rounded-full bg-amber-50 p-1">
@@ -262,19 +301,19 @@ export default function AICompanion({
               className={`ndl-press rounded-full px-3 py-1.5 text-xs font-bold ${
                 outerTab === "companion" ? "bg-orange-600 text-white" : "text-slate-500 hover:text-slate-800"}`}
             >
-              Ask AI
+              {t.aiCompanionTabAskAi}
             </button>
             <button
               onClick={() => setOuterTab("study")}
               className={`ndl-press rounded-full px-3 py-1.5 text-xs font-bold ${
                 outerTab === "study" ? "bg-orange-600 text-white" : "text-slate-500 hover:text-slate-800"}`}
             >
-              Study
+              {t.aiCompanionTabStudy}
             </button>
           </div>
           <button
             onClick={onToggleCompact}
-            title="Collapse AI Companion"
+            title={t.aiCompanionCollapse}
             className="ndl-press flex h-8 w-8 items-center justify-center rounded-full bg-amber-50 text-slate-600 hover:bg-amber-100"
           >
             ✕
@@ -309,29 +348,29 @@ export default function AICompanion({
           <div className="rounded-2xl bg-amber-50/60 p-2.5">
             <div className="flex items-center gap-2">
               <div className="flex min-w-0 flex-1 items-center gap-1.5">
-                <label className="flex-shrink-0 text-[10px] font-bold uppercase tracking-wide text-slate-400">Scope</label>
+                <label className="flex-shrink-0 text-[10px] font-bold uppercase tracking-wide text-slate-400">{t.commonScope}</label>
                 <select
                   value={hasActiveSelection ? "selection" : scope}
                   disabled={hasActiveSelection}
                   onChange={(e) => onScopeChange(e.target.value as "page" | "chapter" | "book")}
-                  title={hasActiveSelection ? "Selecting text on the page always answers from that selection" : undefined}
+                  title={hasActiveSelection ? t.aiCompanionScopeDisabledHint : undefined}
                   className="ndl-press w-full min-w-0 rounded-lg bg-white/80 px-2 py-1.5 text-[11px] font-bold text-slate-700 outline-none disabled:cursor-not-allowed disabled:opacity-70"
                 >
-                  {hasActiveSelection && <option value="selection">📎 Selection</option>}
+                  {hasActiveSelection && <option value="selection">📎 {t.aiCompanionScopeSelection}</option>}
                   {SCOPE_OPTIONS.map((opt) => (
-                    <option key={opt.value} value={opt.value}>{opt.icon} {opt.label}</option>
+                    <option key={opt.value} value={opt.value}>{opt.icon} {SCOPE_TEXT[opt.value]}</option>
                   ))}
                 </select>
               </div>
               <div className="flex min-w-0 flex-1 items-center gap-1.5">
-                <label className="flex-shrink-0 text-[10px] font-bold uppercase tracking-wide text-slate-400">Depth</label>
+                <label className="flex-shrink-0 text-[10px] font-bold uppercase tracking-wide text-slate-400">{t.commonDepth}</label>
                 <select
                   value={depth}
                   onChange={(e) => onDepthChange(e.target.value as "Beginner" | "Exam-focused" | "Research-level")}
                   className="ndl-press w-full min-w-0 rounded-lg bg-white/80 px-2 py-1.5 text-[11px] font-bold text-slate-700 outline-none"
                 >
                   {DEPTH_OPTIONS.map((opt) => (
-                    <option key={opt.value} value={opt.value}>{opt.icon} {opt.label}</option>
+                    <option key={opt.value} value={opt.value}>{opt.icon} {DEPTH_TEXT[opt.value]}</option>
                   ))}
                 </select>
               </div>
@@ -342,12 +381,12 @@ export default function AICompanion({
                 second independent selector). */}
             <div className="mt-2 flex items-center gap-1.5 text-[11px] font-semibold text-slate-500">
               <span>🌐</span>
-              <span>Responding in <span className="font-bold text-slate-700">{language}</span></span>
+              <span>{t.commonRespondingIn} <span className="font-bold text-slate-700">{language}</span></span>
               <LanguagePopover variant="link" language={language} onLanguageChange={onLanguageChange} availableLanguages={availableLanguages} />
             </div>
 
             {hasActiveSelection && (
-              <p className="mt-2 text-[11px] font-bold text-orange-700">📎 Text selected — Ask AI will answer from that selection.</p>
+              <p className="mt-2 text-[11px] font-bold text-orange-700">📎 {t.aiCompanionSelectionNotice}</p>
             )}
           </div>
 
@@ -365,18 +404,18 @@ export default function AICompanion({
         <div className="mt-3 min-h-0 flex-1 overflow-auto px-5">
           <div className={`rounded-[1.75rem] p-6 text-[14px] text-slate-800 shadow-inner ${aiFailed ? "bg-red-50/40" : "bg-amber-50/50"}`}>
             {!isLoading && aiResponse.trim() && (
-              <p className="mb-2.5 text-[10px] font-black uppercase tracking-widest text-slate-400">AI Response</p>
+              <p className="mb-2.5 text-[10px] font-black uppercase tracking-widest text-slate-400">{t.aiCompanionResponseLabel}</p>
             )}
             {aiVoiceNotice && (
               <p className="mb-3 text-[11px] font-semibold text-orange-700">⚠️ {aiVoiceNotice}</p>
             )}
             {isLoading ? (
-              <div className="flex flex-col gap-3" aria-label="AI is thinking">
+              <div className="flex flex-col gap-3" aria-label={t.aiCompanionThinking}>
                 <div className="ndl-skeleton h-3.5 w-[85%] rounded-full" />
                 <div className="ndl-skeleton h-3.5 w-full rounded-full" />
                 <div className="ndl-skeleton h-3.5 w-[70%] rounded-full" />
                 <div className="ndl-skeleton h-3.5 w-[92%] rounded-full" />
-                <p className="mt-1.5 text-xs font-semibold text-slate-400">AI is thinking…</p>
+                <p className="mt-1.5 text-xs font-semibold text-slate-400">{t.aiCompanionThinking}</p>
               </div>
             ) : (
               <div key={aiResponse.slice(0, 40)} className="ndl-fade-in-scale">
@@ -386,7 +425,7 @@ export default function AICompanion({
                     onClick={onRetry}
                     className="ndl-press mt-3 inline-flex items-center gap-1 rounded-full bg-red-100 px-3 py-1.5 text-[11px] font-bold text-red-700 hover:bg-red-200"
                   >
-                    🔁 Retry
+                    🔁 {t.commonRetry}
                   </button>
                 )}
               </div>
@@ -395,33 +434,33 @@ export default function AICompanion({
               <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-amber-100/80 pt-3.5">
                 <button
                   onClick={onReadAiResponse}
-                  title="Read this AI response aloud"
+                  title={t.aiCompanionReadAloudTitle}
                   className="ndl-press inline-flex items-center gap-1 rounded-full bg-orange-100 px-3 py-1.5 text-[11px] font-bold text-orange-700 hover:bg-orange-200"
                 >
-                  {aiSpeechState === "loading" ? "⏳ Preparing…"
-                    : aiSpeechState === "speaking" ? "⏸ Pause"
-                    : aiSpeechState === "paused" ? "▶ Resume"
-                    : "🔊 Read AI Response"}
+                  {aiSpeechState === "loading" ? `⏳ ${t.readerPreparing}`
+                    : aiSpeechState === "speaking" ? `⏸ ${t.premiumReaderPause}`
+                    : aiSpeechState === "paused" ? `▶ ${t.premiumReaderResume}`
+                    : `🔊 ${t.aiCompanionReadResponse}`}
                 </button>
                 {(aiSpeechState === "speaking" || aiSpeechState === "paused") && onStopAiResponse && (
                   <button
                     onClick={onStopAiResponse}
                     className="ndl-press inline-flex items-center gap-1 rounded-full bg-red-50 px-3 py-1.5 text-[11px] font-bold text-red-600 hover:bg-red-100"
                   >
-                    ⏹ Stop
+                    ⏹ {t.premiumReaderStop}
                   </button>
                 )}
                 <button
                   onClick={copyResponse}
-                  title="Copy response"
+                  title={t.aiCompanionCopyTitle}
                   className="ndl-press inline-flex items-center gap-1 rounded-full bg-slate-100 px-3 py-1.5 text-[11px] font-bold text-slate-600 hover:bg-slate-200"
                 >
-                  {copied ? "✅ Copied" : "📋 Copy"}
+                  {copied ? `✅ ${t.commonCopied}` : `📋 ${t.commonCopy}`}
                 </button>
                 <span className="ml-auto flex items-center gap-1">
                   <button
                     onClick={() => setFeedback((f) => (f === "like" ? null : "like"))}
-                    title="Good response"
+                    title={t.aiCompanionGoodResponse}
                     aria-pressed={feedback === "like"}
                     className={`ndl-press flex h-7 w-7 items-center justify-center rounded-full text-xs ${
                       feedback === "like" ? "bg-orange-100 text-orange-700" : "bg-slate-100 text-slate-500 hover:bg-slate-200"
@@ -431,7 +470,7 @@ export default function AICompanion({
                   </button>
                   <button
                     onClick={() => setFeedback((f) => (f === "dislike" ? null : "dislike"))}
-                    title="Poor response"
+                    title={t.aiCompanionPoorResponse}
                     aria-pressed={feedback === "dislike"}
                     className={`ndl-press flex h-7 w-7 items-center justify-center rounded-full text-xs ${
                       feedback === "dislike" ? "bg-orange-100 text-orange-700" : "bg-slate-100 text-slate-500 hover:bg-slate-200"
@@ -455,14 +494,14 @@ export default function AICompanion({
           <div className="flex flex-wrap gap-1.5">
             {QUICK_ACTIONS.map((a) => (
               <button
-                key={a.label}
+                key={a.key}
                 disabled={isLoading}
                 onClick={() => onQuickAction(a.label, a.prompt(language))}
-                title={a.short}
+                title={QUICK_ACTION_TEXT[a.key].short}
                 className={`ndl-press rounded-full px-3 py-1.5 text-[11px] leading-tight hover:bg-orange-100 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:translate-y-0 ${
                   a.primary ? "bg-amber-100 font-bold text-slate-800" : "bg-amber-50/70 font-semibold text-slate-600"}`}
               >
-                {a.label}
+                {QUICK_ACTION_TEXT[a.key].label}
               </button>
             ))}
           </div>
@@ -472,7 +511,7 @@ export default function AICompanion({
               value={aiQuestion}
               onChange={(e) => setAiQuestion(e.target.value)}
               onKeyDown={(e) => { if (e.key === "Enter") onAsk(); }}
-              placeholder={`Ask AI in ${language}…`}
+              placeholder={t.aiCompanionAskPlaceholder.replace("{language}", language)}
               className="min-w-0 flex-1 rounded-2xl border border-amber-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition-shadow focus:ring-2 focus:ring-orange-400"
             />
             <button
@@ -480,7 +519,7 @@ export default function AICompanion({
               disabled={isLoading}
               className="ndl-press rounded-2xl bg-orange-600 px-5 py-3 text-sm font-bold text-white shadow hover:bg-orange-700 disabled:opacity-50"
             >
-              Send
+              {t.commonSend}
             </button>
           </div>
         </div>
