@@ -1,8 +1,13 @@
 "use client";
 
 import { HighlightColor, HIGHLIGHT_COLOR_HEX } from "./studyData";
+import { UI_TEXT } from "@/lib/i18n";
+import { useLanguage } from "@/lib/useLanguage";
 
 const ORDER: HighlightColor[] = ["yellow", "green", "blue", "pink"];
+const COLOR_ICON: Record<HighlightColor, string> = {
+  yellow: "🟡", green: "🟢", blue: "🔵", pink: "🩷",
+};
 
 export default function HighlightColorPicker({
   left, top, onPick, onCancel,
@@ -12,6 +17,12 @@ export default function HighlightColorPicker({
   onPick: (color: HighlightColor) => void;
   onCancel: () => void;
 }) {
+  const { language } = useLanguage();
+  const t = UI_TEXT[language];
+  const COLOR_LABEL: Record<HighlightColor, string> = {
+    yellow: t.highlightColorYellow, green: t.highlightColorGreen,
+    blue: t.highlightColorBlue, pink: t.highlightColorPink,
+  };
   const W = 220;
   const vw = typeof window !== "undefined" ? window.innerWidth : 1200;
   const vh = typeof window !== "undefined" ? window.innerHeight : 800;
@@ -41,7 +52,7 @@ export default function HighlightColorPicker({
         fontSize: 10, fontWeight: 700, color: "#92774a",
         letterSpacing: "0.07em", textTransform: "uppercase", marginBottom: 8,
       }}>
-        Highlight color
+        {t.highlightColorPickerHeading}
       </p>
       <div style={{ display: "flex", gap: 8, justifyContent: "space-between" }}>
         {ORDER.map((c) => (
@@ -49,7 +60,7 @@ export default function HighlightColorPicker({
             key={c}
             className="ndl-press"
             onClick={() => onPick(c)}
-            title={HIGHLIGHT_COLOR_HEX[c].label}
+            title={`${COLOR_ICON[c]} ${COLOR_LABEL[c]}`}
             style={{
               width: 40, height: 40, borderRadius: "50%",
               background: HIGHLIGHT_COLOR_HEX[c].fill,
@@ -68,7 +79,7 @@ export default function HighlightColorPicker({
           fontWeight: 600, cursor: "pointer",
         }}
       >
-        Cancel
+        {t.commonCancel}
       </button>
     </div>
   );

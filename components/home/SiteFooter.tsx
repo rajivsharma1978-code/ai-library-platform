@@ -9,10 +9,10 @@ export function SiteFooter() {
   const t = UI_TEXT[language];
 
   const LINKS = {
-    [t.footerResources]:  [["Library","/library"],["AI Tutor","/ai-tutor"],["Normal PDF Reader","/read"],["Explore","/explore"],["My Library","/my-library"],["My Space","/my-space"]],
-    [t.footerResources === "Resources" ? "Learning" : "शिक्षण"]: [["Notes","/notes"],["Flashcards","/flashcards"],["Quiz Generator","/quiz"],["Revision Hub","/revision"],["AI Summaries","/ai-tutor"]],
-    [t.footerContact === "Contact" ? "Company" : "कंपनी"]:  [["About Us","/"],["Careers","/"],["Press","/"],["Blog","/"],["Contact Us","/"]],
-    [t.footerSupport]:    [["Help Center","/"],["Privacy Policy","/"],["Terms of Service","/"],["Accessibility","/"]],
+    [t.footerResources]: [[t.navLibrary,"/library"],[t.navAiTutor,"/ai-tutor"],[t.readerBadge,"/read"],[t.navExplore,"/explore"],[t.myLibraryTitle,"/my-library"],[t.navMySpace,"/my-space"]],
+    [t.footerLearning]:  [[t.navNotes,"/notes"],[t.commonFlashcards,"/flashcards"],[t.footerQuizGenerator,"/quiz"],[t.footerRevisionHub,"/revision"],[t.footerAiSummaries,"/ai-tutor"]],
+    [t.footerCompany]:   [[t.footerAboutUs,"/"],[t.footerCareers,"/"],[t.footerPress,"/"],[t.footerBlog,"/"],[t.footerContactUs,"/"]],
+    [t.footerSupport]:   [[t.footerHelpCentre,"/"],[t.footerPrivacy,"/"],[t.footerTerms,"/"],[t.footerAccessibility,"/"]],
   };
 
   return (
@@ -63,14 +63,14 @@ export function SiteFooter() {
 
           {/* Get the App */}
           <div>
-            <p className="text-[13px] font-extrabold text-gray-900 mb-4">Get the App</p>
+            <p className="text-[13px] font-extrabold text-gray-900 mb-4">{t.footerGetTheApp}</p>
             <div className="space-y-2.5">
               {[["▶","Google Play"],["🍎","App Store"]].map(([icon,label])=>(
                 <a key={String(label)} href="#"
                   className="flex items-center gap-2.5 rounded-xl border border-gray-200 px-3.5 py-2.5 hover:border-orange-300 hover:bg-orange-50 transition-all">
                   <span className="text-xl flex-shrink-0">{icon}</span>
                   <div>
-                    <p className="text-[9px] text-gray-400 leading-none">Download on the</p>
+                    <p className="text-[9px] text-gray-400 leading-none">{t.footerDownloadOnThe}</p>
                     <p className="text-[13px] font-bold text-gray-800 leading-tight mt-0.5">{label}</p>
                   </div>
                 </a>
@@ -82,7 +82,7 @@ export function SiteFooter() {
         {/* Bottom bar */}
         <div className="mt-12 pt-8 border-t border-gray-100 flex flex-col sm:flex-row items-center justify-between gap-3">
           <p className="text-[12.5px] text-gray-400">{t.footerCopy}</p>
-          <p className="text-[12.5px] text-gray-400 flex items-center gap-1">Made with <span className="text-red-500 text-base">❤</span> in India</p>
+          <p className="text-[12.5px] text-gray-400 flex items-center gap-1">{t.footerMadeWith} <span className="text-red-500 text-base">❤</span> {t.footerInIndia}</p>
         </div>
       </div>
     </footer>

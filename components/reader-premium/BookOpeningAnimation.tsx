@@ -1,5 +1,8 @@
 "use client";
 
+import { UI_TEXT } from "@/lib/i18n";
+import { useLanguage } from "@/lib/useLanguage";
+
 type BookOpeningAnimationProps = {
   title: string;
 };
@@ -7,6 +10,8 @@ type BookOpeningAnimationProps = {
 export default function BookOpeningAnimation({
   title,
 }: BookOpeningAnimationProps) {
+  const { language } = useLanguage();
+  const t = UI_TEXT[language];
   return (
     <section className="flex h-screen items-center justify-center overflow-hidden bg-[radial-gradient(circle_at_center,#fff8e8_0%,#d8b36d_52%,#5f3513_100%)]">
       <div className="relative flex flex-col items-center">
@@ -19,7 +24,7 @@ export default function BookOpeningAnimation({
           <div className="relative z-10 flex h-full flex-col justify-between text-center">
             <div>
               <p className="text-xs font-black uppercase tracking-[0.35em] text-amber-300">
-                Opening Book
+                {t.premiumReaderOpeningBook}
               </p>
 
               <h1 className="mt-14 text-4xl font-black leading-tight">
@@ -28,7 +33,7 @@ export default function BookOpeningAnimation({
             </div>
 
             <p className="text-sm text-blue-100">
-              Preparing your AI-powered reading experience...
+              {t.premiumReaderOpeningSubtitle}
             </p>
           </div>
         </div>

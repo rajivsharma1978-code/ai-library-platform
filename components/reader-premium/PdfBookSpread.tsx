@@ -1,6 +1,8 @@
 "use client";
 
 import { memo, useEffect, useRef, useState } from "react";
+import { UI_TEXT } from "@/lib/i18n";
+import { useLanguage } from "@/lib/useLanguage";
 
 // ── PHASE 2 (visual-only): highlight & note overlay shapes ─────────────
 // Deliberately generic/agnostic — PdfBookSpread doesn't know anything
@@ -419,6 +421,8 @@ export default function PdfBookSpread({
   const rightTextRef   = useRef<HTMLDivElement | null>(null);
   // Ref to the inner book card div — for measuring available area
   const bookCardRef = useRef<HTMLDivElement | null>(null);
+  const { language } = useLanguage();
+  const t = UI_TEXT[language];
 
   const renderIdRef = useRef(0);
   const renderedCallbackFired = useRef(false);
@@ -649,12 +653,12 @@ export default function PdfBookSpread({
         >
           {imageSelectMode && !textSelectMode && (
             <div className="absolute left-4 top-4 z-40 rounded-full bg-blue-600 px-4 py-1.5 text-xs font-bold text-white shadow ndl-fade-in-scale">
-              📐 Image Select Mode
+              📐 {t.premiumReaderImageSelect}
             </div>
           )}
           {textSelectMode && (
             <div className="absolute left-4 top-4 z-40 rounded-full bg-amber-500 px-4 py-1.5 text-xs font-bold text-white shadow ndl-fade-in-scale">
-              📝 Text Select
+              📝 {t.premiumReaderTextSelect}
             </div>
           )}
 
@@ -670,7 +674,7 @@ export default function PdfBookSpread({
                 <div className="ndl-skeleton h-[520px] w-[380px] rounded-[1.5rem] shadow-lg" />
                 <div className="flex items-center gap-2 text-xs font-bold text-slate-500">
                   <div className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-amber-200 border-t-amber-600" />
-                  Loading page…
+                  {t.premiumReaderLoadingPage}
                 </div>
               </div>
             </div>
@@ -678,7 +682,7 @@ export default function PdfBookSpread({
           {loading && (singleSize || leftSize || rightSize) && (
             <div className="absolute right-4 top-4 z-40 flex items-center gap-1.5 rounded-full bg-white/90 px-3 py-1 text-[11px] font-bold text-slate-500 shadow ndl-fade-in-scale">
               <div className="h-3 w-3 animate-spin rounded-full border-2 border-amber-200 border-t-amber-600" />
-              Loading…
+              {t.commonLoading}
             </div>
           )}
 

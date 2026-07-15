@@ -4,12 +4,10 @@ import Link from "next/link";
 import { UI_TEXT } from "@/lib/i18n";
 import { useLanguage } from "@/lib/useLanguage";
 
-const chips = ["UPSC", "NCERT", "Science", "History", "AI", "Engineering", "Psychology"];
-
 export function HeroSection() {
   const { language } = useLanguage();
   const t = UI_TEXT[language];
-  const isEn = t.navLibrary === "Library";
+  const chips = ["UPSC", "NCERT", t.chipScience, t.chipHistory, "AI", t.chipEngineering, t.chipPsychology];
 
   return (
     <section className="px-6 pt-0">
@@ -51,21 +49,21 @@ export function HeroSection() {
                 href="/ai-tutor"
                 className="rounded-xl bg-orange-600 px-5 py-3 text-sm font-bold text-white shadow-md shadow-orange-500/25 transition hover:-translate-y-1 hover:bg-orange-700"
               >
-                🤖 {isEn ? "Start AI Tutor" : "एआई ट्यूटर शुरू करें"}
+                🤖 {t.heroAiTutor}
               </Link>
 
               <Link
                 href="/library"
                 className="rounded-xl bg-white px-5 py-3 text-sm font-bold text-slate-800 shadow-md ring-1 ring-slate-200 transition hover:-translate-y-1 hover:bg-slate-50"
               >
-                📚 {isEn ? "Explore Library" : "लाइब्रेरी देखें"}
+                📚 {t.heroExplore}
               </Link>
 
               <Link
                 href="/read"
                 className="rounded-xl px-5 py-3 text-sm font-bold text-slate-500 transition hover:text-slate-800 hover:bg-slate-50"
               >
-                📄 {isEn ? "Upload PDF" : "पीडीएफ अपलोड करें"}
+                📄 {t.uploadPdf}
               </Link>
             </div>
           </div>
@@ -73,7 +71,7 @@ export function HeroSection() {
           <div className="relative hidden min-h-[430px] lg:block">
             <img
               src="/hero-artwork.png"
-              alt="Diverse learners connected by AI through books"
+              alt={t.heroArtworkAlt}
               className="absolute inset-0 h-full w-full object-contain object-center"
             />
             <div className="absolute inset-y-0 left-0 w-32 bg-gradient-to-r from-[#fff8ed] to-transparent" />

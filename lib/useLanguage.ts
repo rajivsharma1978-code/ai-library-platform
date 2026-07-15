@@ -13,12 +13,15 @@ function notifyAll(lang: Language) {
 }
 
 export function useLanguage(defaultLanguage: Language = "en") {
-  const [language, setLanguageState] = useState<Language>(() => {
-    // Safe SSR: return default, hydrate on client
-    if (typeof window === "undefined") return defaultLanguage;
-    const stored = localStorage.getItem(LANGUAGE_STORAGE_KEY);
-    return (stored && VALID.includes(stored)) ? stored as Language : defaultLanguage;
-  });
+  // Always start at defaultLanguage, even on the client — `typeof window
+  // !== "undefined"` is true during the client's hydration render too, not
+  // just after mount, so reading localStorage here produced a real value
+  // on that render while the server had used defaultLanguage, triggering
+  // a hydration mismatch on every page whenever a non-default language was
+  // persisted. The effect below already re-reads localStorage and corrects
+  // this on mount (a one-frame flash, not a mismatch) — that's the only
+  // place client-only storage may be read.
+  const [language, setLanguageState] = useState<Language>(defaultLanguage);
 
   useEffect(() => {
     // Sync with localStorage on mount (catches page navigations)

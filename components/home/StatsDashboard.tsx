@@ -9,12 +9,12 @@ export function StatsDashboard() {
   const t = UI_TEXT[language];
 
   const STATS = [
-    { emoji:"📚", val: t.stat1Val, label: t.stat1Label, sub:"Books, PDFs, Articles",    color:"bg-orange-50" },
-    { emoji:"👥", val: t.stat2Val, label: t.stat2Label, sub:"Across India",              color:"bg-teal-50"   },
-    { emoji:"🤖", val: t.stat3Val, label: t.stat3Label, sub:"24x7 Learning Support",     color:"bg-purple-50" },
-    { emoji:"🌐", val: t.stat4Val, label: t.stat4Label, sub:"Learn in your language",    color:"bg-blue-50"   },
-    { emoji:"⭐", val:"96%",        label:"Learning Satisfaction", sub:"From our learners", color:"bg-yellow-50" },
-    { emoji:"🕐", val:"24×7",       label:"AI Tutor",              sub:"Always with you",   color:"bg-red-50"    },
+    { emoji:"📚", val: t.stat1Val, label: t.stat1Label, sub: t.statSubBooks,      color:"bg-orange-50" },
+    { emoji:"👥", val: t.stat2Val, label: t.stat2Label, sub: t.statSubUsers,      color:"bg-teal-50"   },
+    { emoji:"🤖", val: t.stat3Val, label: t.stat3Label, sub: t.statSubSessions,   color:"bg-purple-50" },
+    { emoji:"🌐", val: t.stat4Val, label: t.stat4Label, sub: t.statSubLanguages,  color:"bg-blue-50"   },
+    { emoji:"⭐", val:"96%",        label: t.statSatisfactionLabel, sub: t.statSatisfactionSub, color:"bg-yellow-50" },
+    { emoji:"🕐", val:"24×7",       label: t.navAiTutor,            sub: t.statAiTutorSub,       color:"bg-red-50"    },
   ];
 
   return (

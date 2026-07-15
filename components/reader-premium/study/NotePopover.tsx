@@ -1,14 +1,19 @@
 "use client";
 
 import { useState } from "react";
+import { UI_TEXT } from "@/lib/i18n";
+import { useLanguage } from "@/lib/useLanguage";
 
 export type NoteAIAction = "expand" | "simplify" | "exam" | "revision";
 
-const AI_ACTIONS: { action: NoteAIAction; label: string }[] = [
-  { action: "expand",   label: "Expand note" },
-  { action: "simplify", label: "Simplify" },
-  { action: "exam",     label: "Make exam notes" },
-  { action: "revision", label: "Create revision notes" },
+// `label` is resolved from UI_TEXT inside the component (see
+// AI_ACTION_LABEL below) — this array now only holds the stable `action`
+// values, which is all `onImprove` ever receives (never the label).
+const AI_ACTIONS: { action: NoteAIAction }[] = [
+  { action: "expand" },
+  { action: "simplify" },
+  { action: "exam" },
+  { action: "revision" },
 ];
 
 export default function NotePopover({
@@ -26,6 +31,12 @@ export default function NotePopover({
 }) {
   const [text, setText] = useState(initialText);
   const [showAiMenu, setShowAiMenu] = useState(false);
+  const { language } = useLanguage();
+  const t = UI_TEXT[language];
+  const AI_ACTION_LABEL: Record<NoteAIAction, string> = {
+    expand: t.noteAiExpand, simplify: t.noteAiSimplify,
+    exam: t.noteAiExam, revision: t.noteAiRevision,
+  };
 
   const POPOVER_W = 300;
   const vw = typeof window !== "undefined" ? window.innerWidth : 1200;
@@ -64,14 +75,14 @@ export default function NotePopover({
         marginBottom: 8, overflow: "hidden", textOverflow: "ellipsis",
         whiteSpace: "nowrap",
       }}>
-        📝 Note on “{selectedTextPreview.slice(0, 36)}{selectedTextPreview.length > 36 ? "…" : ""}”
+        📝 {t.readerNoteOnPrefix} “{selectedTextPreview.slice(0, 36)}{selectedTextPreview.length > 36 ? "…" : ""}”
       </p>
 
       <textarea
         autoFocus
         value={text}
         onChange={(e) => setText(e.target.value)}
-        placeholder="Type your note…"
+        placeholder={t.readerNotePlaceholder}
         rows={4}
         style={{
           width: "100%", boxSizing: "border-box", resize: "vertical",
@@ -92,7 +103,7 @@ export default function NotePopover({
             textAlign: "left",
           }}
         >
-          {improving ? "✨ Improving…" : "✨ Improve with AI"}
+          {improving ? `✨ ${t.readerNoteImproving}` : `✨ ${t.readerNoteImproveWithAi}`}
         </button>
 
         {showAiMenu && !improving && (
@@ -101,7 +112,7 @@ export default function NotePopover({
             background: "#fff", border: "1px solid #e5e0d0", borderRadius: 10,
             boxShadow: "0 8px 24px rgba(0,0,0,0.18)", overflow: "hidden", zIndex: 5,
           }}>
-            {AI_ACTIONS.map(({ action, label }) => (
+            {AI_ACTIONS.map(({ action }) => (
               <button
                 key={action}
                 onClick={() => handleImprove(action)}
@@ -112,7 +123,7 @@ export default function NotePopover({
                   cursor: "pointer",
                 }}
               >
-                {label}
+                {AI_ACTION_LABEL[action]}
               </button>
             ))}
           </div>
@@ -130,7 +141,7 @@ export default function NotePopover({
             cursor: "pointer", opacity: text.trim() ? 1 : 0.4,
           }}
         >
-          Save
+          {t.commonSave}
         </button>
         <button
           className="ndl-press"
@@ -141,7 +152,7 @@ export default function NotePopover({
             cursor: "pointer",
           }}
         >
-          Cancel
+          {t.commonCancel}
         </button>
       </div>
     </div>

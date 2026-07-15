@@ -11,17 +11,6 @@ import { useLanguage } from "@/lib/useLanguage";
 type DirectorBook = CatalogBook;
 interface ReadingProgressEntry { bookId: string; currentPage: number; totalPages: number; lastReadAt: number; [k: string]: any }
 
-const TESTIMONIALS = [
-  { initials:"AS", color:"bg-orange-500",
-    quote:"NDL AI has completely changed the way I study. The AI tutor is amazing!",
-    name:"Ananya Singh", role:"UPSC Aspirant" },
-  { initials:"RV", color:"bg-blue-500",
-    quote:"I can now learn in my mother tongue and understand concepts better.",
-    name:"Rohit Verma", role:"College Student" },
-  { initials:"NP", color:"bg-green-500",
-    quote:"The best digital learning platform I have ever used.",
-    name:"Neha Patel", role:"School Teacher" },
-];
 
 function readReadingProgress(): ReadingProgressEntry[] {
   if (typeof window === "undefined") return [];
@@ -40,8 +29,13 @@ function bookTotalPages(book?: DirectorBook): number {
 export function Recommendations() {
   const { language } = useLanguage();
   const t = UI_TEXT[language];
-  const isEn = t.navLibrary === "Library";
   const books = usePublicCatalog();
+
+  const TESTIMONIALS = [
+    { initials:"AS", color:"bg-orange-500", quote: t.testimonial1Quote, name:"Ananya Singh", role: t.testimonial1Role },
+    { initials:"RV", color:"bg-blue-500",   quote: t.testimonial2Quote, name:"Rohit Verma",  role: t.testimonial2Role },
+    { initials:"NP", color:"bg-green-500",  quote: t.testimonial3Quote, name:"Neha Patel",   role: t.testimonial3Role },
+  ];
 
   const [mounted, setMounted] = useState(false);
   const [progress, setProgress] = useState<ReadingProgressEntry[]>([]);
@@ -109,7 +103,7 @@ export function Recommendations() {
               <h2 className="text-[20px] font-extrabold text-gray-900">{t.continueReading}</h2>
               {usingDemoProgress && (
                 <span className="rounded-full bg-amber-100 px-2.5 py-0.5 text-[10px] font-bold uppercase text-amber-700">
-                  {isEn ? "demo" : "डेमो"}
+                  {t.demoTagLabel}
                 </span>
               )}
             </div>
@@ -130,7 +124,7 @@ export function Recommendations() {
                     <p className="text-[11px] text-gray-400 mt-0.5 truncate">{book.author}</p>
                     <div className="mt-2">
                       <div className="flex justify-between text-[10px] text-gray-400 mb-1">
-                        <span>{isEn ? "Progress" : "प्रगति"}</span><span>{pct}%</span>
+                        <span>{t.progressLabel}</span><span>{pct}%</span>
                       </div>
                       <div className="h-1.5 w-full bg-gray-100 rounded-full overflow-hidden">
                         <div className="h-full bg-orange-500 rounded-full" style={{width:`${pct}%`}}/>
@@ -142,11 +136,11 @@ export function Recommendations() {
                 <div className="mt-3 flex gap-2">
                   <Link href={`/read?book=${book.id}`}
                     className="flex-1 rounded-lg bg-slate-100 px-2 py-1.5 text-center text-[11px] font-bold text-slate-700 hover:bg-slate-200">
-                    📖 {isEn ? "Read Normally" : "सामान्य रूप से पढ़ें"}
+                    📖 {t.bookActionReadNormally}
                   </Link>
                   <Link href={`/reader-premium?book=${book.id}`}
                     className="flex-1 rounded-lg bg-purple-600 px-2 py-1.5 text-center text-[11px] font-bold text-white hover:bg-purple-700">
-                    🤖 {isEn ? "AI Tutor" : "एआई ट्यूटर"}
+                    🤖 {t.navAiTutor}
                   </Link>
                 </div>
               </motion.div>

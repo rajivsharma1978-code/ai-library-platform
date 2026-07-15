@@ -16,14 +16,16 @@ const ROLE_COLORS: Record<string, string> = {
   Admin: "bg-red-100 text-red-700",
 };
 
-const USER_NAV = [
-  { label: "🧠 My Space", href: "/my-space" },
-  { label: "My Library", href: "/my-library" },
-  { label: "My Books",   href: "/my-books" },
-  { label: "Notes",      href: "/notes" },
-  { label: "Revision",   href: "/revision" },
-  { label: "Analytics",  href: "/analytics" },
-  { label: "Settings",   href: "/settings" },
+// `label` is resolved from UI_TEXT inside the component (see USER_NAV_LABEL
+// below) — this array now only holds the language-independent icon/href.
+const USER_NAV: { icon: string; href: string }[] = [
+  { icon: "🧠 ", href: "/my-space" },
+  { icon: "",     href: "/my-library" },
+  { icon: "",     href: "/my-books" },
+  { icon: "",     href: "/notes" },
+  { icon: "",     href: "/revision" },
+  { icon: "",     href: "/analytics" },
+  { icon: "",     href: "/settings" },
 ];
 
 export function SiteHeader() {
@@ -53,15 +55,27 @@ export function SiteHeader() {
     window.location.href = "/";
   };
 
+  // USER_NAV's href-to-label lookup — every language resolves
+  // independently via t.*, no English/Hindi conditional fallback.
+  const USER_NAV_LABEL: Record<string, string> = {
+    "/my-space": t.navMySpace,
+    "/my-library": t.myLibraryTitle,
+    "/my-books": t.myBooksTitle,
+    "/notes": t.navNotes,
+    "/revision": t.navRevision,
+    "/analytics": t.navAnalytics,
+    "/settings": t.aiTutorNavSettings,
+  };
+
   // "My Learning" — every personal-learning page lives here now, keeping
   // the top-level bar down to exactly Home / Library / Explore / AI Tutor.
   const MY_LEARNING_NAV: [string, string][] = [
-    [t.navLibrary.includes("Library") ? "🧠 My Space" : "🧠 माई स्पेस", "/my-space"],
-    [t.navLibrary.includes("Library") ? "My Library" : "मेरी लाइब्रेरी", "/my-library"],
-    [t.navLibrary.includes("Library") ? "My Books" : "मेरी पुस्तकें", "/my-books"],
-    [t.navLibrary.includes("Library") ? "Notes" : "नोट्स", "/notes"],
-    [t.navLibrary.includes("Library") ? "Revision" : "पुनरीक्षण", "/revision"],
-    ["Analytics", "/analytics"],
+    [`🧠 ${t.navMySpace}`, "/my-space"],
+    [t.myLibraryTitle, "/my-library"],
+    [t.myBooksTitle, "/my-books"],
+    [t.navNotes, "/notes"],
+    [t.navRevision, "/revision"],
+    [t.navAnalytics, "/analytics"],
   ];
 
   // Leftover utility tools that aren't part of the core "My Learning" set —
@@ -69,10 +83,10 @@ export function SiteHeader() {
   // here: that's been removed from public navigation entirely (still
   // reachable by going directly to /admin-login).
   const MORE_NAV: [string, string][] = [
-    [t.navLibrary.includes("Library") ? "📖 Normal PDF Reader" : "📖 सामान्य पीडीएफ रीडर", "/read"],
-    ["Flashcards", "/flashcards"],
-    ["Quiz", "/quiz"],
-    ["Settings", "/settings"],
+    [`📖 ${t.readerBadge}`, "/read"],
+    [t.commonFlashcards, "/flashcards"],
+    [t.quizPageTitle, "/quiz"],
+    [t.aiTutorNavSettings, "/settings"],
   ];
 
   return (
@@ -103,11 +117,11 @@ export function SiteHeader() {
             treatment for a consistent hover/alignment rhythm. */}
         <nav className="hidden md:flex items-center gap-0.5">
           <Link href="/" className="inline-flex items-center px-2.5 py-1.5 text-[13.5px] font-semibold text-orange-500 border-b-2 border-orange-500">
-            Home
+            {t.commonHome}
           </Link>
           {([
             [t.navLibrary, "/library"],
-            ["Explore", "/explore"],
+            [t.navExplore, "/explore"],
             [t.navAiTutor, "/ai-tutor"],
           ] as [string, string][]).map(([l, h]) => (
             <Link key={h} href={h}
@@ -120,7 +134,7 @@ export function SiteHeader() {
           <div className="relative">
             <button onClick={() => { setLearningOpen(!learningOpen); setMoreOpen(false); }}
               className="inline-flex items-center gap-1 px-2.5 py-1.5 text-[13.5px] font-medium text-gray-700 hover:text-orange-500 transition-colors">
-              {t.navLibrary.includes("Library") ? "My Learning" : "मेरी शिक्षा"} <span className="text-[10px] mt-0.5">▾</span>
+              {t.navMyLearning} <span className="text-[10px] mt-0.5">▾</span>
             </button>
             {learningOpen && (
               <div className="absolute top-full left-0 mt-1 bg-white rounded-xl shadow-xl border border-gray-100 py-1.5 w-48 z-50">
@@ -138,7 +152,7 @@ export function SiteHeader() {
           <div className="relative">
             <button onClick={() => { setMoreOpen(!moreOpen); setLearningOpen(false); }}
               className="inline-flex items-center gap-1 px-2.5 py-1.5 text-[13.5px] font-medium text-gray-700 hover:text-orange-500 transition-colors">
-              More <span className="text-[10px] mt-0.5">▾</span>
+              {t.moreLabel} <span className="text-[10px] mt-0.5">▾</span>
             </button>
             {moreOpen && (
               <div className="absolute top-full left-0 mt-1 bg-white rounded-xl shadow-xl border border-gray-100 py-1.5 w-44 z-50">
@@ -155,7 +169,7 @@ export function SiteHeader() {
 
         {/* Right */}
         <div className="flex items-center gap-2.5">
-          <button className="p-1.5 text-gray-500 hover:text-orange-500 transition-colors">
+          <button aria-label={t.commonSearch} className="p-1.5 text-gray-500 hover:text-orange-500 transition-colors">
             <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
               <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
             </svg>
@@ -201,7 +215,7 @@ export function SiteHeader() {
                     {USER_NAV.map(n => (
                       <Link key={n.href} href={n.href} onClick={() => setMenuOpen(false)}
                         className="block px-4 py-2.5 text-[13px] text-gray-600 hover:bg-orange-50 hover:text-orange-500">
-                        {n.label}
+                        {n.icon}{USER_NAV_LABEL[n.href]}
                       </Link>
                     ))}
                   </div>
@@ -209,12 +223,12 @@ export function SiteHeader() {
                     {user.role === "Admin" && (
                       <Link href="/admin" onClick={() => setMenuOpen(false)}
                         className="block py-1.5 text-[12px] font-semibold text-orange-500">
-                        Admin Dashboard →
+                        {t.adminDashboard} →
                       </Link>
                     )}
                     <button onClick={logout}
                       className="w-full text-left py-1.5 text-[12px] text-red-500 hover:text-red-700">
-                      {t.signIn.includes("Sign") ? "Sign Out" : "साइन आउट"}
+                      {t.signOut}
                     </button>
                   </div>
                 </div>
@@ -237,12 +251,12 @@ export function SiteHeader() {
         <div className="border-t border-orange-100 bg-orange-50/60">
           <div className="mx-auto max-w-[1200px] px-6 flex items-center gap-1 py-1.5 overflow-x-auto">
             <span className="text-[11px] font-semibold text-orange-400 uppercase tracking-wider mr-2 whitespace-nowrap">
-              Workspace:
+              {t.workspaceLabel}:
             </span>
             {USER_NAV.map(n => (
               <Link key={n.href} href={n.href}
                 className="whitespace-nowrap px-3 py-1 text-[12px] font-medium text-gray-600 rounded-lg hover:bg-white hover:text-orange-500 hover:shadow-sm transition-all">
-                {n.label}
+                {n.icon}{USER_NAV_LABEL[n.href]}
               </Link>
             ))}
           </div>

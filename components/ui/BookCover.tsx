@@ -30,6 +30,8 @@
 // through to the initials tier instead of hanging forever.
 
 import { useEffect, useRef, useState } from "react";
+import { UI_TEXT } from "@/lib/i18n";
+import { useLanguage } from "@/lib/useLanguage";
 
 export type CoverableBook = {
   id?: string;
@@ -104,6 +106,8 @@ function PdfFirstPageCover({ pdfPath, onFail }: { pdfPath: string; onFail: () =>
 }
 
 export default function BookCover({ book, className = "" }: { book?: CoverableBook; className?: string }) {
+  const { language } = useLanguage();
+  const t = UI_TEXT[language];
   const staticCover = resolveCoverUrl(book);
   const [staticFailed, setStaticFailed] = useState(false);
   const [pdfFailed, setPdfFailed] = useState(false);
@@ -112,13 +116,14 @@ export default function BookCover({ book, className = "" }: { book?: CoverableBo
 
   const canUseStatic = !!staticCover && !staticFailed;
   const canUsePdf = !canUseStatic && !!book?.pdf && !pdfFailed;
+  const coverOfTitle = book?.title ? t.bookCoverOf.replace("{title}", book.title) : undefined;
 
   if (canUseStatic) {
     // eslint-disable-next-line @next/next/no-img-element
     return (
       <img
         src={staticCover}
-        alt={book?.title ? `Cover of ${book.title}` : "Book cover"}
+        alt={coverOfTitle ?? t.bookCoverGeneric}
         className={`object-cover ${className}`}
         onError={() => setStaticFailed(true)}
       />
@@ -126,13 +131,13 @@ export default function BookCover({ book, className = "" }: { book?: CoverableBo
   }
   if (canUsePdf) {
     return (
-      <div role="img" aria-label={book?.title ? `Cover of ${book.title}` : "Book cover"} className={`overflow-hidden bg-slate-100 ${className}`}>
+      <div role="img" aria-label={coverOfTitle ?? t.bookCoverGeneric} className={`overflow-hidden bg-slate-100 ${className}`}>
         <PdfFirstPageCover pdfPath={book!.pdf as string} onFail={() => setPdfFailed(true)} />
       </div>
     );
   }
   return (
-    <div role="img" aria-label={book?.title ? `Cover of ${book.title}` : "Book cover placeholder"} className={`flex items-center justify-center bg-gradient-to-br from-amber-200 via-orange-300 to-slate-700 text-white font-black ${className}`}>
+    <div role="img" aria-label={coverOfTitle ?? t.bookCoverPlaceholder} className={`flex items-center justify-center bg-gradient-to-br from-amber-200 via-orange-300 to-slate-700 text-white font-black ${className}`}>
       <span style={{ fontSize: "1.2em" }}>{initials || "📖"}</span>
     </div>
   );

@@ -11,7 +11,6 @@ import { useLanguage } from "@/lib/useLanguage";
 export function FeaturedBooks() {
   const { language } = useLanguage();
   const t = UI_TEXT[language];
-  const isEn = t.navLibrary === "Library";
   const scrollRef = useRef<HTMLDivElement>(null);
   const [summaryBook, setSummaryBook] = useState<CatalogBook | null>(null);
   const [summaryText, setSummaryText] = useState("");
@@ -30,7 +29,7 @@ export function FeaturedBooks() {
   const openSummary = (book: CatalogBook) => {
     setSummaryBook(book); setSummaryText(""); setLoading(true);
     setTimeout(() => {
-      setSummaryText(book.description || (isEn ? "Summary not available." : "सारांश उपलब्ध नहीं है।"));
+      setSummaryText(book.description || t.summaryNotAvailable);
       setLoading(false);
     }, 700);
   };
@@ -90,11 +89,11 @@ export function FeaturedBooks() {
                 <div className="mt-2 flex gap-1.5 px-0.5">
                   <Link href={`/read?book=${book.id}`}
                     className="flex-1 rounded-lg bg-slate-100 px-2 py-1.5 text-center text-[10px] font-bold text-slate-700 hover:bg-slate-200">
-                    📖 {isEn ? "Normal" : "सामान्य"}
+                    📖 {t.bookActionNormalShort}
                   </Link>
                   <Link href={`/reader-premium?book=${book.id}`}
                     className="flex-1 rounded-lg bg-purple-600 px-2 py-1.5 text-center text-[10px] font-bold text-white hover:bg-purple-700">
-                    🤖 {isEn ? "AI Tutor" : "एआई ट्यूटर"}
+                    🤖 {t.navAiTutor}
                   </Link>
                 </div>
               </motion.div>
@@ -133,7 +132,7 @@ export function FeaturedBooks() {
               <div className="flex gap-2 mt-5">
                 <Link href={`/read?book=${summaryBook.id}`} onClick={() => setSummaryBook(null)}
                   className="flex-1 rounded-xl border-2 border-slate-200 hover:bg-slate-50 text-slate-700 font-bold text-[12px] py-3 text-center transition-colors">
-                  📖 {isEn ? "Read Normally" : "सामान्य रूप से पढ़ें"}
+                  📖 {t.bookActionReadNormally}
                 </Link>
                 <Link href={`/reader-premium?book=${summaryBook.id}`} onClick={() => setSummaryBook(null)}
                   className="flex-1 rounded-xl bg-orange-500 hover:bg-orange-600 text-white font-bold text-[12px] py-3 text-center transition-colors">

@@ -3,6 +3,8 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { UI_TEXT } from "@/lib/i18n";
+import { useLanguage } from "@/lib/useLanguage";
 
 // ── Collapsible left navigation (Phase C3) ─────────────────────────────
 // Replaces the old 2-icon rail (Book info / Fullscreen) with the primary
@@ -15,13 +17,15 @@ import { usePathname } from "next/navigation";
 
 const NAV_COLLAPSED_KEY = "ndl_reader_nav_collapsed";
 
-const LINKS: { href: string; icon: string; label: string }[] = [
-  { href: "/reader-premium", icon: "📖", label: "Read" },
-  { href: "/library", icon: "🏛️", label: "Library" },
-  { href: "/notes", icon: "📝", label: "Notes" },
-  { href: "/revision", icon: "🔄", label: "Revision" },
-  { href: "/ai-tutor", icon: "🤖", label: "AI Tutor" },
-  { href: "/my-space", icon: "🧠", label: "My Space" },
+// `label` is resolved from UI_TEXT inside the component (see LINK_LABEL
+// below) — this array now only holds the language-independent href/icon.
+const LINKS: { href: string; icon: string }[] = [
+  { href: "/reader-premium", icon: "📖" },
+  { href: "/library", icon: "🏛️" },
+  { href: "/notes", icon: "📝" },
+  { href: "/revision", icon: "🔄" },
+  { href: "/ai-tutor", icon: "🤖" },
+  { href: "/my-space", icon: "🧠" },
 ];
 
 export default function ReaderNav({
@@ -36,6 +40,16 @@ export default function ReaderNav({
   const [collapsed, setCollapsed] = useState(false);
   const [mounted, setMounted] = useState(false);
   const prevForceRef = useRef(forceCollapsed);
+  const { language } = useLanguage();
+  const t = UI_TEXT[language];
+  const LINK_LABEL: Record<string, string> = {
+    "/reader-premium": t.navRead,
+    "/library": t.navLibrary,
+    "/notes": t.navNotes,
+    "/revision": t.navRevision,
+    "/ai-tutor": t.navAiTutor,
+    "/my-space": t.navMySpace,
+  };
 
   useEffect(() => {
     setMounted(true);
@@ -87,13 +101,13 @@ export default function ReaderNav({
             <Link
               key={link.href}
               href={link.href}
-              title={collapsed ? link.label : undefined}
+              title={collapsed ? LINK_LABEL[link.href] : undefined}
               className={`ndl-press flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-bold transition-colors ${
                 active ? "bg-orange-600 text-white shadow-sm" : "text-slate-600 hover:bg-amber-50 hover:text-slate-900"
               } ${collapsed ? "justify-center" : ""}`}
             >
               <span className="text-base leading-none">{link.icon}</span>
-              {!collapsed && <span className="truncate">{link.label}</span>}
+              {!collapsed && <span className="truncate">{LINK_LABEL[link.href]}</span>}
             </Link>
           );
         })}
@@ -101,11 +115,11 @@ export default function ReaderNav({
 
       <button
         onClick={toggle}
-        title={collapsed ? "Expand navigation" : "Collapse navigation"}
+        title={collapsed ? t.readerNavExpandTitle : t.readerNavCollapseTitle}
         className={`ndl-press m-2 flex items-center justify-center gap-2 rounded-xl border border-amber-100 bg-amber-50/60 py-2 text-xs font-bold text-amber-800 hover:bg-amber-100 ${collapsed ? "" : ""}`}
       >
         <span>{collapsed ? "»" : "«"}</span>
-        {!collapsed && <span>Collapse</span>}
+        {!collapsed && <span>{t.aiTutorNavCollapse}</span>}
       </button>
     </aside>
   );

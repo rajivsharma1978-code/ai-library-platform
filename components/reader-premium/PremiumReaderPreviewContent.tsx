@@ -32,7 +32,7 @@ import { getUploadedPdf } from "@/lib/uploadedPdfStore";
 import { getSpeechLanguage } from "@/lib/premium-reader/aiActions";
 import { loadVoices, pickVoiceForLanguage, stripMarkdownForSpeech, splitIntoSpeechChunks } from "@/lib/premium-reader/speech";
 import { useEnabledLanguages, LANGUAGE_NAME_TO_CODE } from "@/lib/languageSettings";
-import { UI_TEXT } from "@/lib/i18n";
+import { UI_TEXT, type Language } from "@/lib/i18n";
 import { useLanguage } from "@/lib/useLanguage";
 
 const PdfBookSpread = dynamic(
@@ -43,6 +43,16 @@ const PdfBookSpread = dynamic(
 // ── Languages ────────────────────────────────────────────────────────
 const LANGUAGES = ["English","Hindi","Tamil","Bengali","Marathi","Telugu"] as const;
 type Lang = typeof LANGUAGES[number];
+// Reverse of LanguagePopover's LANG_TO_UI_CODE — lets the AI response
+// language (`language` state below) be initialized FROM the persisted
+// platform UI language on mount/refresh, instead of always starting at
+// the hardcoded "English" default regardless of what `uiLanguage` was
+// left at. Without this, refreshing while the UI language was Hindi
+// left `language` at "English" and `uiLanguage` at "hi" out of sync
+// until the user manually reopened the language popover.
+const UI_CODE_TO_LANG: Record<Language, Lang> = {
+  en: "English", hi: "Hindi", ta: "Tamil", bn: "Bengali", mr: "Marathi", te: "Telugu",
+};
 
 // ── ONE interaction mode enum ─────────────────────────────────────────
 // This is the ONLY thing that decides which AI context gets used.
@@ -133,7 +143,7 @@ async function callAskAI(
   // aiFailed state, instead of silently rendering the error text as if
   // it were a normal answer.
   if (!res.ok) throw new Error(data?.answer || "AI request failed");
-  return data?.answer ?? "No response. Please try again.";
+  return data?.answer ?? UI_TEXT[LANGUAGE_NAME_TO_CODE[language]].premiumReaderNoResponse;
 }
 
 // ── AI usage tracking ────────────────────────────────────────────────
@@ -225,6 +235,15 @@ export default function PremiumReaderPreviewContent() {
     setIsHydrated(true);
   }, []);
 
+  // Platform UI language — deliberately separate from the `language`
+  // state declared below, which is the AI response/content language.
+  // Named `uiLanguage` to avoid any collision with that state, same
+  // convention used throughout the Reader (LanguagePopover.tsx, etc).
+  // Declared this early (before currentBook) since the uploaded-document
+  // fallback title below already needs a translated string.
+  const { language: uiLanguage } = useLanguage();
+  const t = UI_TEXT[uiLanguage];
+
   // ── Unified reading experience: user-uploaded PDFs ──────────────────
   // app/read/page.tsx reads an uploaded file as a base64 data URL and
   // stores it in IndexedDB (lib/uploadedPdfStore.ts) — sessionStorage's
@@ -286,7 +305,7 @@ export default function PremiumReaderPreviewContent() {
   const currentBook = isUploadedBook
     ? {
         id: uploadedPdfId as string,
-        title: uploadedPdfName || "Uploaded Document",
+        title: uploadedPdfName || t.premiumReaderUploadedDocumentFallback,
         author: "",
         description: "",
         language: "",
@@ -415,6 +434,16 @@ export default function PremiumReaderPreviewContent() {
 
   // ── Language ──────────────────────────────────────────────────────
   const [language, setLanguage] = useState<Lang>("English");
+  // Sync the AI response language FROM the platform UI language whenever
+  // uiLanguage changes (initial hydration settling from localStorage,
+  // cross-tab storage events, or a future platform-wide selector) — this
+  // is what keeps the two in sync on first load/refresh, not just after
+  // the user opens LanguagePopover. LanguagePopover's own onClick handler
+  // already sets both together going forward, so this effect is a no-op
+  // in that case (uiLanguage changes to the value `language` already has).
+  useEffect(() => {
+    setLanguage(UI_CODE_TO_LANG[uiLanguage]);
+  }, [uiLanguage]);
   // Hook call kept unconditional (above every early `return` below) per
   // Rules of Hooks — used by the toolbar's LanguagePopover near the
   // bottom of this component.
@@ -424,12 +453,13 @@ export default function PremiumReaderPreviewContent() {
   // / content language driven by LanguagePopover. This one only drives the
   // Reader chrome's own labels (top row, controls strip, bottom bar,
   // Contents modal). Named `uiLanguage` to avoid any collision with the
-  // existing `language` state.
-  const { language: uiLanguage } = useLanguage();
+  // existing `language` state — declared earlier in this component (see
+  // the hydration-gate section above) since the uploaded-document
+  // fallback title needs it before this point.
 
   // ── AI ────────────────────────────────────────────────────────────
-  const [aiResponse, setAiResponse] = useState(
-    "Select text from the book, drag a region, or click a quick action."
+  const [aiResponse, setAiResponse] = useState<string>(
+    t.premiumReaderAskInitialPlaceholder
   );
   const [aiQuestion, setAiQuestion] = useState("");
   const [aiLoading, setAiLoading] = useState(false);
@@ -675,7 +705,7 @@ export default function PremiumReaderPreviewContent() {
     setBookOpening(false);
     setZoom(100);
     setPan({ x: 0, y: 0 });
-    setAiResponse("Select text from the book, drag a region, or click a quick action.");
+    setAiResponse(t.premiumReaderAskInitialPlaceholder);
     autoFitDone.current = false;
     switchInteractionMode("none");
     // A new book means a new conversation and a new scope — carrying
@@ -868,7 +898,7 @@ export default function PremiumReaderPreviewContent() {
     let extractedPages = 0;
     try {
       const pdf = await getSharedPdfDocument();
-      setAiResponse("Reading nearby pages…");
+      setAiResponse(t.premiumReaderReadingNearbyPages);
       const pageNumbers: number[] = [];
       for (let p = start; p <= end; p++) pageNumbers.push(p);
       const perPage = await withTimeout(
@@ -929,7 +959,7 @@ export default function PremiumReaderPreviewContent() {
     resetInteractionState();
     setAiLoading(true);
     setAiFailed(false);
-    setAiResponse("Reading the entire book…");
+    setAiResponse(t.premiumReaderReadingEntireBook);
     lastAiCallRef.current = () => { runEntireBookAction(action, basePrompt, useHistory, onSuccess); };
 
     try {
@@ -952,7 +982,7 @@ export default function PremiumReaderPreviewContent() {
       }
 
       logScopeDebug({ scope: "book", source: `full extraction (chunked x${chunks.length})`, pages: pagesExtracted, chars: text.length });
-      setAiResponse(`Reading the entire book… (${chunks.length} sections)`);
+      setAiResponse(t.premiumReaderReadingEntireBookChunks.replace("{count}", String(chunks.length)));
       const partials = await Promise.all(chunks.map((chunk, i) =>
         callAskAI(
           `From ONLY this section of the book "${book}": ${basePrompt} Be concise — this is one part of a larger combined result, so skip a full intro/outro.`,
@@ -961,7 +991,7 @@ export default function PremiumReaderPreviewContent() {
         )
       ));
 
-      setAiResponse("Combining sections into one result…");
+      setAiResponse(t.premiumReaderCombiningSections);
       const combinePrompt = `You were given ${chunks.length} partial results, each generated independently from a different section of the same book "${book}" for the same request: "${basePrompt}". Combine them into ONE polished, non-repetitive, well-organized final result. Remove duplicate items, resolve inconsistencies, and present a single coherent output — do not mention that it was assembled from parts.`;
       const combinedContent = partials.map((p, i) => `--- Section ${i + 1} result ---\n${p}`).join("\n\n");
       const finalAnswer = await callAskAI(
@@ -980,7 +1010,7 @@ export default function PremiumReaderPreviewContent() {
       return true;
     } catch (err) {
       console.error("[EntireBookAction] failed:", err);
-      setAiResponse("AI is temporarily unavailable. Check your connection and try again.");
+      setAiResponse(t.premiumReaderAiUnavailable);
       setAiFailed(true);
       return false;
     } finally {
@@ -1106,7 +1136,7 @@ export default function PremiumReaderPreviewContent() {
     if (pdfPage !== null) {
       navigateToPdfPage(pdfPage);
     } else {
-      setAiResponse(`Page ${n} doesn't appear to exist in "${book}".`);
+      setAiResponse(t.premiumReaderPageNotFound.replace("{page}", String(n)).replace("{book}", book));
     }
   }
 
@@ -1140,7 +1170,7 @@ export default function PremiumReaderPreviewContent() {
     resetInteractionState();
     setAiLoading(true);
     setAiFailed(false);
-    setAiResponse("AI is thinking…");
+    setAiResponse(t.aiCompanionThinking);
     lastAiCallRef.current = () => { executeAiCall(snapshot); };
 
     // A brand new call always supersedes whatever was still in flight —
@@ -1172,7 +1202,7 @@ export default function PremiumReaderPreviewContent() {
       // since this only ever calls setAiResponse with the error text,
       // never clears it to blank.
       console.error("[AI] request failed:", err);
-      setAiResponse("AI is temporarily unavailable. Check your connection and try again.");
+      setAiResponse(t.premiumReaderAiUnavailable);
       setAiFailed(true);
       return false;
     } finally {
@@ -1373,7 +1403,7 @@ export default function PremiumReaderPreviewContent() {
     const rawText = getVisiblePageText();
     const spokenText = rawText.trim().length > 0
       ? sanitizeForSpeech(cleanOcrTextForAi(rawText))
-      : "No readable text found.";
+      : t.premiumReaderNoReadableText;
     const chunks = splitIntoSpeechChunks(spokenText);
     if (chunks.length === 0) { setSpeechState("idle"); return; }
 
@@ -1410,7 +1440,7 @@ export default function PremiumReaderPreviewContent() {
     // never needs one. Never silently fall back to an English voice
     // for a non-English response without saying so.
     if (language !== "English" && tier !== "exact" && tier !== "prefix") {
-      setAiVoiceNotice(`A ${language} system voice is not installed on this device.`);
+      setAiVoiceNotice(t.premiumReaderVoiceNotInstalled.replace("{language}", language));
     }
 
     const chunks = splitIntoSpeechChunks(plainText);
@@ -1512,13 +1542,32 @@ export default function PremiumReaderPreviewContent() {
   // a page turn is created.
   // ══════════════════════════════════════════════════════════════════
 
-  // Convert a screen-space rect into a fraction of the CURRENT page
-  // canvas's own bounding box, so it can be re-projected correctly later
+  // Convert a screen-space rect into a fraction of the CURRENT page's
+  // own bounding box, so it can be re-projected correctly later
   // regardless of zoom level or window size.
+  //
+  // Measures the canvas's PARENT (the position:relative PageBox wrapper
+  // — the exact box PdfBookSpread positions highlight/note overlays
+  // against via percentage left/top/width/height), not the canvas
+  // element itself. In principle the two are always the same size/
+  // position (paintEntry sets canvas.style.width/height to match the
+  // same singleSize/leftSize/rightSize the wrapper's inline style uses)
+  // — but they're set independently: one via a direct ref mutation
+  // (paintEntry), the other via a React state update (setSingleSize).
+  // If a highlight/note is created in a moment where those two haven't
+  // both landed yet, or the canvas is retained from a differently-sized
+  // previous page/cache entry, measuring the canvas produces a rect
+  // scaled against the WRONG box — percentages far outside 0–1, placing
+  // the overlay off-page (this reproduced exactly as "highlight created,
+  // never visible" when tested with a deliberately desynced canvas).
+  // Measuring the wrapper directly removes that dependency entirely: it
+  // is, by construction, the same box the resulting percentages get
+  // applied to.
   function screenRectToPct(rect: ScreenRect, pageNumber: number): RectPct | null {
     const canvas = document.querySelector<HTMLCanvasElement>(`canvas[data-pdf-page="${pageNumber}"]`);
-    if (!canvas) return null;
-    const c = canvas.getBoundingClientRect();
+    const box = canvas?.parentElement;
+    if (!box) return null;
+    const c = box.getBoundingClientRect();
     if (c.width <= 0 || c.height <= 0) return null;
     return {
       left:   (rect.left - c.left) / c.width,
@@ -1753,6 +1802,31 @@ export default function PremiumReaderPreviewContent() {
   );
 
 
+  // ── Resolve which physical page a screen point falls on ─────────────
+  // In double-page/spread layout (e.g. Quantum Computing), `readerPage`
+  // is only ever the LEFT page's number — the right page is readerPage+1,
+  // rendered as a completely separate canvas. Every selection/crop path
+  // below used to hardcode `readerPage`, which meant: (a) a highlight/
+  // selection made on the RIGHT page got stored under the LEFT page's
+  // number, so it could never render back in the right place (or at all,
+  // since PageBox only paints a highlight on the page whose number
+  // matches), and (b) cropCanvasRegion — which clamps the drag rect to
+  // the target canvas's own bounding box — clamped every right-page drag
+  // against the LEFT canvas's bounds, producing a zero-width/degenerate
+  // region and silently returning null, which is why image selection (and
+  // the OCR text fallback) never worked on the right page at all. Single-
+  // page books (Nalanda, Chandrayaan-3) only ever have one candidate
+  // canvas, so this resolves to `readerPage` for them exactly as before —
+  // zero behavior change there.
+  function resolveInteractionPageNumber(x: number, y: number): number {
+    const rightCanvas = document.querySelector<HTMLCanvasElement>(`canvas[data-pdf-page="${readerPage + 1}"]`);
+    if (rightCanvas) {
+      const r = rightCanvas.getBoundingClientRect();
+      if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) return readerPage + 1;
+    }
+    return readerPage;
+  }
+
   // ── Unified drag finalize (mouseup) ───────────────────────────────────
   // ONE handler for BOTH modes. It always knows both what a drag physically
   // covered on screen; which of the two things it produces (text selection
@@ -1801,6 +1875,10 @@ export default function PremiumReaderPreviewContent() {
     }
 
     const mode = interactionMode; // snapshot — OCR path below is async
+    // Which physical page (left or right, in spread layout) this specific
+    // drag actually happened on — see resolveInteractionPageNumber's
+    // comment above for why this can no longer just be `readerPage`.
+    const targetPage = resolveInteractionPageNumber(endX, endY);
 
     // ══════════════════════════════════════════════════════════════════
     // IMAGE SELECT MODE — always produce an image crop from the drag,
@@ -1814,14 +1892,14 @@ export default function PremiumReaderPreviewContent() {
       // pointerdown/move preventDefault below should already stop most of
       // it, but this guarantees it) and never look at it again.
       window.getSelection()?.removeAllRanges();
-      const cropped = cropCanvasRegion(dragStart, { x: endX, y: endY }, readerPage);
+      const cropped = cropCanvasRegion(dragStart, { x: endX, y: endY }, targetPage);
       if (!cropped) { setCapturedImageRect(null); return; }
       setCapturedImageRect(cropped.rect);
       setActiveSelection({
         type: "image",
         id: Date.now().toString(),
         imageData: cropped.dataUrl,
-        pageNumber: readerPage,
+        pageNumber: targetPage,
       });
       return;
     }
@@ -1847,7 +1925,7 @@ export default function PremiumReaderPreviewContent() {
       setSelectionRects(rects);
       setActiveSelection({
         type: "text", id: Date.now().toString(),
-        text: selText, pageNumber: readerPage, x: endX, y: endY,
+        text: selText, pageNumber: targetPage, x: endX, y: endY,
       });
       return;
     }
@@ -1856,20 +1934,20 @@ export default function PremiumReaderPreviewContent() {
     // embedded text layer) — fall back to OCR on the dragged region. The
     // crop here is used ONLY to extract text; the resulting activeSelection
     // is still type "text", never type "image".
-    const cropped = cropCanvasRegion(dragStart, { x: endX, y: endY }, readerPage);
+    const cropped = cropCanvasRegion(dragStart, { x: endX, y: endY }, targetPage);
     if (!cropped) return;
     setSelectionRects([cropped.rect]);
 
     setAiLoading(true);
-    setAiResponse("Extracting text from selected region…");
+    setAiResponse(t.premiumReaderExtractingRegion);
     (async () => {
       try {
         const ocrText = await callAskAI(
           "Extract all readable text from this image region exactly as it appears. " +
           "Return ONLY the extracted text, preserving line breaks and spacing. " +
           "No explanation, no commentary, no formatting — just the text.",
-          book, readerPage,
-          `Image region from ${pageDescription(readerPage)} of "${book}".`,
+          book, targetPage,
+          `Image region from ${pageDescription(targetPage)} of "${book}".`,
           language, cropped.dataUrl,
           "Selected Region"
         );
@@ -1877,15 +1955,15 @@ export default function PremiumReaderPreviewContent() {
         if (cleaned.length > 1) {
           setActiveSelection({
             type: "text", id: Date.now().toString(),
-            text: cleaned, pageNumber: readerPage, x: endX, y: endY,
+            text: cleaned, pageNumber: targetPage, x: endX, y: endY,
           });
-          setAiResponse("Text extracted. Use the floating menu to explain, summarize, or translate.");
+          setAiResponse(t.premiumReaderTextExtracted);
         } else {
-          setAiResponse("No readable text found in the selected region. Try selecting a larger area.");
+          setAiResponse(t.premiumReaderNoTextInRegion);
           setSelectionRects([]);
         }
       } catch {
-        setAiResponse("Text extraction failed. Please try again.");
+        setAiResponse(t.premiumReaderExtractionFailed);
         setSelectionRects([]);
       } finally {
         setAiLoading(false);
@@ -2017,15 +2095,15 @@ export default function PremiumReaderPreviewContent() {
   if (isHydrated && uploadedSource && uploadedPdfId && !uploadedPdfData && !uploadedPdfLoadFailed) {
     return (
       <div className="flex h-screen items-center justify-center bg-slate-950 text-white">
-        <p className="text-sm font-semibold text-slate-300">Loading your document…</p>
+        <p className="text-sm font-semibold text-slate-300">{t.premiumReaderLoadingDocument}</p>
       </div>
     );
   }
   if (uploadedPdfLoadFailed) {
     return (
       <div className="flex h-screen flex-col items-center justify-center gap-3 bg-slate-950 text-white">
-        <p className="text-sm font-semibold text-red-300">Couldn't load your uploaded document. Please upload it again.</p>
-        <a href="/read" className="ndl-press rounded-full bg-white/10 px-4 py-2 text-xs font-bold hover:bg-white/20">← Back to Upload</a>
+        <p className="text-sm font-semibold text-red-300">{t.premiumReaderUploadedLoadFailed}</p>
+        <a href="/read" className="ndl-press rounded-full bg-white/10 px-4 py-2 text-xs font-bold hover:bg-white/20">← {t.premiumReaderBackToUpload}</a>
       </div>
     );
   }
@@ -2040,8 +2118,6 @@ export default function PremiumReaderPreviewContent() {
       />
     );
   }
-
-  const t = UI_TEXT[uiLanguage];
 
   const readLabel = speechState === "loading" ? `⏳ ${t.readerPreparing}`
     : speechState === "speaking" ? `⏸ ${t.premiumReaderPause}`
@@ -2242,7 +2318,7 @@ export default function PremiumReaderPreviewContent() {
                 fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 4,
                 whiteSpace: "nowrap",
               }}>
-                📷 Selected
+                📷 {t.premiumReaderImageSelectedBadge}
               </div>
             </div>
           )}
@@ -2311,13 +2387,13 @@ export default function PremiumReaderPreviewContent() {
                             maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                   {activeSelection.type === "text"
                     ? `"${activeSelection.text.slice(0, 40)}${activeSelection.text.length > 40 ? "…" : ""}"`
-                    : `Image — Page ${activeSelection.pageNumber}`}
+                    : t.premiumReaderImagePageLabel.replace("{page}", String(activeSelection.pageNumber))}
                 </p>
                 <button onClick={clearActiveSelection}
                   style={{ background: "#f1f0ee", border: "none", borderRadius: 999,
                             padding: "3px 10px", fontSize: 11, fontWeight: 700,
                             color: "#64748b", cursor: "pointer", flexShrink: 0 }}>
-                  ✕ Clear
+                  ✕ {t.premiumReaderFloatingClear}
                 </button>
               </div>
               <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
@@ -2328,12 +2404,12 @@ export default function PremiumReaderPreviewContent() {
                         style={{ background: "#0f172a", color: "#fff", border: "none",
                                   borderRadius: 12, padding: "8px 14px", fontSize: 12,
                                   fontWeight: 700, cursor: "pointer" }}>
-                        { action==="explain" ? "🧠 Explain"
-                        : action==="summarize" ? "📝 Summarize"
-                        : action==="translate" ? "🌍 Translate"
-                        : action==="quiz"      ? "❓ Quiz"
-                        : action==="notes"     ? "📌 Notes"
-                                               : "🎴 Flashcards" }
+                        { action==="explain" ? `🧠 ${t.aiActionExplain}`
+                        : action==="summarize" ? `📝 ${t.aiActionSummarize}`
+                        : action==="translate" ? `🌍 ${t.aiActionTranslate}`
+                        : action==="quiz"      ? `❓ ${t.aiActionQuiz}`
+                        : action==="notes"     ? `📌 ${t.aiActionNotes}`
+                                               : `🎴 ${t.commonFlashcards}` }
                       </button>
                     ))}
                     {/* Phase 2 — Feature 1 & 2: these open their own small
@@ -2349,7 +2425,7 @@ export default function PremiumReaderPreviewContent() {
                       style={{ background: "#c18a3f", color: "#fff", border: "none",
                                 borderRadius: 12, padding: "8px 14px", fontSize: 12,
                                 fontWeight: 700, cursor: "pointer" }}>
-                      ⭐ Highlight
+                      ⭐ {t.aiActionHighlight}
                     </button>
                     <button className="ndl-press" onClick={() => {
                         pendingSelectionRectsRef.current = selectionRects;
@@ -2358,15 +2434,15 @@ export default function PremiumReaderPreviewContent() {
                       style={{ background: "#334155", color: "#fff", border: "none",
                                 borderRadius: 12, padding: "8px 14px", fontSize: 12,
                                 fontWeight: 700, cursor: "pointer" }}>
-                      📝 Add Note
+                      📝 {t.premiumReaderAddNote}
                     </button>
                   </>
                 ) : (
                   // Image selection menu — Explain Image + Summarize Diagram + Ask About Image (custom input)
                   <div style={{ display: "flex", flexDirection: "column", gap: 6, width: "100%" }}>
                     {[
-                      { action: "explain",   label: "🔍 Explain Image" },
-                      { action: "summarize", label: "📊 Summarize Diagram" },
+                      { action: "explain",   label: `🔍 ${t.aiImageExplain}` },
+                      { action: "summarize", label: `📊 ${t.aiImageSummarize}` },
                     ].map(({ action, label }) => (
                       <button key={action} onClick={() => handleSelectionAction(action)}
                         style={{ background: "#0f172a", color: "#fff", border: "none",
@@ -2382,7 +2458,7 @@ export default function PremiumReaderPreviewContent() {
                         style={{ background: "#334155", color: "#e2e8f0", border: "none",
                                   borderRadius: 12, padding: "8px 14px", fontSize: 12,
                                   fontWeight: 700, cursor: "pointer", textAlign: "left" }}>
-                        ❓ Ask About Image…
+                        ❓ {t.aiImageAsk}
                       </button>
                     ) : (
                       <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 4 }}>
@@ -2397,7 +2473,7 @@ export default function PremiumReaderPreviewContent() {
                             }
                             if (e.key === "Escape") { setShowAskInput(false); setAskImageInput(""); }
                           }}
-                          placeholder="Type your question about the image…"
+                          placeholder={t.premiumReaderImageQuestionPlaceholder}
                           style={{ borderRadius: 10, border: "1px solid #c18a3f", padding: "7px 10px",
                                     fontSize: 12, outline: "none", width: "100%", boxSizing: "border-box" }}
                         />
@@ -2413,13 +2489,13 @@ export default function PremiumReaderPreviewContent() {
                             style={{ flex: 1, background: "#0f172a", color: "#fff", border: "none",
                                       borderRadius: 10, padding: "7px 12px", fontSize: 12,
                                       fontWeight: 700, cursor: "pointer", opacity: askImageInput.trim() ? 1 : 0.4 }}>
-                            Ask
+                            {t.premiumReaderAsk}
                           </button>
                           <button onClick={() => { setShowAskInput(false); setAskImageInput(""); }}
                             style={{ background: "#f1f0ee", color: "#64748b", border: "none",
                                       borderRadius: 10, padding: "7px 12px", fontSize: 12,
                                       fontWeight: 600, cursor: "pointer" }}>
-                            Cancel
+                            {t.commonCancel}
                           </button>
                         </div>
                       </div>
@@ -2497,8 +2573,8 @@ export default function PremiumReaderPreviewContent() {
             <button
               onClick={toggleAiPanelCompact}
               className="ndl-press fixed bottom-20 right-4 z-40 flex h-12 w-12 items-center justify-center rounded-full bg-orange-600 text-xl text-white shadow-lg hover:bg-orange-700"
-              title="Open AI Companion"
-              aria-label="Open AI Companion"
+              title={t.aiCompanionExpand}
+              aria-label={t.aiCompanionExpand}
             >
               🤖
             </button>

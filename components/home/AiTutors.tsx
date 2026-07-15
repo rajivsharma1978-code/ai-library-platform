@@ -14,8 +14,8 @@ export function AiTutors() {
     ["📝", t.aiF2Title,  "/notes"],
     ["❓", t.aiF3Title,  "/quiz"],
     ["🌐", t.aiF4Title,  "/reader"],
-    ["💡", "Explain Like I'm 10", "/reader"],
-    ["🎙️", "Voice Mode", "/reader"],
+    ["💡", t.aiActionExplainLikeTen, "/reader"],
+    ["🎙️", t.aiActionVoiceMode, "/reader"],
   ];
 
   const FEATURES = [

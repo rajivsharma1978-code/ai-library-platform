@@ -291,8 +291,8 @@ export default function AICompanion({
     <div className="ndl-fade-in-scale flex h-full flex-col bg-white">
       {/* Header */}
       <div className="flex flex-shrink-0 items-center justify-between gap-2 border-b border-amber-100 px-5 py-4">
-        <div className="min-w-0">
-          <h2 className="truncate text-lg font-black text-slate-900">🤖 {t.aiCompanionHeading}</h2>
+        <div className="min-w-0 flex-1">
+          <h2 className="text-lg font-black leading-snug text-slate-900">🤖 {t.aiCompanionHeading}</h2>
         </div>
         <div className="flex flex-shrink-0 items-center gap-2">
           <div className="flex gap-1 rounded-full bg-amber-50 p-1">
