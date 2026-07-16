@@ -13,6 +13,13 @@
 //                           highlight/note/bookmark timestamps instead)
 //   ndl_ai_usage_stats    — a simple counter of AI questions asked
 
+import { UI_TEXT } from "@/lib/i18n";
+
+// Widened to `string` values (rather than `typeof UI_TEXT["en"]` directly)
+// so this accepts `t` for ANY of the 6 language variants, not just the
+// literal-typed English one.
+export type UIText = { [K in keyof typeof UI_TEXT["en"]]: string };
+
 export type DirectorBook = {
     id: string;
     title: string;
@@ -129,11 +136,11 @@ export type DirectorBook = {
   }
   
   // ── Greeting ─────────────────────────────────────────────────────────────
-  export function getGreeting(now: Date = new Date()): string {
+  export function getGreeting(t: UIText, now: Date = new Date()): string {
     const h = now.getHours();
-    if (h < 12) return "Good Morning";
-    if (h < 17) return "Good Afternoon";
-    return "Good Evening";
+    if (h < 12) return t.mySpaceGoodMorning;
+    if (h < 17) return t.mySpaceGoodAfternoon;
+    return t.mySpaceGoodEvening;
   }
   
   // ── Book lookup helper (tolerant of unknown directorBooks shape) ────────
@@ -159,28 +166,38 @@ export type DirectorBook = {
     aiQuestions: 24,
   };
   
-  export const DEMO_TOPICS = ["Quantum Computing", "Classical Algorithms", "Linear Algebra", "AI & Cognition", "Indian History"];
-  
-  export const DEMO_ACTIVITY: LearningActivityEntry[] = [
-    { id: "demo-1", type: "quiz",      bookId: "quantum",  bookTitle: "Quantum Computing", detail: "Scored 4/5 on a quick quiz", timestamp: Date.now() - 1000 * 60 * 25 },
-    { id: "demo-2", type: "bookmark",  bookId: "nalanda",   bookTitle: "Nalanda",            detail: "Bookmarked page 12",         timestamp: Date.now() - 1000 * 60 * 60 * 3 },
-    { id: "demo-3", type: "note",      bookId: "quantum",  bookTitle: "Quantum Computing",  detail: "Added a note on superposition", timestamp: Date.now() - 1000 * 60 * 60 * 20 },
-    { id: "demo-4", type: "highlight", bookId: "quantum",  bookTitle: "Quantum Computing",  detail: "Highlighted a passage on qubits", timestamp: Date.now() - 1000 * 60 * 60 * 26 },
-    { id: "demo-5", type: "open_book", bookId: "chandrayaan-3", bookTitle: "Chandrayaan-3",  detail: "Opened the book",            timestamp: Date.now() - 1000 * 60 * 60 * 48 },
-  ];
-  
-  const ACTIVITY_LABEL: Record<ActivityType, { icon: string; verb: string }> = {
-    highlight:  { icon: "⭐", verb: "Highlighted text in" },
-    note:       { icon: "📝", verb: "Added a note in" },
-    bookmark:   { icon: "🔖", verb: "Bookmarked a page in" },
-    quiz:       { icon: "❓", verb: "Finished a quiz in" },
-    open_book:  { icon: "📖", verb: "Opened" },
-    ai_question:{ icon: "🤖", verb: "Asked AI a question in" },
-  };
-  export function activityLabel(type: ActivityType) { return ACTIVITY_LABEL[type]; }
+  export function getDemoTopics(t: UIText): string[] {
+    return [t.mySpaceTopicQuantumComputing, t.mySpaceTopicClassicalAlgorithms, t.mySpaceTopicLinearAlgebra, t.mySpaceTopicAiCognition, t.mySpaceTopicIndianHistory];
+  }
+
+  export function getDemoActivity(t: UIText): LearningActivityEntry[] {
+    return [
+      { id: "demo-1", type: "quiz",      bookId: "quantum",  bookTitle: "Quantum Computing", detail: t.mySpaceDemoDetailQuiz,      timestamp: Date.now() - 1000 * 60 * 25 },
+      { id: "demo-2", type: "bookmark",  bookId: "nalanda",   bookTitle: "Nalanda",            detail: t.mySpaceDemoDetailBookmark,  timestamp: Date.now() - 1000 * 60 * 60 * 3 },
+      { id: "demo-3", type: "note",      bookId: "quantum",  bookTitle: "Quantum Computing",  detail: t.mySpaceDemoDetailNote,      timestamp: Date.now() - 1000 * 60 * 60 * 20 },
+      { id: "demo-4", type: "highlight", bookId: "quantum",  bookTitle: "Quantum Computing",  detail: t.mySpaceDemoDetailHighlight, timestamp: Date.now() - 1000 * 60 * 60 * 26 },
+      { id: "demo-5", type: "open_book", bookId: "chandrayaan-3", bookTitle: "Chandrayaan-3",  detail: t.mySpaceDemoDetailOpenBook,  timestamp: Date.now() - 1000 * 60 * 60 * 48 },
+    ];
+  }
+
+  // Templates contain a literal "{book}" placeholder the page splits on to
+  // keep the book title in its own bold/colored span — Hindi/Tamil/Bengali/
+  // Telugu/Marathi all place the object before the verb, the opposite order
+  // from English, so a fixed "verb then book" layout can't be reused as-is.
+  export function activityLabel(t: UIText, type: ActivityType): { icon: string; template: string } {
+    const ACTIVITY_LABEL: Record<ActivityType, { icon: string; template: string }> = {
+      highlight:  { icon: "⭐", template: t.mySpaceActivityHighlight },
+      note:       { icon: "📝", template: t.mySpaceActivityNote },
+      bookmark:   { icon: "🔖", template: t.mySpaceActivityBookmark },
+      quiz:       { icon: "❓", template: t.mySpaceActivityQuiz },
+      open_book:  { icon: "📖", template: t.mySpaceActivityOpenBook },
+      ai_question:{ icon: "🤖", template: t.mySpaceActivityAiQuestion },
+    };
+    return ACTIVITY_LABEL[type];
+  }
   
   // ── Full dashboard aggregate — everything the page needs, computed once ──
-  export function buildMySpaceDashboard(directorBooks: DirectorBook[]) {
+  export function buildMySpaceDashboard(directorBooks: DirectorBook[], t: UIText) {
     const highlights = loadHighlights();
     const notes = loadNotes();
     const bookmarks = loadBookmarks();
@@ -251,14 +268,14 @@ export type DirectorBook = {
       ...bookmarks.map((b): LearningActivityEntry => ({
         id: `b-${b.id}`, type: "bookmark", bookId: b.bookId,
         bookTitle: findBook(directorBooks, b.bookId)?.title,
-        detail: b.title?.trim() || `Page ${b.page}`,
+        detail: b.title?.trim() || `${t.commonPage} ${b.page}`,
         page: b.page, timestamp: b.createdAt,
       })),
       ...storedActivity,
     ].sort((a, b) => b.timestamp - a.timestamp);
   
     const usingDemoActivity = derivedActivity.length < 3;
-    const activity = (usingDemoActivity ? [...derivedActivity, ...DEMO_ACTIVITY] : derivedActivity)
+    const activity = (usingDemoActivity ? [...derivedActivity, ...getDemoActivity(t)] : derivedActivity)
       .sort((a, b) => b.timestamp - a.timestamp)
       .slice(0, 8);
   
@@ -275,11 +292,11 @@ export type DirectorBook = {
     // ── AI Recommendations — related books + topics, based on current book.
     // Explicitly demo-quality per the brief. ────────────────────────────────
     const relatedBooks = directorBooks.filter(b => b.id !== currentBook?.id).slice(0, 3);
-    const recommendedTopics = DEMO_TOPICS.slice(0, 4);
+    const recommendedTopics = getDemoTopics(t).slice(0, 4);
     const suggestedNext = relatedBooks[0];
-  
+
     return {
-      greeting: getGreeting(),
+      greeting: getGreeting(t),
       currentBook, currentProgress, progressPct,
       daysRemaining, estimatedCompletionDate,
       stats, usingDemoStats,
