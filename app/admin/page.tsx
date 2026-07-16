@@ -18,27 +18,9 @@ import InfoCard from "@/components/ui/InfoCard";
 
 const DEMO_AI_QUESTIONS = 24;
 
-const DEMO_ACTIVITY: AdminActivityEntry[] = [
-  { id: "demo-1", type: "upload",     message: "Chandrayaan 3: Tiranga Flies on the Moon uploaded and indexed", timestamp: Date.now() - 1000 * 60 * 40 },
-  { id: "demo-2", type: "edit",       message: "Nalanda: The Untold Story metadata updated",                     timestamp: Date.now() - 1000 * 60 * 60 * 3 },
-  { id: "demo-3", type: "ai",        message: "AI Tutor answered 12 student questions today",                   timestamp: Date.now() - 1000 * 60 * 60 * 5 },
-  { id: "demo-4", type: "moderation", message: "Quantum Computing flagged for language tagging review",         timestamp: Date.now() - 1000 * 60 * 60 * 20 },
-  { id: "demo-5", type: "add",        message: "New demo book draft created",                                    timestamp: Date.now() - 1000 * 60 * 60 * 30 },
-];
-
 const ACTIVITY_ICON: Record<ActivityType, string> = {
   add: "➕", edit: "✏️", delete: "🗑️", upload: "⬆️", ai: "🤖", moderation: "🛡️",
 };
-
-function timeAgo(ts: number): string {
-  const diff = Date.now() - ts;
-  const mins = Math.floor(diff / 60000);
-  if (mins < 1) return "just now";
-  if (mins < 60) return `${mins}m ago`;
-  const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs}h ago`;
-  return `${Math.floor(hrs / 24)}d ago`;
-}
 
 export default function AdminPage() {
   const { language } = useLanguage();
@@ -58,13 +40,31 @@ export default function AdminPage() {
     setMounted(true);
   }, [router]);
 
+  function timeAgo(ts: number): string {
+    const diff = Date.now() - ts;
+    const mins = Math.floor(diff / 60000);
+    if (mins < 1) return t.mySpaceJustNow;
+    if (mins < 60) return t.mySpaceMinAgo.replace("{n}", String(mins));
+    const hrs = Math.floor(mins / 60);
+    if (hrs < 24) return t.mySpaceHourAgo.replace("{n}", String(hrs));
+    return t.mySpaceDayAgo.replace("{n}", String(Math.floor(hrs / 24)));
+  }
+
   if (!mounted || !checkedAccess) {
     return (
       <main className="flex min-h-screen items-center justify-center bg-[radial-gradient(circle_at_top,#fff8e8_0%,#f3e6c8_45%,#eaddc0_100%)]">
-        <p className="text-sm font-semibold text-slate-400">Checking admin access…</p>
+        <p className="text-sm font-semibold text-slate-400">{t.adminCheckingAccess}</p>
       </main>
     );
   }
+
+  const DEMO_ACTIVITY: AdminActivityEntry[] = [
+    { id: "demo-1", type: "upload",     message: t.adminDashboardDemoActivity1, timestamp: Date.now() - 1000 * 60 * 40 },
+    { id: "demo-2", type: "edit",       message: t.adminDashboardDemoActivity2, timestamp: Date.now() - 1000 * 60 * 60 * 3 },
+    { id: "demo-3", type: "ai",        message: t.adminDashboardDemoActivity3, timestamp: Date.now() - 1000 * 60 * 60 * 5 },
+    { id: "demo-4", type: "moderation", message: t.adminDashboardDemoActivity4, timestamp: Date.now() - 1000 * 60 * 60 * 20 },
+    { id: "demo-5", type: "add",        message: t.adminDashboardDemoActivity5, timestamp: Date.now() - 1000 * 60 * 60 * 30 },
+  ];
 
   const overrides = loadBookOverrides();
   const displayBooks = buildDisplayBooks(directorBooks as any[], overrides);
@@ -93,46 +93,46 @@ export default function AdminPage() {
 
       <section className="flex-1 p-8 overflow-auto">
         <PageHeader
-          badge="Admin Control Center"
-          title="Manage AI-Powered Digital Library"
-          subtitle="Upload content, manage metadata, monitor AI usage, and track activity across the platform."
-          homeLabel="Library"
+          badge={t.adminDashboardBadge}
+          title={t.adminDashboardTitle}
+          subtitle={t.adminDashboardSubtitle}
+          homeLabel={t.navLibrary}
         />
 
         <InfoCard tone="amber" className="mb-8 py-3 text-sm font-semibold">
-          📌 Demo admin actions are stored locally for this prototype — nothing here touches a real backend.
+          📌 {t.adminDemoDisclaimer}
         </InfoCard>
 
         {/* 1. Dashboard overview */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
-          <StatCard icon="📚" label="Total Books" value={totalBooks} />
-          <StatCard icon="✅" label="Published" value={publishedBooks} />
-          <StatCard icon="📝" label="Draft" value={draftBooks} />
-          <StatCard icon="👥" label="Users" value={userCount} badge={usingDemoUsersCount ? "demo" : undefined} />
-          <StatCard icon="🤖" label="AI Questions" value={aiQuestions} badge={usingDemoAI ? "demo" : undefined} />
-          <StatCard icon="🌐" label="Languages" value={uniqueLanguages} />
-          <StatCard icon="⬆️" label="Upload Queue" value={uploadQueueCount} />
-          <StatCard icon="🕐" label="Recent Activity" value={activity.length} />
+          <StatCard icon="📚" label={t.adminStatTotalBooks} value={totalBooks} />
+          <StatCard icon="✅" label={t.adminStatPublished} value={publishedBooks} />
+          <StatCard icon="📝" label={t.adminStatDraft} value={draftBooks} />
+          <StatCard icon="👥" label={t.adminNavUsers} value={userCount} badge={usingDemoUsersCount ? t.commonDemo : undefined} />
+          <StatCard icon="🤖" label={t.adminStatAiQuestions} value={aiQuestions} badge={usingDemoAI ? t.commonDemo : undefined} />
+          <StatCard icon="🌐" label={t.adminNavLanguages} value={uniqueLanguages} />
+          <StatCard icon="⬆️" label={t.adminNavUploadQueue} value={uploadQueueCount} />
+          <StatCard icon="🕐" label={t.mySpaceRecentActivity} value={activity.length} />
         </div>
 
         {/* 4. Quick actions */}
         <div className="mt-8">
-          <h3 className="text-lg font-black text-slate-950 mb-3">Quick Actions</h3>
+          <h3 className="text-lg font-black text-slate-950 mb-3">{t.aiTutorQuickActions}</h3>
           <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
             <Link href="/admin/book-management?action=add" className="rounded-2xl bg-orange-600 px-4 py-4 text-center text-sm font-bold text-white shadow-md shadow-orange-500/25 hover:bg-orange-700">
-              ➕ Add Book
+              ➕ {t.adminQuickAddBook}
             </Link>
             <Link href="/admin/users" className="rounded-2xl bg-slate-950 px-4 py-4 text-center text-sm font-bold text-white shadow hover:bg-slate-800">
-              👥 Manage Users
+              👥 {t.adminQuickManageUsers}
             </Link>
             <Link href="/admin/ai-usage" className="rounded-2xl bg-slate-950 px-4 py-4 text-center text-sm font-bold text-white shadow hover:bg-slate-800">
-              🤖 View AI Usage
+              🤖 {t.adminQuickViewAiUsage}
             </Link>
             <Link href="/admin/languages" className="rounded-2xl bg-slate-950 px-4 py-4 text-center text-sm font-bold text-white shadow hover:bg-slate-800">
-              🌐 Language Settings
+              🌐 {t.adminQuickLanguageSettings}
             </Link>
             <Link href="/admin/upload-queue" className="rounded-2xl bg-slate-950 px-4 py-4 text-center text-sm font-bold text-white shadow hover:bg-slate-800">
-              ⬆️ Upload Queue
+              ⬆️ {t.adminNavUploadQueue}
             </Link>
           </div>
         </div>
@@ -140,9 +140,9 @@ export default function AdminPage() {
         {/* 3. Admin Activity */}
         <InfoCard className="mt-8">
           <div className="flex items-center justify-between">
-            <h3 className="text-2xl font-black text-slate-950">Recent Activity</h3>
+            <h3 className="text-2xl font-black text-slate-950">{t.mySpaceRecentActivity}</h3>
             {usingDemoActivity && (
-              <span className="rounded-full bg-amber-100 px-3 py-1 text-[10px] font-bold uppercase text-amber-700">demo</span>
+              <span className="rounded-full bg-amber-100 px-3 py-1 text-[10px] font-bold uppercase text-amber-700">{t.commonDemo}</span>
             )}
           </div>
           <div className="mt-6 space-y-1">
@@ -159,17 +159,17 @@ export default function AdminPage() {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mt-8">
           <InfoCard>
             <div className="flex items-center justify-between">
-              <h3 className="text-2xl font-black text-slate-950">AI System Status</h3>
-              <span className="rounded-full bg-slate-100 px-3 py-1 text-[10px] font-bold uppercase text-slate-500">static</span>
+              <h3 className="text-2xl font-black text-slate-950">{t.adminAiSystemStatusHeading}</h3>
+              <span className="rounded-full bg-slate-100 px-3 py-1 text-[10px] font-bold uppercase text-slate-500">{t.adminStaticBadge}</span>
             </div>
-            <p className="mt-1 text-xs text-slate-400">Fixed configuration flags, not a live health check — there's no backend service to poll in this prototype.</p>
+            <p className="mt-1 text-xs text-slate-400">{t.adminAiSystemStatusNote}</p>
             <div className="mt-6 space-y-4">
               {[
-                ["AI Provider", "Demo / OpenAI Ready"],
-                ["PDF Extraction", "Enabled"],
-                ["Multilingual AI", "Enabled"],
-                ["Voice Reader", "Enabled"],
-                ["Fallback Mode", "Enabled"],
+                [t.adminAiProviderLabel, t.adminAiProviderValue],
+                [t.adminPdfExtractionLabel, t.commonEnabled],
+                [t.settingsMultilingualAi, t.commonEnabled],
+                [t.adminVoiceReaderLabel, t.commonEnabled],
+                [t.adminFallbackModeLabel, t.commonEnabled],
               ].map(([label, value]) => (
                 <div key={label} className="flex justify-between border-b border-slate-100 pb-3">
                   <span className="text-slate-700">{label}</span>
@@ -180,7 +180,7 @@ export default function AdminPage() {
           </InfoCard>
 
           <InfoCard>
-            <h3 className="text-2xl font-black text-slate-950">Language Coverage</h3>
+            <h3 className="text-2xl font-black text-slate-950">{t.adminLanguageCoverageHeading}</h3>
             <div className="mt-6 space-y-4">
               {Array.from(new Set(displayBooks.map(b => b.language))).map(lang => {
                 const count = displayBooks.filter(b => b.language === lang).length;
@@ -189,7 +189,7 @@ export default function AdminPage() {
                   <div key={lang}>
                     <div className="flex justify-between text-sm text-slate-700">
                       <p>{lang}</p>
-                      <p>{count} book{count === 1 ? "" : "s"} · {pct}%</p>
+                      <p>{t.adminLanguageCoverageStat.replace("{count}", String(count)).replace("{pct}", String(pct))}</p>
                     </div>
                     <div className="w-full bg-slate-200 h-3 rounded-full mt-2">
                       <div className="bg-amber-500 h-3 rounded-full" style={{ width: `${pct}%` }} />

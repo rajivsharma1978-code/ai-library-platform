@@ -20,7 +20,7 @@ export default function AdminLoginPage() {
       localStorage.setItem("ndlAdminAccess", "granted");
       router.push("/admin");
     } else {
-      setError("Invalid admin credentials");
+      setError(t.adminLoginError);
     }
   }
 
@@ -32,29 +32,37 @@ export default function AdminLoginPage() {
         </p>
 
         <h1 className="text-4xl font-black mt-3 text-slate-950">
-          Admin Login
+          {t.adminLoginTitle}
         </h1>
 
         <p className="text-slate-600 mt-3">
-          Protected administrator access for the national digital library.
+          {t.adminLoginSubtitle}
         </p>
 
         <div className="mt-8 space-y-5">
-          <input
-            type="text"
-            placeholder="Admin ID"
-            value={username}
-            onChange={(e) => setUsername(e.target.value)}
-            className="w-full border border-slate-200 rounded-2xl px-5 py-4 outline-none focus:ring-2 focus:ring-amber-400 focus:border-transparent"
-          />
+          <div>
+            <label htmlFor="admin-username" className="sr-only">{t.adminLoginUsernameLabel}</label>
+            <input
+              id="admin-username"
+              type="text"
+              placeholder={t.adminLoginUsernameLabel}
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              className="w-full border border-slate-200 rounded-2xl px-5 py-4 outline-none focus:ring-2 focus:ring-amber-400 focus:border-transparent"
+            />
+          </div>
 
-          <input
-            type="password"
-            placeholder="Password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            className="w-full border border-slate-200 rounded-2xl px-5 py-4 outline-none focus:ring-2 focus:ring-amber-400 focus:border-transparent"
-          />
+          <div>
+            <label htmlFor="admin-password" className="sr-only">{t.adminLoginPasswordLabel}</label>
+            <input
+              id="admin-password"
+              type="password"
+              placeholder={t.adminLoginPasswordLabel}
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              className="w-full border border-slate-200 rounded-2xl px-5 py-4 outline-none focus:ring-2 focus:ring-amber-400 focus:border-transparent"
+            />
+          </div>
 
           {error && (
             <p className="text-red-600 text-sm">
@@ -66,21 +74,21 @@ export default function AdminLoginPage() {
             onClick={handleLogin}
             className="w-full bg-orange-600 hover:bg-orange-700 text-white py-4 rounded-2xl font-bold shadow-md shadow-orange-500/25 transition"
           >
-            Login to Admin Dashboard
+            {t.adminLoginButton}
           </button>
         </div>
 
         <div className="mt-8 bg-blue-50 border border-blue-200 rounded-2xl p-4 text-sm">
           <p className="font-semibold text-blue-900">
-            Demo Credentials
+            {t.adminLoginDemoCredentialsLabel}
           </p>
 
           <p className="mt-2 text-blue-700">
-            ID: demo
+            {t.adminLoginDemoIdLabel} demo
           </p>
 
           <p className="text-blue-700">
-            Password: demo123
+            {t.adminLoginDemoPasswordLabel} demo123
           </p>
         </div>
       </div>

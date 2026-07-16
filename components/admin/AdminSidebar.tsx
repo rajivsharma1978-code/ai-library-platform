@@ -2,28 +2,49 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
+import { UI_TEXT } from "@/lib/i18n";
+import { useLanguage } from "@/lib/useLanguage";
 
-const navItems = [
-  { label: "📊 Dashboard", href: "/admin" },
-  { label: "📚 Book Management", href: "/admin/book-management" },
-  { label: "⬆️ Upload Queue", href: "/admin/upload-queue" },
-  { label: "🌐 Languages", href: "/admin/languages" },
-  { label: "👥 Users", href: "/admin/users" },
-  { label: "📈 Analytics", href: "/analytics" },
-  { label: "🤖 AI Usage", href: "/admin/ai-usage" },
-  { label: "♿ Accessibility", href: "/admin/accessibility" },
-  { label: "🛡️ Moderation", href: "/admin/moderation" },
+// `label` is resolved from UI_TEXT inside the component (see NAV_LABEL
+// below) — this array only holds the language-independent icon/href.
+const navItems: { icon: string; href: string }[] = [
+  { icon: "📊", href: "/admin" },
+  { icon: "📚", href: "/admin/book-management" },
+  { icon: "⬆️", href: "/admin/upload-queue" },
+  { icon: "🌐", href: "/admin/languages" },
+  { icon: "👥", href: "/admin/users" },
+  { icon: "📈", href: "/analytics" },
+  { icon: "🤖", href: "/admin/ai-usage" },
+  { icon: "♿", href: "/admin/accessibility" },
+  { icon: "🛡️", href: "/admin/moderation" },
 ];
 
 export default function AdminSidebar() {
   const pathname = usePathname();
   const router = useRouter();
+  const { language } = useLanguage();
+  const t = UI_TEXT[language];
+
+  // href-to-label lookup — every language resolves independently via
+  // t.*, no English/Hindi conditional fallback. Reuses existing keys
+  // where the wording already matches elsewhere in the app.
+  const NAV_LABEL: Record<string, string> = {
+    "/admin": t.adminNavDashboard,
+    "/admin/book-management": t.adminNavBookManagement,
+    "/admin/upload-queue": t.adminNavUploadQueue,
+    "/admin/languages": t.adminNavLanguages,
+    "/admin/users": t.adminNavUsers,
+    "/analytics": t.navAnalytics,
+    "/admin/ai-usage": t.adminNavAiUsage,
+    "/admin/accessibility": t.settingsAccessibility,
+    "/admin/moderation": t.adminNavModeration,
+  };
 
   return (
     <aside className="w-72 bg-slate-950 text-white p-6 min-h-screen flex flex-col">
       <div>
-        <h1 className="text-3xl font-bold">NDL AI Admin</h1>
-        <p className="text-slate-400 mt-2 text-sm">National library control center</p>
+        <h1 className="text-3xl font-bold">{t.adminPanelTitle}</h1>
+        <p className="text-slate-400 mt-2 text-sm">{t.adminPanelSubtitle}</p>
       </div>
 
       <nav className="mt-10 space-y-2 flex-1">
@@ -39,7 +60,7 @@ export default function AdminSidebar() {
                   : "bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-white"
               }`}
             >
-              {item.label}
+              {item.icon} {NAV_LABEL[item.href]}
             </Link>
           );
         })}
@@ -47,7 +68,7 @@ export default function AdminSidebar() {
 
       <div className="mt-auto pt-6 space-y-3 border-t border-slate-800">
         <Link href="/" className="block text-blue-400 font-semibold text-sm hover:text-blue-300 transition">
-          ← Back to Library
+          ← {t.settingsBackToLibrary}
         </Link>
         <button
           onClick={() => {
@@ -56,7 +77,7 @@ export default function AdminSidebar() {
           }}
           className="w-full bg-slate-800 hover:bg-slate-700 text-white px-4 py-2 rounded-xl text-sm font-semibold transition"
         >
-          Logout
+          {t.adminLogout}
         </button>
       </div>
     </aside>
