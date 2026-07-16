@@ -3,6 +3,8 @@
 import { useEffect, useState, type ChangeEvent } from "react";
 import { useRouter } from "next/navigation";
 import AdminSidebar from "@/components/admin/AdminSidebar";
+import { UI_TEXT } from "@/lib/i18n";
+import { useLanguage } from "@/lib/useLanguage";
 import {
   loadUploadQueue, saveUploadQueue, usingDemoUploadQueue,
   loadBookOverrides, saveBookOverrides, logActivity, newId,
@@ -12,23 +14,15 @@ import PageHeader from "@/components/ui/PageHeader";
 import StatCard from "@/components/ui/StatCard";
 import InfoCard from "@/components/ui/InfoCard";
 
+type UIText = { [K in keyof typeof UI_TEXT["en"]]: string };
+
 // Turns "marathi-science-textbook.pdf" into "Marathi Science Textbook" —
 // only used as a starting guess; the admin can still rename it via Book
 // Management after approving.
-function titleGuessFromFileName(fileName: string): string {
+function titleGuessFromFileName(fileName: string, t: UIText): string {
   const base = fileName.replace(/\.pdf$/i, "").replace(/[-_]+/g, " ").replace(/\s+/g, " ").trim();
   const titled = base.replace(/\b\w/g, (c) => c.toUpperCase());
-  return titled || "Untitled Upload";
-}
-
-function timeAgo(ts: number): string {
-  const diff = Date.now() - ts;
-  const mins = Math.floor(diff / 60000);
-  if (mins < 1) return "just now";
-  if (mins < 60) return `${mins}m ago`;
-  const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs}h ago`;
-  return `${Math.floor(hrs / 24)}d ago`;
+  return titled || t.adminUqUntitledUpload;
 }
 
 const STATUS_COLORS: Record<string, string> = {
@@ -39,6 +33,8 @@ const STATUS_COLORS: Record<string, string> = {
 };
 
 export default function AdminUploadQueuePage() {
+  const { language } = useLanguage();
+  const t = UI_TEXT[language];
   const router = useRouter();
   const [mounted, setMounted] = useState(false);
   const [checkedAccess, setCheckedAccess] = useState(false);
@@ -61,6 +57,16 @@ export default function AdminUploadQueuePage() {
     refresh();
     setMounted(true);
   }, [router]);
+
+  function timeAgo(ts: number): string {
+    const diff = Date.now() - ts;
+    const mins = Math.floor(diff / 60000);
+    if (mins < 1) return t.mySpaceJustNow;
+    if (mins < 60) return t.mySpaceMinAgo.replace("{n}", String(mins));
+    const hrs = Math.floor(mins / 60);
+    if (hrs < 24) return t.mySpaceHourAgo.replace("{n}", String(hrs));
+    return t.mySpaceDayAgo.replace("{n}", String(Math.floor(hrs / 24)));
+  }
 
   // Approving turns the queue item into a real (custom) book, in Draft
   // status pending final publish from Book Management — a small but
@@ -108,7 +114,7 @@ export default function AdminUploadQueuePage() {
     e.target.value = "";
     if (!file) return;
     if (file.type !== "application/pdf") {
-      setUploadError("Please choose a PDF file.");
+      setUploadError(t.adminUqErrorNotPdf);
       return;
     }
     setUploading(true);
@@ -133,14 +139,14 @@ export default function AdminUploadQueuePage() {
       }
 
       const item: UploadQueueItem = {
-        id: newId("up"), fileName: file.name, bookTitleGuess: titleGuessFromFileName(file.name),
+        id: newId("up"), fileName: file.name, bookTitleGuess: titleGuessFromFileName(file.name, t),
         status: "Ready for Review", submittedAt: Date.now(), pdfDataUrl: dataUrl, pages,
       };
       saveUploadQueue([item, ...queue]);
       logActivity("upload", `${item.fileName} uploaded and queued for review`);
       refresh();
     } catch {
-      setUploadError("Could not read this PDF. Please try a different file.");
+      setUploadError(t.adminUqErrorReadFailed);
     } finally {
       setUploading(false);
     }
@@ -149,7 +155,7 @@ export default function AdminUploadQueuePage() {
   if (!mounted || !checkedAccess) {
     return (
       <main className="flex min-h-screen items-center justify-center bg-[radial-gradient(circle_at_top,#fff8e8_0%,#f3e6c8_45%,#eaddc0_100%)]">
-        <p className="text-sm font-semibold text-slate-400">Checking admin access…</p>
+        <p className="text-sm font-semibold text-slate-400">{t.adminCheckingAccess}</p>
       </main>
     );
   }
@@ -163,31 +169,31 @@ export default function AdminUploadQueuePage() {
       <AdminSidebar />
       <section className="flex-1 p-8 overflow-auto">
         <PageHeader
-          badge="Admin · Upload Queue"
-          title="Upload & Processing Queue"
-          subtitle="Review incoming uploads, approve them into the catalog, or reject them."
-          homeLabel="Library"
+          badge={t.adminUqBadge}
+          title={t.adminUqTitle}
+          subtitle={t.adminUqSubtitle}
+          homeLabel={t.navLibrary}
         />
 
         <InfoCard tone="amber" className="mb-6 py-3 text-sm font-semibold">
-          📌 Demo admin actions are stored locally for this prototype — nothing here touches a real backend.
+          📌 {t.adminDemoDisclaimer}
         </InfoCard>
 
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          <StatCard label="Total in Queue" value={queue.length} badge={usingDemo ? "demo" : undefined} />
-          <StatCard label="Processing" value={processing} valueClassName="text-blue-600" />
-          <StatCard label="Ready for Review" value={readyForReview} valueClassName="text-yellow-600" />
-          <StatCard label="Approved" value={approved} valueClassName="text-green-600" />
+          <StatCard label={t.adminUqStatTotal} value={queue.length} badge={usingDemo ? t.commonDemo : undefined} />
+          <StatCard label={t.adminUqStatProcessing} value={processing} valueClassName="text-blue-600" />
+          <StatCard label={t.adminUqStatReadyForReview} value={readyForReview} valueClassName="text-yellow-600" />
+          <StatCard label={t.adminUqStatApproved} value={approved} valueClassName="text-green-600" />
         </div>
 
         <InfoCard className="mt-8">
           <div className="border-2 border-dashed border-slate-300 rounded-3xl p-8 text-center">
             <p className="text-slate-500">
-              Upload a real PDF — once approved in this queue, it becomes an actual readable book across the site (homepage, library, AI Tutor, Read).
+              {t.adminUqUploadInstructions}
             </p>
             <label className="mt-6 inline-block cursor-pointer">
               <span className={`inline-block rounded-xl bg-orange-600 px-6 py-2.5 text-sm font-bold text-white shadow-md shadow-orange-500/25 transition ${uploading ? "opacity-60" : "hover:bg-orange-700"}`}>
-                {uploading ? "Reading PDF…" : "Choose PDF to Upload"}
+                {uploading ? t.adminUqReadingPdf : t.adminUqChoosePdf}
               </span>
               <input type="file" accept="application/pdf" onChange={handleFileSelected} disabled={uploading} className="hidden" />
             </label>
@@ -198,7 +204,7 @@ export default function AdminUploadQueuePage() {
         <div className="bg-white rounded-3xl shadow-[0_20px_60px_rgba(75,45,12,0.10)] ring-1 ring-black/5 mt-6 overflow-hidden overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="bg-slate-50 border-b border-slate-200">
-              <tr>{["File", "Detected Title", "Status", "Submitted", "Actions"].map(h => (
+              <tr>{[t.adminUqTableFile, t.adminUqTableDetectedTitle, t.adminBmFieldStatus, t.adminUqTableSubmitted, t.adminBmTableActions].map(h => (
                 <th key={h} className="text-left px-6 py-4 font-semibold text-slate-600 whitespace-nowrap">{h}</th>
               ))}</tr>
             </thead>
@@ -213,12 +219,12 @@ export default function AdminUploadQueuePage() {
                     <div className="flex gap-3">
                       {(item.status === "Processing" || item.status === "Ready for Review") && (
                         <>
-                          <button onClick={() => approve(item)} className="text-green-600 hover:underline text-xs font-semibold">Approve</button>
-                          <button onClick={() => reject(item)} className="text-red-500 hover:underline text-xs font-semibold">Reject</button>
+                          <button onClick={() => approve(item)} className="text-green-600 hover:underline text-xs font-semibold">{t.adminUqApprove}</button>
+                          <button onClick={() => reject(item)} className="text-red-500 hover:underline text-xs font-semibold">{t.adminUqReject}</button>
                         </>
                       )}
                       {(item.status === "Approved" || item.status === "Rejected") && (
-                        <button onClick={() => removeItem(item)} className="text-slate-400 hover:underline text-xs font-semibold">Dismiss</button>
+                        <button onClick={() => removeItem(item)} className="text-slate-400 hover:underline text-xs font-semibold">{t.adminUqDismiss}</button>
                       )}
                     </div>
                   </td>
@@ -226,7 +232,7 @@ export default function AdminUploadQueuePage() {
               ))}
             </tbody>
           </table>
-          {queue.length === 0 && <p className="text-center text-slate-400 py-12">The upload queue is empty.</p>}
+          {queue.length === 0 && <p className="text-center text-slate-400 py-12">{t.adminUqEmptyQueue}</p>}
         </div>
       </section>
     </main>

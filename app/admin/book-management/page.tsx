@@ -24,6 +24,10 @@ const statusColors: Record<BookStatus, string> = {
   "Under Review": "bg-blue-100 text-blue-700",
 };
 
+// Literal stored metadata values (compared against book.language/status and
+// written into AdminBookOverride/DisplayBook records) — deliberately NOT
+// translated, matching the established precedent that book-language and
+// status metadata stay in their canonical form everywhere else in the app.
 const LANGUAGE_OPTIONS = ["English", "Hindi", "Tamil", "Bengali", "Marathi", "Telugu"];
 const STATUS_OPTIONS: BookStatus[] = ["Published", "Draft", "Pending", "Under Review"];
 
@@ -113,7 +117,7 @@ function BookManagementContent() {
     const overrides = loadBookOverrides();
     setBooks(buildDisplayBooks(directorBooks as any[], overrides));
   }
- 
+
   useEffect(() => {
     if (localStorage.getItem("ndlAdminAccess") !== "granted") {
       router.push("/admin-login");
@@ -184,7 +188,7 @@ function BookManagementContent() {
   }
 
   function removeBook(book: DisplayBook) {
-    if (!window.confirm(`Remove "${book.title}"? This is a demo action stored locally.`)) return;
+    if (!window.confirm(t.adminBmRemoveConfirm.replace("{title}", book.title))) return;
     const overrides = loadBookOverrides();
     if (book.isCustom) {
       saveBookOverrides(overrides.filter(o => o.id !== book.id));
@@ -206,7 +210,7 @@ function BookManagementContent() {
   if (!mounted || !checkedAccess) {
     return (
       <main className="flex min-h-screen items-center justify-center bg-[radial-gradient(circle_at_top,#fff8e8_0%,#f3e6c8_45%,#eaddc0_100%)]">
-        <p className="text-sm font-semibold text-slate-400">Checking admin access…</p>
+        <p className="text-sm font-semibold text-slate-400">{t.adminCheckingAccess}</p>
       </main>
     );
   }
@@ -217,109 +221,115 @@ function BookManagementContent() {
 
       <section className="flex-1 p-8 overflow-auto">
         <PageHeader
-          badge="Admin · Book Management"
-          title="Book Management"
-          subtitle="Add, edit, and manage every book in the National Digital Library catalog."
-          homeLabel="Library"
+          badge={t.adminBmBadge}
+          title={t.adminNavBookManagement}
+          subtitle={t.adminBmSubtitle}
+          homeLabel={t.navLibrary}
         />
 
         <InfoCard tone="amber" className="mb-6 py-3 text-sm font-semibold">
-          📌 Demo admin actions are stored locally for this prototype — nothing here touches a real backend.
+          📌 {t.adminDemoDisclaimer}
         </InfoCard>
 
         {/* Stats row */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          <StatCard label="Total Books" value={books.length} valueClassName="text-blue-600" />
-          <StatCard label="Published" value={books.filter(b => b.status === "Published").length} valueClassName="text-green-600" />
-          <StatCard label="Draft" value={books.filter(b => b.status === "Draft").length} valueClassName="text-slate-600" />
-          <StatCard label="In Review" value={books.filter(b => b.status === "Pending" || b.status === "Under Review").length} valueClassName="text-yellow-600" />
+          <StatCard label={t.adminStatTotalBooks} value={books.length} valueClassName="text-blue-600" />
+          <StatCard label={t.adminStatPublished} value={books.filter(b => b.status === "Published").length} valueClassName="text-green-600" />
+          <StatCard label={t.adminStatDraft} value={books.filter(b => b.status === "Draft").length} valueClassName="text-slate-600" />
+          <StatCard label={t.adminBmStatInReview} value={books.filter(b => b.status === "Pending" || b.status === "Under Review").length} valueClassName="text-yellow-600" />
         </div>
 
         {/* Filters */}
         <InfoCard className="mt-6 flex flex-wrap gap-4 items-center">
-          <SearchBar value={search} onChange={setSearch} placeholder="Search by title or author…" className="flex-1 min-w-[200px]" />
-          <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)}
+          <div role="search" aria-label={t.adminBmSearchPlaceholder} className="flex-1 min-w-[200px]">
+            <SearchBar value={search} onChange={setSearch} placeholder={t.adminBmSearchPlaceholder} />
+          </div>
+          <label htmlFor="bm-filter-status" className="sr-only">{t.adminBmFilterStatusLabel}</label>
+          <select id="bm-filter-status" value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)}
             className="border border-slate-200 rounded-xl px-4 py-2.5 outline-none text-sm focus:ring-2 focus:ring-amber-400">
-            {["All", ...STATUS_OPTIONS].map((s) => <option key={s}>{s}</option>)}
+            <option value="All">{t.adminBmFilterAllOption}</option>
+            {STATUS_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
           </select>
-          <select value={filterLanguage} onChange={(e) => setFilterLanguage(e.target.value)}
+          <label htmlFor="bm-filter-language" className="sr-only">{t.adminBmFilterLanguageLabel}</label>
+          <select id="bm-filter-language" value={filterLanguage} onChange={(e) => setFilterLanguage(e.target.value)}
             className="border border-slate-200 rounded-xl px-4 py-2.5 outline-none text-sm focus:ring-2 focus:ring-amber-400">
-            {["All", ...LANGUAGE_OPTIONS].map((l) => <option key={l}>{l}</option>)}
+            <option value="All">{t.adminBmFilterAllOption}</option>
+            {LANGUAGE_OPTIONS.map((l) => <option key={l} value={l}>{l}</option>)}
           </select>
           <AppButton onClick={openAddForm} variant="accent">
-            + Add Book
+            + {t.adminBmAddBook}
           </AppButton>
         </InfoCard>
 
         {/* Add/Edit form */}
         {formOpen && (
           <InfoCard className="mt-6 p-8">
-            <h3 className="text-xl font-black text-slate-950">{formMode === "add" ? "Add New Book (Demo)" : "Edit Book Metadata (Demo)"}</h3>
+            <h3 className="text-xl font-black text-slate-950">{formMode === "add" ? t.adminBmAddNewBookTitle : t.adminBmEditBookTitle}</h3>
             <div className="mt-5 grid gap-4 md:grid-cols-2">
               <label className="block">
-                <span className="mb-1 block text-xs font-bold text-slate-500">Title</span>
+                <span className="mb-1 block text-xs font-bold text-slate-500">{t.adminBmFieldTitle}</span>
                 <input value={form.title} onChange={(e) => setForm(f => ({ ...f, title: e.target.value }))}
                   className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-amber-400 focus:border-transparent" />
               </label>
               <label className="block">
-                <span className="mb-1 block text-xs font-bold text-slate-500">Author</span>
+                <span className="mb-1 block text-xs font-bold text-slate-500">{t.adminBmFieldAuthor}</span>
                 <input value={form.author} onChange={(e) => setForm(f => ({ ...f, author: e.target.value }))}
                   className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-amber-400 focus:border-transparent" />
               </label>
               <label className="block">
-                <span className="mb-1 block text-xs font-bold text-slate-500">Language</span>
+                <span className="mb-1 block text-xs font-bold text-slate-500">{t.adminBmFieldLanguage}</span>
                 <select value={form.language} onChange={(e) => setForm(f => ({ ...f, language: e.target.value }))}
                   className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-amber-400">
                   {LANGUAGE_OPTIONS.map(l => <option key={l}>{l}</option>)}
                 </select>
               </label>
               <label className="block">
-                <span className="mb-1 block text-xs font-bold text-slate-500">Category</span>
+                <span className="mb-1 block text-xs font-bold text-slate-500">{t.adminBmFieldCategory}</span>
                 <input value={form.category} onChange={(e) => setForm(f => ({ ...f, category: e.target.value }))}
-                  placeholder="e.g. Science, History, Fiction"
+                  placeholder={t.adminBmCategoryPlaceholder}
                   className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-amber-400 focus:border-transparent" />
               </label>
               <label className="block">
-                <span className="mb-1 block text-xs font-bold text-slate-500">Status</span>
+                <span className="mb-1 block text-xs font-bold text-slate-500">{t.adminBmFieldStatus}</span>
                 <select value={form.status} onChange={(e) => setForm(f => ({ ...f, status: e.target.value as BookStatus }))}
                   className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-amber-400">
                   {STATUS_OPTIONS.map(s => <option key={s}>{s}</option>)}
                 </select>
               </label>
               <label className="block">
-                <span className="mb-1 block text-xs font-bold text-slate-500">Pages</span>
+                <span className="mb-1 block text-xs font-bold text-slate-500">{t.adminBmFieldPages}</span>
                 <input type="number" value={form.pages} onChange={(e) => setForm(f => ({ ...f, pages: e.target.value }))}
                   className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-amber-400 focus:border-transparent" />
               </label>
               <label className="block">
-                <span className="mb-1 block text-xs font-bold text-slate-500">Front-matter pages (before printed page 1)</span>
+                <span className="mb-1 block text-xs font-bold text-slate-500">{t.adminBmFieldFrontMatterCount}</span>
                 <input type="number" min={0} value={form.frontMatterCount}
                   onChange={(e) => setForm(f => ({ ...f, frontMatterCount: e.target.value }))}
-                  placeholder="e.g. 6 — cover/title/contents/preface"
+                  placeholder={t.adminBmFrontMatterPlaceholder}
                   className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-amber-400 focus:border-transparent" />
                 <p className="mt-1 text-[11px] text-slate-400">
-                  Leave blank if this book has no separate printed page numbering — the PDF page number is shown as-is.
+                  {t.adminBmFrontMatterHelp}
                 </p>
               </label>
               <label className="block md:col-span-2">
-                <span className="mb-1 block text-xs font-bold text-slate-500">Front-matter labels (optional, one per line: "PDF page: Label")</span>
+                <span className="mb-1 block text-xs font-bold text-slate-500">{t.adminBmFieldPageLabels}</span>
                 <textarea rows={3} value={form.pageLabels}
                   onChange={(e) => setForm(f => ({ ...f, pageLabels: e.target.value }))}
-                  placeholder={"1: Cover\n2: Title Page\n3: Contents"}
+                  placeholder={t.adminBmPageLabelsPlaceholder}
                   className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-amber-400 focus:border-transparent font-mono" />
               </label>
 
               {/* Upload cover/PDF UI mock — remembers the filename only,
                   nothing is actually uploaded anywhere. */}
               <label className="block">
-                <span className="mb-1 block text-xs font-bold text-slate-500">Cover Image (mock upload)</span>
+                <span className="mb-1 block text-xs font-bold text-slate-500">{t.adminBmFieldCoverMock}</span>
                 <input type="file" accept="image/*"
                   onChange={(e) => setForm(f => ({ ...f, coverFileName: e.target.files?.[0]?.name || "" }))}
                   className="w-full rounded-xl border border-dashed border-slate-300 px-3 py-2 text-xs text-slate-500" />
                 {form.coverFileName && <p className="mt-1 text-xs text-slate-400">📎 {form.coverFileName}</p>}
               </label>
               <label className="block">
-                <span className="mb-1 block text-xs font-bold text-slate-500">PDF File (mock upload)</span>
+                <span className="mb-1 block text-xs font-bold text-slate-500">{t.adminBmFieldPdfMock}</span>
                 <input type="file" accept="application/pdf"
                   onChange={(e) => setForm(f => ({ ...f, pdfFileName: e.target.files?.[0]?.name || "" }))}
                   className="w-full rounded-xl border border-dashed border-slate-300 px-3 py-2 text-xs text-slate-500" />
@@ -329,10 +339,10 @@ function BookManagementContent() {
 
             <div className="mt-6 flex gap-3">
               <AppButton onClick={submitForm} disabled={!form.title.trim()} variant="accent">
-                {formMode === "add" ? "Add Book" : "Save Changes"}
+                {formMode === "add" ? t.adminBmAddBook : t.adminBmSaveChanges}
               </AppButton>
               <AppButton onClick={closeForm} variant="secondary">
-                Cancel
+                {t.commonCancel}
               </AppButton>
             </div>
           </InfoCard>
@@ -343,7 +353,7 @@ function BookManagementContent() {
           <table className="w-full text-sm">
             <thead className="bg-slate-50 border-b border-slate-200">
               <tr>
-                {["Title", "Author", "Language", "Category", "Format", "Pages", "Status", "Actions"].map((h) => (
+                {[t.adminBmFieldTitle, t.adminBmFieldAuthor, t.adminBmFieldLanguage, t.adminBmFieldCategory, t.adminBmTableFormat, t.adminBmFieldPages, t.adminBmFieldStatus, t.adminBmTableActions].map((h) => (
                   <th key={h} className="text-left px-6 py-4 font-semibold text-slate-600 whitespace-nowrap">{h}</th>
                 ))}
               </tr>
@@ -352,7 +362,7 @@ function BookManagementContent() {
               {filtered.map((book) => (
                 <tr key={book.id} className="border-b border-slate-100 hover:bg-slate-50 transition">
                   <td className="px-6 py-4 font-medium text-slate-800 max-w-[220px]">
-                    <p className="truncate">{book.title}{book.isCustom && <span className="ml-2 rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-bold text-blue-700">custom</span>}</p>
+                    <p className="truncate">{book.title}{book.isCustom && <span className="ml-2 rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-bold text-blue-700">{t.adminBmCustomBadge}</span>}</p>
                   </td>
                   <td className="px-6 py-4 text-slate-600">{book.author}</td>
                   <td className="px-6 py-4 text-slate-600">{book.language}</td>
@@ -369,10 +379,10 @@ function BookManagementContent() {
                   <td className="px-6 py-4">
                     <div className="flex gap-3">
                       <button onClick={() => openEditForm(book)} className="text-blue-600 hover:underline text-xs font-semibold">
-                        Edit
+                        {t.adminBmEdit}
                       </button>
                       <button onClick={() => removeBook(book)} className="text-red-500 hover:underline text-xs font-semibold">
-                        Delete
+                        {t.adminBmDelete}
                       </button>
                     </div>
                   </td>

@@ -3,6 +3,8 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import AdminSidebar from "@/components/admin/AdminSidebar";
+import { UI_TEXT } from "@/lib/i18n";
+import { useLanguage } from "@/lib/useLanguage";
 import { directorBooks } from "@/lib/directorBooks";
 import {
   loadBookOverrides, buildDisplayBooks, loadLanguageSettings, saveLanguageSettings,
@@ -13,6 +15,8 @@ import StatCard from "@/components/ui/StatCard";
 import InfoCard from "@/components/ui/InfoCard";
 
 export default function AdminLanguagesPage() {
+  const { language } = useLanguage();
+  const t = UI_TEXT[language];
   const router = useRouter();
   const [mounted, setMounted] = useState(false);
   const [checkedAccess, setCheckedAccess] = useState(false);
@@ -56,7 +60,7 @@ export default function AdminLanguagesPage() {
   if (!mounted || !checkedAccess) {
     return (
       <main className="flex min-h-screen items-center justify-center bg-[radial-gradient(circle_at_top,#fff8e8_0%,#f3e6c8_45%,#eaddc0_100%)]">
-        <p className="text-sm font-semibold text-slate-400">Checking admin access…</p>
+        <p className="text-sm font-semibold text-slate-400">{t.adminCheckingAccess}</p>
       </main>
     );
   }
@@ -69,24 +73,24 @@ export default function AdminLanguagesPage() {
       <AdminSidebar />
       <section className="flex-1 p-8 overflow-auto">
         <PageHeader
-          badge="Admin · Languages"
-          title="Language Settings"
-          subtitle="Manage which languages are available, and track catalog coverage per language."
-          homeLabel="Library"
+          badge={t.adminLangBadge}
+          title={t.adminQuickLanguageSettings}
+          subtitle={t.adminLangSubtitle}
+          homeLabel={t.navLibrary}
         />
 
         <InfoCard tone="amber" className="mb-6 py-3 text-sm font-semibold">
-          📌 Demo admin actions are stored locally for this prototype — nothing here touches a real backend.
+          📌 {t.adminDemoDisclaimer}
         </InfoCard>
 
         <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-          <StatCard label="Languages Tracked" value={settings.length} />
-          <StatCard label="Enabled" value={enabledCount} valueClassName="text-green-600" />
-          <StatCard label="Books in Catalog" value={totalBooks} badge={usingDemo ? "demo settings" : undefined} />
+          <StatCard label={t.adminLangStatTracked} value={settings.length} />
+          <StatCard label={t.commonEnabled} value={enabledCount} valueClassName="text-green-600" />
+          <StatCard label={t.adminLangStatBooksInCatalog} value={totalBooks} badge={usingDemo ? t.adminLangDemoSettingsBadge : undefined} />
         </div>
 
         <InfoCard className="mt-8">
-          <h3 className="text-2xl font-black text-slate-950">Language Coverage</h3>
+          <h3 className="text-2xl font-black text-slate-950">{t.adminLanguageCoverageHeading}</h3>
           <div className="mt-6 space-y-6">
             {settings.map(s => {
               const count = bookCounts[s.language] || 0;
@@ -96,11 +100,11 @@ export default function AdminLanguagesPage() {
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <div>
                       <p className="text-lg font-bold text-slate-900">{s.language}</p>
-                      <p className="text-xs text-slate-500">{count} book{count === 1 ? "" : "s"} in catalog · {actualPct}% of total</p>
+                      <p className="text-xs text-slate-500">{t.adminLangBooksInCatalogStat.replace("{count}", String(count)).replace("{pct}", String(actualPct))}</p>
                     </div>
                     <div className="flex items-center gap-3">
                       <label className="flex items-center gap-2 text-xs font-semibold text-slate-500">
-                        Target coverage
+                        {t.adminLangTargetCoverageLabel}
                         <input
                           type="number" min={0} max={100} value={s.targetCoveragePercent}
                           onChange={(e) => updateTarget(s, Math.max(0, Math.min(100, Number(e.target.value))))}
@@ -111,7 +115,7 @@ export default function AdminLanguagesPage() {
                         onClick={() => toggleEnabled(s)}
                         className={`rounded-full px-4 py-1.5 text-xs font-bold ${s.enabled ? "bg-green-100 text-green-700" : "bg-slate-200 text-slate-500"}`}
                       >
-                        {s.enabled ? "Enabled" : "Disabled"}
+                        {s.enabled ? t.commonEnabled : t.adminLangDisabled}
                       </button>
                     </div>
                   </div>
