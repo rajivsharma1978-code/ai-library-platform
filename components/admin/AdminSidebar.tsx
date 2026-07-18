@@ -13,7 +13,6 @@ const navItems: { icon: string; href: string }[] = [
   { icon: "⬆️", href: "/admin/upload-queue" },
   { icon: "🌐", href: "/admin/languages" },
   { icon: "👥", href: "/admin/users" },
-  { icon: "📈", href: "/analytics" },
   { icon: "🤖", href: "/admin/ai-usage" },
   { icon: "♿", href: "/admin/accessibility" },
   { icon: "🛡️", href: "/admin/moderation" },
@@ -34,7 +33,6 @@ export default function AdminSidebar() {
     "/admin/upload-queue": t.adminNavUploadQueue,
     "/admin/languages": t.adminNavLanguages,
     "/admin/users": t.adminNavUsers,
-    "/analytics": t.navAnalytics,
     "/admin/ai-usage": t.adminNavAiUsage,
     "/admin/accessibility": t.settingsAccessibility,
     "/admin/moderation": t.adminNavModeration,
@@ -68,7 +66,7 @@ export default function AdminSidebar() {
 
       <div className="mt-auto pt-6 space-y-3 border-t border-slate-800">
         <Link href="/" className="block text-blue-400 font-semibold text-sm hover:text-blue-300 transition">
-          ← {t.settingsBackToLibrary}
+          ← {t.commonHome}
         </Link>
         <button
           onClick={() => {

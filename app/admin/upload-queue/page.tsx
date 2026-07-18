@@ -172,7 +172,7 @@ export default function AdminUploadQueuePage() {
           badge={t.adminUqBadge}
           title={t.adminUqTitle}
           subtitle={t.adminUqSubtitle}
-          homeLabel={t.navLibrary}
+          homeLabel={t.commonHome}
         />
 
         <InfoCard tone="amber" className="mb-6 py-3 text-sm font-semibold">

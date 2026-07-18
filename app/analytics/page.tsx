@@ -192,7 +192,7 @@ export default function AnalyticsPage() {
         <PageHeader
           title={t.analyticsPageTitle}
           subtitle={t.analyticsPageSubtitle}
-          homeLabel={t.navLibrary}
+          homeLabel={t.commonHome}
         />
 
         {!hasRealData && (

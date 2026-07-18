@@ -3,6 +3,8 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import AdminSidebar from "@/components/admin/AdminSidebar";
+import { UI_TEXT } from "@/lib/i18n";
+import { useLanguage } from "@/lib/useLanguage";
 import {
   loadModeration, saveModeration, usingDemoModeration, logActivity,
   type ModerationFlag, type ModerationSeverity,
@@ -35,6 +37,8 @@ function timeAgo(ts: number): string {
 }
 
 export default function AdminModerationPage() {
+  const { language } = useLanguage();
+  const t = UI_TEXT[language];
   const router = useRouter();
   const [mounted, setMounted] = useState(false);
   const [checkedAccess, setCheckedAccess] = useState(false);
@@ -94,7 +98,7 @@ export default function AdminModerationPage() {
           badge="Admin · Moderation"
           title="Moderation Alerts"
           subtitle="Review and resolve flagged content across the platform."
-          homeLabel="Library"
+          homeLabel={t.commonHome}
         />
 
         <InfoCard tone="amber" className="mb-6 py-3 text-sm font-semibold">

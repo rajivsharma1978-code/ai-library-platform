@@ -224,7 +224,7 @@ function BookManagementContent() {
           badge={t.adminBmBadge}
           title={t.adminNavBookManagement}
           subtitle={t.adminBmSubtitle}
-          homeLabel={t.navLibrary}
+          homeLabel={t.commonHome}
         />
 
         <InfoCard tone="amber" className="mb-6 py-3 text-sm font-semibold">

@@ -96,7 +96,7 @@ export default function AdminPage() {
           badge={t.adminDashboardBadge}
           title={t.adminDashboardTitle}
           subtitle={t.adminDashboardSubtitle}
-          homeLabel={t.navLibrary}
+          homeLabel={t.commonHome}
         />
 
         <InfoCard tone="amber" className="mb-8 py-3 text-sm font-semibold">

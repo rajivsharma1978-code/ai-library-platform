@@ -76,7 +76,7 @@ export default function AdminLanguagesPage() {
           badge={t.adminLangBadge}
           title={t.adminQuickLanguageSettings}
           subtitle={t.adminLangSubtitle}
-          homeLabel={t.navLibrary}
+          homeLabel={t.commonHome}
         />
 
         <InfoCard tone="amber" className="mb-6 py-3 text-sm font-semibold">

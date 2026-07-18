@@ -151,7 +151,7 @@ export default function SettingsPage() {
         <PageHeader
           title={t.aiTutorNavSettings}
           subtitle={t.settingsSubtitle}
-          homeLabel={t.settingsBackToLibrary}
+          homeLabel={t.commonHome}
         />
 
         <div className="grid lg:grid-cols-2 gap-6 mt-4">

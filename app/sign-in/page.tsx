@@ -11,7 +11,6 @@ const demoUsers: Record<string, { password: string; role: string; name: string }
   teacher:    { password: "teacher123",    role: "Teacher",       name: "Demo Teacher"  },
   researcher: { password: "researcher123", role: "Researcher",    name: "Demo Researcher" },
   senior:     { password: "senior123",     role: "Senior Learner",name: "Senior Learner" },
-  demo:       { password: "demo123",       role: "Admin",         name: "Admin User"    },
 };
 
 export default function SignInPage() {
@@ -29,10 +28,6 @@ export default function SignInPage() {
       setError(t.chatError);
       return;
     }
-    if (user.role === "Admin") {
-      router.push("/admin-login");
-      return;
-    }
     localStorage.setItem("ndlUser", JSON.stringify({
       name: user.name,
       role: user.role,
@@ -45,7 +40,7 @@ export default function SignInPage() {
     <main className="min-h-screen bg-[radial-gradient(circle_at_top,#fff8e8_0%,#f3e6c8_45%,#eaddc0_100%)] flex items-center justify-center p-8">
       <div className="bg-white rounded-[2rem] p-10 shadow-[0_20px_60px_rgba(75,45,12,0.12)] ring-1 ring-black/5 w-full max-w-xl">
         <Link href="/" className="text-blue-600 font-semibold hover:text-blue-700">
-          ← {t.navLibrary}
+          ← {t.commonHome}
         </Link>
 
         <h1 className="text-4xl font-black text-slate-950 mt-8">{t.signIn} — NDL AI</h1>
@@ -84,7 +79,6 @@ export default function SignInPage() {
           <p>Teacher: teacher / teacher123</p>
           <p>Researcher: researcher / researcher123</p>
           <p>Senior Learner: senior / senior123</p>
-          <p>Admin: demo / demo123</p>
         </div>
       </div>
     </main>

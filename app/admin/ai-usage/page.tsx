@@ -3,6 +3,8 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import AdminSidebar from "@/components/admin/AdminSidebar";
+import { UI_TEXT } from "@/lib/i18n";
+import { useLanguage } from "@/lib/useLanguage";
 import { loadAIUsage, loadActivity, type AdminActivityEntry, type AIFeature } from "@/components/admin/adminData";
 import PageHeader from "@/components/ui/PageHeader";
 import StatCard from "@/components/ui/StatCard";
@@ -35,6 +37,8 @@ function timeAgo(ts: number): string {
 }
 
 export default function AdminAIUsagePage() {
+  const { language } = useLanguage();
+  const t = UI_TEXT[language];
   const router = useRouter();
   const [mounted, setMounted] = useState(false);
   const [checkedAccess, setCheckedAccess] = useState(false);
@@ -87,7 +91,7 @@ export default function AdminAIUsagePage() {
           badge="Admin · AI Usage"
           title="AI Usage"
           subtitle="Monitor how learners are using the AI Companion across the platform."
-          homeLabel="Library"
+          homeLabel={t.commonHome}
         />
 
         <InfoCard tone="amber" className="mb-6 py-3 text-sm font-semibold">
