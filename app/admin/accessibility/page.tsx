@@ -13,6 +13,9 @@ import PageHeader from "@/components/ui/PageHeader";
 import StatCard from "@/components/ui/StatCard";
 import InfoCard from "@/components/ui/InfoCard";
 
+// Fixed status set cycled and stored directly (STATUS_ORDER.indexOf)
+// using these exact English values — only the on-screen pill text goes
+// through STATUS_LABELS below.
 const STATUS_ORDER: AccessibilityStatus[] = ["Not Started", "Needs Work", "Pass"];
 const STATUS_COLORS: Record<AccessibilityStatus, string> = {
   Pass: "bg-green-100 text-green-700",
@@ -20,10 +23,33 @@ const STATUS_COLORS: Record<AccessibilityStatus, string> = {
   "Not Started": "bg-slate-200 text-slate-600",
 };
 
+// Render-time lookup from each seeded checklist item's stored English
+// label (components/admin/adminData.ts, not editable in this batch) to
+// its translated display text. Unknown future labels fall back to the
+// raw stored text rather than breaking.
+function itemLabel(rawLabel: string, t: { [K in keyof typeof UI_TEXT["en"]]: string }): string {
+  const map: Record<string, string> = {
+    "Alt text for book covers": t.adminAccessibilityItemAltText,
+    "Screen reader labels on Reader controls": t.adminAccessibilityItemScreenReaderLabels,
+    "Keyboard navigation across the Reader": t.adminAccessibilityItemKeyboardNav,
+    "Color contrast on AI Companion panel": t.adminAccessibilityItemColorContrast,
+    "Captions/transcripts for Read Aloud": t.adminAccessibilityItemCaptions,
+    "Multilingual screen-reader support": t.adminAccessibilityItemMultilingualScreenReader,
+  };
+  return map[rawLabel] ?? rawLabel;
+}
+
 export default function AdminAccessibilityPage() {
   const { language } = useLanguage();
   const t = UI_TEXT[language];
   const router = useRouter();
+
+  const STATUS_LABELS: Record<AccessibilityStatus, string> = {
+    "Not Started": t.adminAccessibilityStatNotStarted,
+    "Needs Work": t.adminAccessibilityStatNeedsWork,
+    Pass: t.adminAccessibilityStatPass,
+  };
+
   const [mounted, setMounted] = useState(false);
   const [checkedAccess, setCheckedAccess] = useState(false);
   const [items, setItems] = useState<AccessibilityCheckItem[]>([]);
@@ -56,7 +82,7 @@ export default function AdminAccessibilityPage() {
   if (!mounted || !checkedAccess) {
     return (
       <main className="flex min-h-screen items-center justify-center bg-[radial-gradient(circle_at_top,#fff8e8_0%,#f3e6c8_45%,#eaddc0_100%)]">
-        <p className="text-sm font-semibold text-slate-400">Checking admin access…</p>
+        <p className="text-sm font-semibold text-slate-400">{t.adminCheckingAccess}</p>
       </main>
     );
   }
@@ -71,35 +97,40 @@ export default function AdminAccessibilityPage() {
       <AdminSidebar />
       <section className="flex-1 p-8 overflow-auto">
         <PageHeader
-          badge="Admin · Accessibility"
-          title="Accessibility Readiness"
-          subtitle="Track accessibility checks across the Reader and AI Companion."
+          badge={t.adminAccessibilityBadge}
+          title={t.adminAccessibilityTitle}
+          subtitle={t.adminAccessibilitySubtitle}
           homeLabel={t.commonHome}
         />
 
         <InfoCard tone="amber" className="mb-6 py-3 text-sm font-semibold">
-          📌 Demo admin actions are stored locally for this prototype — nothing here touches a real backend.
+          📌 {t.adminDemoDisclaimer}
         </InfoCard>
 
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          <StatCard label="Overall Score" value={`${overallScore}%`} valueClassName="text-green-600" badge={usingDemo ? "demo" : undefined} />
-          <StatCard label="Pass" value={passCount} valueClassName="text-green-600" />
-          <StatCard label="Needs Work" value={needsWorkCount} valueClassName="text-yellow-600" />
-          <StatCard label="Not Started" value={notStartedCount} valueClassName="text-slate-500" />
+          <StatCard label={t.adminAccessibilityStatScore} value={`${overallScore}%`} valueClassName="text-green-600" badge={usingDemo ? t.commonDemo : undefined} />
+          <StatCard label={t.adminAccessibilityStatPass} value={passCount} valueClassName="text-green-600" />
+          <StatCard label={t.adminAccessibilityStatNeedsWork} value={needsWorkCount} valueClassName="text-yellow-600" />
+          <StatCard label={t.adminAccessibilityStatNotStarted} value={notStartedCount} valueClassName="text-slate-500" />
         </div>
 
         <InfoCard className="mt-8">
-          <h3 className="text-2xl font-black text-slate-950">Accessibility Checklist</h3>
-          <p className="mt-1 text-sm text-slate-500">Click a status pill to cycle it (Not Started → Needs Work → Pass).</p>
+          <h3 className="text-2xl font-black text-slate-950">{t.adminAccessibilityChecklistHeading}</h3>
+          <p className="mt-1 text-sm text-slate-500">
+            {t.adminAccessibilityChecklistHelp
+              .replace("{a}", t.adminAccessibilityStatNotStarted)
+              .replace("{b}", t.adminAccessibilityStatNeedsWork)
+              .replace("{c}", t.adminAccessibilityStatPass)}
+          </p>
           <div className="mt-6 space-y-3">
             {items.map(item => (
               <div key={item.id} className="flex items-center justify-between border-b border-slate-100 pb-3">
-                <span className="text-slate-700">{item.label}</span>
+                <span className="text-slate-700">{itemLabel(item.label, t)}</span>
                 <button
                   onClick={() => cycleStatus(item)}
                   className={`rounded-full px-4 py-1.5 text-xs font-bold transition-colors ${STATUS_COLORS[item.status]}`}
                 >
-                  {item.status}
+                  {STATUS_LABELS[item.status] ?? item.status}
                 </button>
               </div>
             ))}
