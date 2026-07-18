@@ -11,6 +11,7 @@ import { useLanguage } from "@/lib/useLanguage";
 import { directorBooks } from "@/lib/directorBooks";
 import { trackAIUsage, logActivity } from "@/components/admin/adminData";
 import PageHeader from "@/components/ui/PageHeader";
+import LearningNav from "@/components/learning/LearningNav";
 import InfoCard from "@/components/ui/InfoCard";
 import FilterBar from "@/components/ui/FilterBar";
 import AccessibilityToolbar from "@/components/ui/AccessibilityToolbar";
@@ -425,6 +426,8 @@ export default function QuizPage() {
           subtitle={t.quizPageSubtitle}
           homeLabel={t.commonHome}
         />
+
+        <LearningNav />
 
         {/* ── SETUP ─────────────────────────────────────────────────── */}
         {stage === "setup" && (

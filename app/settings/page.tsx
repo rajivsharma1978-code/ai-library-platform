@@ -6,6 +6,7 @@ import { useLanguage } from "@/lib/useLanguage";
 import { useEnabledLanguages } from "@/lib/languageSettings";
 import { useA11ySettings } from "@/lib/accessibilitySettings";
 import PageHeader from "@/components/ui/PageHeader";
+import LearningNav from "@/components/learning/LearningNav";
 
 // Local toggle row for the Accessibility section — mirrors the row style
 // (icon + label + right-aligned status pill) the rest of this page already
@@ -153,6 +154,8 @@ export default function SettingsPage() {
           subtitle={t.settingsSubtitle}
           homeLabel={t.commonHome}
         />
+
+        <LearningNav />
 
         <div className="grid lg:grid-cols-2 gap-6 mt-4">
           {/* ── Language Preferences ────────────────────────────────── */}

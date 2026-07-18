@@ -6,6 +6,7 @@ import { useLanguage } from "@/lib/useLanguage";
 import { directorBooks } from "@/lib/directorBooks";
 import { trackAIUsage, logActivity, type AIFeature } from "@/components/admin/adminData";
 import PageHeader from "@/components/ui/PageHeader";
+import LearningNav from "@/components/learning/LearningNav";
 import StatCard from "@/components/ui/StatCard";
 import InfoCard from "@/components/ui/InfoCard";
 import AccessibilityToolbar from "@/components/ui/AccessibilityToolbar";
@@ -239,6 +240,8 @@ export default function RevisionPage() {
           subtitle={t.revisionPageSubtitle}
           homeLabel={t.commonHome}
         />
+
+        <LearningNav />
 
         {!hasRealData && (
           <InfoCard tone="amber" className="mb-6 py-3 text-sm font-semibold">

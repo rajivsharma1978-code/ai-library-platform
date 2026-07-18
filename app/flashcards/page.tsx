@@ -5,6 +5,7 @@ import { UI_TEXT } from "@/lib/i18n";
 import { useLanguage } from "@/lib/useLanguage";
 import { directorBooks } from "@/lib/directorBooks";
 import PageHeader from "@/components/ui/PageHeader";
+import LearningNav from "@/components/learning/LearningNav";
 import InfoCard from "@/components/ui/InfoCard";
 import SearchBar from "@/components/ui/SearchBar";
 import FilterBar from "@/components/ui/FilterBar";
@@ -198,6 +199,8 @@ export default function FlashcardsPage() {
           subtitle={t.flashcardsPageSubtitle}
           homeLabel={t.commonHome}
         />
+
+        <LearningNav />
 
         {usingDemo && (
           <InfoCard tone="amber" className="mb-6 py-3 text-sm font-semibold">

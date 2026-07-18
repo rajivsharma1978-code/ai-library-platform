@@ -11,6 +11,7 @@ import BookCoverThumb from "@/components/ui/BookCover";
 import { UI_TEXT } from "@/lib/i18n";
 import { useLanguage } from "@/lib/useLanguage";
 import AccessibilityToolbar from "@/components/ui/AccessibilityToolbar";
+import LearningNav from "@/components/learning/LearningNav";
 
 // ── Small shared primitives (kept local — this page is the only consumer) ─
 // BookCoverThumb is now the shared components/ui/BookCover.tsx (imported
@@ -110,6 +111,9 @@ export default function MySpacePage() {
 
   return (
     <main className="min-h-screen bg-[radial-gradient(circle_at_top,#fff8e8_0%,#f3e6c8_45%,#eaddc0_100%)] px-6 py-10">
+      <div className="mx-auto max-w-6xl">
+        <LearningNav />
+      </div>
       <div className="mx-auto flex max-w-6xl flex-col gap-12">
 
         {/* ── SECTION 1: Welcome Back ─────────────────────────────────── */}

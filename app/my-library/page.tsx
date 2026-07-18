@@ -5,6 +5,7 @@ import { UI_TEXT } from "@/lib/i18n";
 import { useLanguage } from "@/lib/useLanguage";
 import { usePublicCatalog } from "@/lib/catalog";
 import PageHeader from "@/components/ui/PageHeader";
+import LearningNav from "@/components/learning/LearningNav";
 import StatCard from "@/components/ui/StatCard";
 import InfoCard from "@/components/ui/InfoCard";
 import SearchBar from "@/components/ui/SearchBar";
@@ -219,6 +220,8 @@ export default function MyLibraryPage() {
       <div className="mx-auto max-w-6xl">
 
         <PageHeader title={t.myLibraryTitle} subtitle={t.myLibrarySubtitle} homeLabel={t.commonHome} />
+
+        <LearningNav />
 
         {usingDemoShelf && (
           <InfoCard tone="amber" className="mb-6 py-3 text-sm font-semibold">
