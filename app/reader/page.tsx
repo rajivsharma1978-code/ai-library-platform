@@ -7,9 +7,11 @@ import { useSearchParams } from "next/navigation";
 import { UI_TEXT } from "@/lib/i18n";
 import { useLanguage } from "@/lib/useLanguage";
 import FlipBookViewer from "@/components/reader/FlipBookViewer";
-import ReaderLayout from "@/components/reader/ReaderLayout";
-import FlipBookStage from "@/components/reader/FlipBookStage";
 
+// Chapter ids and their body content are internal/demo content, not UI
+// chrome — kept in English and used as-is for state/comparisons/storage.
+// Only their on-screen labels (CHAPTER_LABELS, built from t.* inside the
+// component) are translated.
 const chapters: Record<string, string[]> = {
   Introduction: [
     "This chapter introduces the foundation of intelligent learning systems.",
@@ -43,12 +45,107 @@ const chapters: Record<string, string[]> = {
   ],
 };
 
+// Each action's label is a UI string (translated via ACTION_LABEL_MAP
+// inside the component); its prompt is sent to the AI API verbatim and
+// must stay in English for the AI request logic to keep working exactly
+// as before. "Hindi" is a language name, not a UI label — deliberately
+// left out of ACTION_LABEL_MAP so it falls back to its raw value.
+const modeActions: Record<string, [string, string][]> = {
+  Student: [
+    ["Summarize", "Summarize this page in simple student-friendly points."],
+    ["Explain Simply", "Explain this page like I am a beginner."],
+    ["Quiz", "Create a short quiz from this page."],
+    ["Flashcards", "Create flashcards from this page."],
+    ["Hindi", "Explain this page in Hindi."],
+  ],
+  Teacher: [
+    ["Lesson Plan", "Create a lesson plan from this page."],
+    ["Teaching Notes", "Create teacher notes from this page."],
+    ["Class Questions", "Create classroom discussion questions."],
+    ["Homework", "Create homework from this page."],
+    ["Blackboard Summary", "Create a blackboard-style summary."],
+  ],
+  Researcher: [
+    ["Key Concepts", "Extract research-level key concepts from this page."],
+    ["Critical Analysis", "Critically analyze this page."],
+    ["Research Questions", "Generate research questions from this page."],
+    ["Further Reading", "Suggest deeper topics to explore."],
+    ["Academic Summary", "Create an academic-style summary."],
+  ],
+  "Exam Prep": [
+    ["Likely Questions", "Generate likely exam questions from this page."],
+    ["MCQs", "Create multiple-choice questions from this page."],
+    ["Short Notes", "Create exam revision notes."],
+    ["Important Points", "List high-scoring important points."],
+    ["Revision Plan", "Create a quick revision plan."],
+  ],
+  "Elder Friendly": [
+    ["Simple Meaning", "Explain this page in very simple language."],
+    ["Slow Explanation", "Explain this slowly and clearly."],
+    ["Voice Summary", "Prepare a voice-friendly summary."],
+    ["Regional Language", "Explain this in simple Hindi."],
+    ["Daily Life Example", "Explain using daily-life examples."],
+  ],
+};
+
 type Message = { type: "user" | "ai"; text: string; };
 
 function ReaderPageContent() {
   const searchParams = useSearchParams();
   const { language } = useLanguage();
   const t = UI_TEXT[language];
+
+  // Render-time label lookups — internal values (chapter ids, study
+  // mode ids) stay in English for state, comparisons, and localStorage;
+  // only these maps translate them for display.
+  const CHAPTER_LABELS: Record<string, string> = {
+    Introduction: t.readerChapterIntroduction,
+    "Core Concepts": t.readerChapterCoreConcepts,
+    Applications: t.readerChapterApplications,
+    "Case Studies": t.readerChapterCaseStudies,
+    "Future Scope": t.readerChapterFutureScope,
+    "Research Topics": t.readerChapterResearchTopics,
+  };
+  const STUDY_MODE_LABELS: Record<string, string> = {
+    Student: t.readerModeStudent,
+    Teacher: t.readerModeTeacher,
+    Researcher: t.readerModeResearcher,
+    "Exam Prep": t.readerModeExamPrep,
+    "Elder Friendly": t.readerModeElderFriendly,
+  };
+  const MODE_DESCRIPTIONS: Record<string, string> = {
+    Student: t.readerModeDescStudent,
+    Teacher: t.readerModeDescTeacher,
+    Researcher: t.readerModeDescResearcher,
+    "Exam Prep": t.readerModeDescExamPrep,
+    "Elder Friendly": t.readerModeDescElderFriendly,
+  };
+  const ACTION_LABEL_MAP: Record<string, string> = {
+    Summarize: t.aiActionSummarize,
+    "Explain Simply": t.readerActionExplainSimply,
+    Quiz: t.quizPageTitle,
+    Flashcards: t.commonFlashcards,
+    "Lesson Plan": t.readerActionLessonPlan,
+    "Teaching Notes": t.readerActionTeachingNotes,
+    "Class Questions": t.readerActionClassQuestions,
+    Homework: t.readerActionHomework,
+    "Blackboard Summary": t.readerActionBlackboardSummary,
+    "Key Concepts": t.readerActionKeyConcepts,
+    "Critical Analysis": t.readerActionCriticalAnalysis,
+    "Research Questions": t.readerActionResearchQuestions,
+    "Further Reading": t.readerActionFurtherReading,
+    "Academic Summary": t.readerActionAcademicSummary,
+    "Likely Questions": t.readerActionLikelyQuestions,
+    MCQs: t.readerActionMCQs,
+    "Short Notes": t.readerActionShortNotes,
+    "Important Points": t.readerActionImportantPoints,
+    "Revision Plan": t.readerActionRevisionPlan,
+    "Simple Meaning": t.readerActionSimpleMeaning,
+    "Slow Explanation": t.readerActionSlowExplanation,
+    "Voice Summary": t.readerActionVoiceSummary,
+    "Regional Language": t.readerActionRegionalLanguage,
+    "Daily Life Example": t.readerActionDailyLifeExample,
+  };
 
   const [pdfText, setPdfText] = useState("");
   const [pdfName, setPdfName] = useState("");
@@ -83,52 +180,6 @@ function ReaderPageContent() {
 
   const activeContent = isPdfMode ? pdfText.slice(0, 5000) : chapters[activeChapter].join(" ");
 
-  const modeDescriptions: Record<string, string> = {
-    Student: "This page is prepared for student-friendly learning with simple explanations, quizzes, flashcards, and revision support.",
-    Teacher: "This page is prepared for classroom teaching with lesson plans, teaching notes, homework ideas, and discussion questions.",
-    Researcher: "This page is prepared for deeper academic analysis, research questions, concept extraction, and critical interpretation.",
-    "Exam Prep": "This page is prepared for exam-focused revision, likely questions, MCQs, important points, and scoring notes.",
-    "Elder Friendly": "This page is prepared in a simpler, clearer learning style with easy language, voice-friendly explanations, and daily-life examples.",
-  };
-
-  const modeActions: Record<string, [string, string][]> = {
-    Student: [
-      ["Summarize", "Summarize this page in simple student-friendly points."],
-      ["Explain Simply", "Explain this page like I am a beginner."],
-      ["Quiz", "Create a short quiz from this page."],
-      ["Flashcards", "Create flashcards from this page."],
-      ["Hindi", "Explain this page in Hindi."],
-    ],
-    Teacher: [
-      ["Lesson Plan", "Create a lesson plan from this page."],
-      ["Teaching Notes", "Create teacher notes from this page."],
-      ["Class Questions", "Create classroom discussion questions."],
-      ["Homework", "Create homework from this page."],
-      ["Blackboard Summary", "Create a blackboard-style summary."],
-    ],
-    Researcher: [
-      ["Key Concepts", "Extract research-level key concepts from this page."],
-      ["Critical Analysis", "Critically analyze this page."],
-      ["Research Questions", "Generate research questions from this page."],
-      ["Further Reading", "Suggest deeper topics to explore."],
-      ["Academic Summary", "Create an academic-style summary."],
-    ],
-    "Exam Prep": [
-      ["Likely Questions", "Generate likely exam questions from this page."],
-      ["MCQs", "Create multiple-choice questions from this page."],
-      ["Short Notes", "Create exam revision notes."],
-      ["Important Points", "List high-scoring important points."],
-      ["Revision Plan", "Create a quick revision plan."],
-    ],
-    "Elder Friendly": [
-      ["Simple Meaning", "Explain this page in very simple language."],
-      ["Slow Explanation", "Explain this slowly and clearly."],
-      ["Voice Summary", "Prepare a voice-friendly summary."],
-      ["Regional Language", "Explain this in simple Hindi."],
-      ["Daily Life Example", "Explain using daily-life examples."],
-    ],
-  };
-
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const book = params.get("book");
@@ -160,7 +211,7 @@ function ReaderPageContent() {
     localStorage.setItem("aiWeakTopics", JSON.stringify(weakTopics));
   }, [quizScore, completedQuizzes, weakTopics]);
 
-  
+
 
   useEffect(() => {
     const demoBookContent: Record<string, string> = {
@@ -183,11 +234,25 @@ function ReaderPageContent() {
     setPdfPages(storedPdfPages);
 
     const welcomeMessage = storedPdfText
-      ? `${t.chatWelcome}\n\n${t.pages}: ${readerPage}.\n\n${t.aiStartSession}: ${studyMode}.`
-      : `${t.chatWelcome}\n\n${t.pages}: ${readerPage}.\n\n${t.aiStartSession}: ${studyMode}.`;
+      ? `${t.chatWelcome}\n\n${t.pages}: ${readerPage}.\n\n${t.aiStartSession}: ${STUDY_MODE_LABELS[studyMode] ?? studyMode}.`
+      : `${t.chatWelcome}\n\n${t.pages}: ${readerPage}.\n\n${t.aiStartSession}: ${STUDY_MODE_LABELS[studyMode] ?? studyMode}.`;
 
     setMessages([{ type: "ai", text: welcomeMessage }]);
   }, []);
+
+  // useLanguage() intentionally renders "en" on the first frame (to avoid a
+  // hydration mismatch) and corrects itself in an effect shortly after — so
+  // the mount effect above can bake in an English greeting even when a
+  // non-English language is already selected. Re-sync just that greeting
+  // when the language settles, but only while it's still the sole message,
+  // so real conversation history is never touched.
+  useEffect(() => {
+    setMessages(prev => {
+      if (prev.length !== 1 || prev[0].type !== "ai") return prev;
+      const welcomeMessage = `${t.chatWelcome}\n\n${t.pages}: ${readerPage}.\n\n${t.aiStartSession}: ${STUDY_MODE_LABELS[studyMode] ?? studyMode}.`;
+      return [{ type: "ai", text: welcomeMessage }];
+    });
+  }, [language]);
 
   function summarizeBook() {
     addAIMessage(isPdfMode
@@ -251,7 +316,7 @@ function ReaderPageContent() {
   function saveBookmark() {
     const bookmark = isPdfMode ? `${book} - PDF Page ${readerPage}` : `${book} - ${activeChapter}`;
     setBookmarks(prev => prev.includes(bookmark) ? prev : [...prev, bookmark]);
-    setMessages(prev => [...prev, { type: "ai", text: `Bookmark saved: ${bookmark}` }]);
+    setMessages(prev => [...prev, { type: "ai", text: t.readerBookmarkSavedMsg.replace("{bookmark}", bookmark) }]);
   }
 
   function saveCurrentNote() {
@@ -275,14 +340,16 @@ function ReaderPageContent() {
       `Revision prompt → Explain this topic in your own words.`,
     ];
     setFlashcards(cards);
-    setMessages(prev => [...prev, { type: "ai", text: "Flashcards generated and added to your learning memory." }]);
+    setMessages(prev => [...prev, { type: "ai", text: t.readerFlashcardsGeneratedMsg }]);
   }
 
   function recordQuizResult(score: number, topic: string) {
     setQuizScore(prev => prev + score);
     setCompletedQuizzes(prev => prev + 1);
     if (score < 60) setWeakTopics(prev => prev.includes(topic) ? prev : [...prev, topic]);
-    setMessages(prev => [...prev, { type: "ai", text: `Quiz recorded. Score: ${score}%. ${score < 60 ? `Added "${topic}" to revision list.` : "Good performance."}` }]);
+    const topicLabel = CHAPTER_LABELS[topic] ?? topic;
+    const resultMsg = score < 60 ? t.readerQuizAddedToRevisionMsg.replace("{topic}", topicLabel) : t.readerQuizGoodPerformanceMsg;
+    setMessages(prev => [...prev, { type: "ai", text: `${t.readerQuizRecordedMsg.replace("{score}", String(score))} ${resultMsg}` }]);
   }
 
   function exportNotes() {
@@ -300,7 +367,7 @@ function ReaderPageContent() {
     <main className={darkMode ? "h-screen flex bg-slate-950 text-white overflow-hidden" : "h-screen flex bg-[#f6efe3] text-slate-900 overflow-hidden"}>
       <aside className={focusMode ? "hidden" : "w-72 bg-slate-950 text-white p-6 overflow-auto border-r border-white/10"}>
         <Link href="/" className="text-blue-400 font-semibold">
-          ← {t.navLibrary}
+          ← {t.commonHome}
         </Link>
 
         <h2 className="text-3xl font-bold mt-8">{t.aiF1Title}</h2>
@@ -310,17 +377,17 @@ function ReaderPageContent() {
 
         <div className="mt-8">
           <p className="text-xs uppercase tracking-widest text-slate-500">
-            {isPdfMode ? t.pdfViewer : "Chapters"}
+            {isPdfMode ? t.pdfViewer : t.readerChaptersHeading}
           </p>
 
           {isPdfMode ? (
             <div className="mt-4 bg-slate-900 rounded-2xl p-4">
               <p className="font-bold break-words">{pdfName || book}</p>
               <p className="text-xs text-slate-400 mt-2">{t.pages}: {readerPage}</p>
-              <p className="text-xs text-slate-400 mt-1">{t.pages}: {pdfPages || "Detected after upload"}</p>
-              <p className="text-xs text-green-400 mt-3">PDF text loaded for AI analysis</p>
+              <p className="text-xs text-slate-400 mt-1">{t.pages}: {pdfPages || t.readerPagesDetectedAfterUpload}</p>
+              <p className="text-xs text-green-400 mt-3">{t.readerPdfTextLoaded}</p>
               <p className={pageImage ? "text-xs text-green-400 mt-2" : "text-xs text-yellow-400 mt-2"}>
-                {pageImage ? "Visual page captured for AI" : "Visual page not captured yet"}
+                {pageImage ? t.readerVisualCaptured : t.readerVisualNotCaptured}
               </p>
             </div>
           ) : (
@@ -330,7 +397,7 @@ function ReaderPageContent() {
                   className={activeChapter === chapter
                     ? "w-full text-left bg-blue-600 p-4 rounded-2xl shadow-lg"
                     : "w-full text-left bg-slate-900 hover:bg-slate-800 p-4 rounded-2xl transition"}>
-                  {chapter}
+                  {CHAPTER_LABELS[chapter] ?? chapter}
                 </button>
               ))}
             </div>
@@ -342,7 +409,7 @@ function ReaderPageContent() {
           <div className="w-full bg-slate-700 h-3 rounded-full mt-4">
             <div className="bg-blue-500 h-3 rounded-full w-[58%]" />
           </div>
-          <p className="text-xs text-slate-400 mt-3">58% of this learning session completed</p>
+          <p className="text-xs text-slate-400 mt-3">{t.readerSessionProgress.replace("{pct}", "58")}</p>
         </div>
       </aside>
 
@@ -350,7 +417,7 @@ function ReaderPageContent() {
         <button onClick={() => setReaderFontSize(size => Math.max(15, size - 1))} className="rounded-full bg-slate-900 px-3 py-2 text-xs font-bold text-white">A-</button>
         <button onClick={() => setReaderFontSize(size => Math.min(26, size + 1))} className="rounded-full bg-slate-900 px-3 py-2 text-xs font-bold text-white">A+</button>
         <button onClick={() => setFocusMode(!focusMode)} className="rounded-full bg-amber-500 px-4 py-2 text-xs font-bold text-white">
-          {focusMode ? "Exit Focus" : "Focus Mode"}
+          {focusMode ? t.readerExitFocus : t.readerFocusMode}
         </button>
       </div>
 
@@ -374,20 +441,20 @@ function ReaderPageContent() {
               {["Student", "Teacher", "Researcher", "Exam Prep", "Elder Friendly"].map(mode => (
                 <button key={mode} onClick={() => {
                   setStudyMode(mode);
-                  setMessages(prev => [...prev, { type: "ai", text: `Study mode changed to ${mode}.` }]);
+                  setMessages(prev => [...prev, { type: "ai", text: t.readerModeChangedMsg.replace("{mode}", STUDY_MODE_LABELS[mode] ?? mode) }]);
                 }}
                   className={studyMode === mode
                     ? "bg-green-500 text-white border-2 border-white px-4 py-2 rounded-full text-sm font-bold shadow-lg"
                     : "bg-slate-800 text-white border border-slate-600 px-4 py-2 rounded-full text-sm hover:bg-blue-600"}>
-                  {mode}
+                  {STUDY_MODE_LABELS[mode] ?? mode}
                 </button>
               ))}
             </div>
 
             <div className="flex gap-2 mt-5 flex-wrap">
-              <span className="bg-green-500/20 border border-green-300/30 px-3 py-1 rounded-full text-xs">Text AI Ready</span>
-              <span className="bg-blue-500/20 border border-blue-300/30 px-3 py-1 rounded-full text-xs">Page Image Captured</span>
-              <span className="bg-yellow-500/20 border border-yellow-300/30 px-3 py-1 rounded-full text-xs">Vision AI Demo Mode</span>
+              <span className="bg-green-500/20 border border-green-300/30 px-3 py-1 rounded-full text-xs">{t.readerTextAiReady}</span>
+              <span className="bg-blue-500/20 border border-blue-300/30 px-3 py-1 rounded-full text-xs">{t.readerPageImageCaptured}</span>
+              <span className="bg-yellow-500/20 border border-yellow-300/30 px-3 py-1 rounded-full text-xs">{t.readerVisionAiDemoMode}</span>
             </div>
 
             <div className="flex gap-3 mt-6 flex-wrap">
@@ -397,13 +464,13 @@ function ReaderPageContent() {
               </button>
               <button onClick={() => addAIMessage(isPdfMode ? `Explain the uploaded PDF content around page ${readerPage} for a beginner.` : `Explain ${activeChapter} for a beginner.`)}
                 className="bg-black/30 border border-white/20 px-5 py-3 rounded-xl font-semibold">
-                {t.aiF1Desc.split(".")[0]}
+                {t.readerExplainBtn}
               </button>
               <button onClick={() => setMessages(prev => [...prev,
                 { type: "user", text: "Analyze this page image" },
                 { type: "ai", text: "AI Vision Analysis: This page appears to contain educational content, structured headings, textbook formatting, and possibly diagrams or scientific terminology." },
               ])} className="bg-black/30 border border-white/20 px-5 py-3 rounded-xl font-semibold">
-                Analyze Page Image
+                {t.readerAnalyzePageImage}
               </button>
               <Link href={`/read?book=${encodeURIComponent(book)}&page=${readerPage}`}
                 className="bg-black/30 border border-white/20 px-5 py-3 rounded-xl font-semibold">
@@ -417,7 +484,7 @@ function ReaderPageContent() {
               ? "mt-8 bg-slate-900 rounded-[2rem] p-10 shadow-2xl text-slate-100 border border-slate-700"
               : "mt-8 bg-[#fffaf0] rounded-[2rem] p-10 shadow-2xl text-slate-800 border border-amber-200"}>
             <h2 className="text-4xl font-bold">
-              {isPdfMode ? `${t.pages} ${readerPage}` : activeChapter}
+              {isPdfMode ? `${t.pages} ${readerPage}` : (CHAPTER_LABELS[activeChapter] ?? activeChapter)}
             </h2>
             <FlipBookViewer book={book} readerPage={Number(readerPage)} pdfPages={pdfPages} pageImage={pageImage} rightPageImage={rightPageImage} activeContent={activeContent}
               onPrevious={() => setReaderPage(Math.max(1, Number(readerPage) - 2))}
@@ -437,8 +504,8 @@ function ReaderPageContent() {
                 <p className="mt-3 text-slate-700 leading-8">{t.aiDesc}</p>
               </div>
               <div className="bg-slate-50 border rounded-2xl p-6">
-                <h3 className="font-bold text-lg">Page Intelligence</h3>
-                <p className="mt-4 leading-8 text-slate-700">{modeDescriptions[studyMode]}</p>
+                <h3 className="font-bold text-lg">{t.readerPageIntelligenceHeading}</h3>
+                <p className="mt-4 leading-8 text-slate-700">{MODE_DESCRIPTIONS[studyMode] ?? MODE_DESCRIPTIONS.Student}</p>
                 <Link href={`/read?book=${encodeURIComponent(book)}`}
                   className="inline-block mt-5 bg-blue-600 text-white px-5 py-3 rounded-xl">
                   {t.readBtn}
@@ -464,12 +531,12 @@ function ReaderPageContent() {
             <div className="flex items-center justify-between gap-4 flex-wrap">
               <div>
                 <p className="text-sm text-slate-500">{t.continueReading}</p>
-                <h3 className="text-2xl font-bold mt-1">{isPdfMode ? `Continue ${pdfName || "your PDF"}` : activeChapter}</h3>
-                <p className="text-sm text-slate-600 mt-2">Mode: {studyMode} • {t.pages} {readerPage} {pdfPages ? `of ${pdfPages}` : ""}</p>
+                <h3 className="text-2xl font-bold mt-1">{isPdfMode ? t.readerContinuePdfTemplate.replace("{name}", pdfName || t.readerYourPdfLabel) : (CHAPTER_LABELS[activeChapter] ?? activeChapter)}</h3>
+                <p className="text-sm text-slate-600 mt-2">{t.readerModeLabelPrefix} {STUDY_MODE_LABELS[studyMode] ?? studyMode} • {t.pages} {readerPage} {pdfPages ? t.readerOfTotalPages.replace("{total}", String(pdfPages)) : ""}</p>
               </div>
               <button onClick={() => addAIMessage(`Create a short learning session summary for page ${readerPage}. Include what I should revise next.`)}
                 className="bg-blue-600 text-white px-5 py-3 rounded-xl font-semibold">
-                Generate Session Summary
+                {t.readerGenerateSessionSummary}
               </button>
             </div>
           </div>
@@ -477,35 +544,35 @@ function ReaderPageContent() {
           <div className="mt-8 bg-white rounded-3xl p-6 shadow-lg border">
             <div className="flex items-center justify-between gap-4 flex-wrap mb-5">
               <div>
-                <p className="text-sm text-slate-500">Smart Actions</p>
-                <h3 className="text-2xl font-bold">{studyMode} Mode Tools</h3>
+                <p className="text-sm text-slate-500">{t.readerSmartActionsLabel}</p>
+                <h3 className="text-2xl font-bold">{t.readerModeToolsTemplate.replace("{mode}", STUDY_MODE_LABELS[studyMode] ?? studyMode)}</h3>
               </div>
-              <p className="text-sm text-slate-500">Actions change based on selected learning mode</p>
+              <p className="text-sm text-slate-500">{t.readerActionsChangeNote}</p>
             </div>
             <div className="flex gap-3 flex-wrap">
               {(modeActions[studyMode] || modeActions.Student).map(([label, prompt]) => (
                 <button key={label} onClick={() => addAIMessage(prompt)}
                   className="bg-slate-100 hover:bg-blue-600 hover:text-white transition px-5 py-3 rounded-2xl shadow text-sm font-semibold">
-                  {label}
+                  {ACTION_LABEL_MAP[label] ?? label}
                 </button>
               ))}
             </div>
           </div>
 
           <div className="mt-8 bg-white rounded-3xl p-6 shadow-lg border">
-            <h3 className="text-2xl font-bold">Learning Memory</h3>
+            <h3 className="text-2xl font-bold">{t.readerLearningMemoryHeading}</h3>
             <div className="grid md:grid-cols-3 gap-4 mt-5">
               <div className="bg-slate-50 p-5 rounded-2xl">
-                <p className="text-sm text-slate-500">Quiz Score</p>
+                <p className="text-sm text-slate-500">{t.readerQuizScoreLabel}</p>
                 <p className="text-3xl font-bold">{quizScore}</p>
               </div>
               <div className="bg-slate-50 p-5 rounded-2xl">
-                <p className="text-sm text-slate-500">Quizzes Completed</p>
+                <p className="text-sm text-slate-500">{t.readerQuizzesCompletedLabel}</p>
                 <p className="text-3xl font-bold">{completedQuizzes}</p>
               </div>
               <div className="bg-slate-50 p-5 rounded-2xl">
-                <p className="text-sm text-slate-500">Weak Topics</p>
-                <p className="text-lg font-semibold">{weakTopics.length ? weakTopics.join(", ") : "None"}</p>
+                <p className="text-sm text-slate-500">{t.commonWeakTopics}</p>
+                <p className="text-lg font-semibold">{weakTopics.length ? weakTopics.map(tp => CHAPTER_LABELS[tp] ?? tp).join(", ") : t.readerNoneLabel}</p>
               </div>
             </div>
           </div>
@@ -536,28 +603,28 @@ function ReaderPageContent() {
           <div className="grid grid-cols-3 gap-6 mt-8">
             <div className="bg-white rounded-3xl p-6 shadow-lg">
               <p className="text-sm text-slate-500">{t.aiSummaryBtn}</p>
-              <h3 className="text-xl font-bold mt-2">Key Takeaways</h3>
+              <h3 className="text-xl font-bold mt-2">{t.readerKeyTakeaways}</h3>
               <p className="text-slate-600 mt-3 text-sm leading-6">
                 {isPdfMode ? t.pdfPreviewDesc : t.aiF1Desc}
               </p>
             </div>
             <div className="bg-white rounded-3xl p-6 shadow-lg">
-              <p className="text-sm text-slate-500">Multilingual AI</p>
+              <p className="text-sm text-slate-500">{t.readerMultilingualAiLabel}</p>
               <h3 className="text-xl font-bold mt-2">{t.readInLanguage}</h3>
               <div className="flex flex-wrap gap-2 mt-4">
                 {["Hindi", "Tamil", "Bengali", "Marathi", "Telugu", "Kannada"].map(lang => (
                   <button key={lang} onClick={() => multilingualResponse(lang)}
                     className="bg-blue-100 text-blue-700 px-3 py-2 rounded-full text-xs hover:bg-blue-600 hover:text-white">
-                    {`Explain in ${lang}`}
+                    {t.readerExplainInLanguage.replace("{lang}", lang)}
                   </button>
                 ))}
               </div>
             </div>
             <div className="bg-white rounded-3xl p-6 shadow-lg">
-              <p className="text-sm text-slate-500">Practice</p>
+              <p className="text-sm text-slate-500">{t.readerPracticeLabel}</p>
               <h3 className="text-xl font-bold mt-2">{t.aiF3Title}</h3>
               <p className="text-sm text-slate-600 mt-3">
-                Generate questions from this {isPdfMode ? "PDF page" : "chapter"}.
+                {t.readerGenerateQuestionsFrom.replace("{source}", isPdfMode ? t.readerSourcePdfPage : t.readerSourceChapter)}
               </p>
               <button onClick={() => addAIMessage(isPdfMode ? `Create a quiz from the uploaded PDF content around page ${readerPage}.` : `Create a quiz from ${activeChapter}.`)}
                 className="bg-blue-600 text-white px-4 py-2 rounded-xl mt-4">
@@ -565,7 +632,7 @@ function ReaderPageContent() {
               </button>
               <button onClick={() => recordQuizResult(Math.floor(Math.random() * 100), activeChapter)}
                 className="bg-green-600 text-white px-4 py-2 rounded-xl mt-3 ml-2">
-                Simulate Quiz Score
+                {t.readerSimulateQuizScore}
               </button>
             </div>
           </div>
@@ -576,8 +643,8 @@ function ReaderPageContent() {
         <div className="flex items-center justify-between">
           <div>
             <h2 className="text-2xl font-bold">{t.aiF1Title}</h2>
-            <p className="text-xs text-green-400 mt-1">Active Mode: {studyMode}</p>
-            <p className="text-xs text-gray-400">{isPdfMode ? `${t.pages} ${readerPage}` : activeChapter}</p>
+            <p className="text-xs text-green-400 mt-1">{t.readerActiveModeLabel.replace("{mode}", STUDY_MODE_LABELS[studyMode] ?? studyMode)}</p>
+            <p className="text-xs text-gray-400">{isPdfMode ? `${t.pages} ${readerPage}` : (CHAPTER_LABELS[activeChapter] ?? activeChapter)}</p>
             <select value={selectedLanguage} onChange={e => setSelectedLanguage(e.target.value)}
               className="mt-3 w-full rounded-xl bg-white px-3 py-2 text-sm text-black">
               <option>English</option>
@@ -597,10 +664,10 @@ function ReaderPageContent() {
               setStudyMode("Student");
               setReaderPage(initialPage);
             }} className="mt-3 bg-red-600 text-white px-3 py-2 rounded-lg text-xs">
-              Reset AI Session
+              {t.readerResetAiSession}
             </button>
           </div>
-          <button onClick={() => setDarkMode(!darkMode)} className="bg-white text-black w-10 h-10 rounded-full">
+          <button onClick={() => setDarkMode(!darkMode)} aria-label={t.readerToggleDarkModeAria} className="bg-white text-black w-10 h-10 rounded-full">
             {darkMode ? "☀️" : "🌙"}
           </button>
         </div>
@@ -626,8 +693,8 @@ function ReaderPageContent() {
           <div className="flex items-center justify-between">
             <h3 className="font-bold">{t.aiF2Title}</h3>
             <div className="flex gap-2">
-              <button onClick={exportNotes} className="bg-white text-black px-3 py-1 rounded-lg text-xs">Export</button>
-              <button onClick={() => setSavedNotes([])} className="bg-red-600 text-white px-3 py-1 rounded-lg text-xs">Clear</button>
+              <button onClick={exportNotes} className="bg-white text-black px-3 py-1 rounded-lg text-xs">{t.readerExportLabel}</button>
+              <button onClick={() => setSavedNotes([])} className="bg-red-600 text-white px-3 py-1 rounded-lg text-xs">{t.readerClearLabel}</button>
             </div>
           </div>
           <div className="mt-3 space-y-2 max-h-24 overflow-auto">
@@ -668,8 +735,10 @@ function ReaderPageContent() {
 }
 
 export default function ReaderPage() {
+  const { language } = useLanguage();
+  const t = UI_TEXT[language];
   return (
-    <Suspense fallback={<div className="p-10">Loading Reader...</div>}>
+    <Suspense fallback={<div className="p-10">{t.readerLoadingReaderFallback}</div>}>
       <ReaderPageContent />
     </Suspense>
   );

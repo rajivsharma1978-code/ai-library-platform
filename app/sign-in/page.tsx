@@ -52,7 +52,7 @@ export default function SignInPage() {
         <input
           value={userId}
           onChange={(e) => setUserId(e.target.value)}
-          placeholder={t.searchPlaceholder.includes("Search") ? "User ID" : "उपयोगकर्ता आईडी"}
+          placeholder={t.signInUserIdLabel}
           className="w-full border border-slate-200 rounded-2xl px-5 py-4 mt-8 focus:outline-none focus:ring-2 focus:ring-amber-400"
         />
 
@@ -60,7 +60,7 @@ export default function SignInPage() {
           type="password"
           value={password}
           onChange={(e) => setPassword(e.target.value)}
-          placeholder={t.searchPlaceholder.includes("Search") ? "Password" : "पासवर्ड"}
+          placeholder={t.adminLoginPasswordLabel}
           className="w-full border border-slate-200 rounded-2xl px-5 py-4 mt-4 focus:outline-none focus:ring-2 focus:ring-amber-400"
         />
 
@@ -74,11 +74,11 @@ export default function SignInPage() {
         </button>
 
         <div className="mt-8 bg-blue-50 ring-1 ring-blue-200 rounded-2xl p-5 text-sm">
-          <p className="font-bold text-blue-900">Demo Credentials</p>
-          <p className="mt-2">Student: student / student123</p>
-          <p>Teacher: teacher / teacher123</p>
-          <p>Researcher: researcher / researcher123</p>
-          <p>Senior Learner: senior / senior123</p>
+          <p className="font-bold text-blue-900">{t.adminLoginDemoCredentialsLabel}</p>
+          <p className="mt-2">{t.adminUsersRoleStudent}: student / student123</p>
+          <p>{t.adminUsersRoleTeacher}: teacher / teacher123</p>
+          <p>{t.adminUsersRoleResearcher}: researcher / researcher123</p>
+          <p>{t.adminUsersRoleSeniorLearner}: senior / senior123</p>
         </div>
       </div>
     </main>
