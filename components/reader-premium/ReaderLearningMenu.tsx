@@ -108,7 +108,7 @@ export default function ReaderLearningMenu() {
                 key={d.href}
                 href={d.href}
                 role="menuitem"
-                onClick={() => setOpen(false)}
+                onNavigate={() => setOpen(false)}
                 className="flex flex-col items-center gap-1 rounded-xl bg-slate-50 px-2 py-2.5 text-center text-xs font-semibold text-slate-700 transition-colors hover:bg-amber-50 hover:text-amber-700"
               >
                 <span aria-hidden="true" className="text-base leading-none">{d.icon}</span>

@@ -130,7 +130,7 @@ export default function LearningNav() {
                   href={s.href}
                   role="menuitem"
                   aria-current={isActive ? "page" : undefined}
-                  onClick={() => setOpen(false)}
+                  onNavigate={() => setOpen(false)}
                   className={
                     isActive
                       ? "rounded-xl bg-amber-500 px-3 py-2.5 text-center text-xs font-bold text-white"
