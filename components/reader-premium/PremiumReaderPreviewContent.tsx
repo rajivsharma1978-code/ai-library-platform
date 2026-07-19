@@ -12,6 +12,7 @@ import { getPublicCatalog } from "@/lib/catalog";
 import { trackAIUsage, logActivity, type AIFeature } from "@/components/admin/adminData";
 import PremiumReaderLayout, { type PremiumReaderLayoutHandle } from "@/components/reader-premium/PremiumReaderLayout";
 import LanguagePopover from "@/components/reader-premium/LanguagePopover";
+import ReaderLearningMenu from "@/components/reader-premium/ReaderLearningMenu";
 import AccessibilityToolbar from "@/components/ui/AccessibilityToolbar";
 import { saveCurrentBook } from "@/lib/currentBook";
 // ── Phase 2: AI Notes, Highlights, Bookmarks, Study Workspace ─────────
@@ -2313,6 +2314,9 @@ export default function PremiumReaderPreviewContent() {
               </button>
               <LanguagePopover language={language} onLanguageChange={setLanguage} availableLanguages={availableToolbarLanguages} />
             </div>
+            <span className="h-5 w-px bg-amber-200/70" />
+
+            <ReaderLearningMenu />
           </div>
 
           {/* ── DRAG / SELECTION VISUAL OVERLAYS ───────────────
