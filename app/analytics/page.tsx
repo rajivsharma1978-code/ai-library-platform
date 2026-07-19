@@ -7,6 +7,7 @@ import { useLanguage } from "@/lib/useLanguage";
 import { directorBooks } from "@/lib/directorBooks";
 import PageHeader from "@/components/ui/PageHeader";
 import LearningNav from "@/components/learning/LearningNav";
+import ReturnToBook from "@/components/learning/ReturnToBook";
 import StatCard from "@/components/ui/StatCard";
 import InfoCard from "@/components/ui/InfoCard";
 import AppButton from "@/components/ui/AppButton";
@@ -197,6 +198,7 @@ export default function AnalyticsPage() {
         />
 
         <LearningNav />
+        <ReturnToBook />
 
         {!hasRealData && (
           <InfoCard tone="amber" className="mb-6 py-3 text-sm font-semibold">

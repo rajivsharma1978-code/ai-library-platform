@@ -6,6 +6,7 @@ import { useLanguage } from "@/lib/useLanguage";
 import { directorBooks } from "@/lib/directorBooks";
 import PageHeader from "@/components/ui/PageHeader";
 import LearningNav from "@/components/learning/LearningNav";
+import ReturnToBook from "@/components/learning/ReturnToBook";
 import InfoCard from "@/components/ui/InfoCard";
 import SearchBar from "@/components/ui/SearchBar";
 import FilterBar from "@/components/ui/FilterBar";
@@ -201,6 +202,7 @@ export default function FlashcardsPage() {
         />
 
         <LearningNav />
+        <ReturnToBook />
 
         {usingDemo && (
           <InfoCard tone="amber" className="mb-6 py-3 text-sm font-semibold">

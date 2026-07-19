@@ -13,6 +13,7 @@ import { trackAIUsage, logActivity, type AIFeature } from "@/components/admin/ad
 import PremiumReaderLayout, { type PremiumReaderLayoutHandle } from "@/components/reader-premium/PremiumReaderLayout";
 import LanguagePopover from "@/components/reader-premium/LanguagePopover";
 import AccessibilityToolbar from "@/components/ui/AccessibilityToolbar";
+import { saveCurrentBook } from "@/lib/currentBook";
 // ── Phase 2: AI Notes, Highlights, Bookmarks, Study Workspace ─────────
 // Additive only — nothing below touches page turning, zoom, fullscreen,
 // or the text/image selection engine above.
@@ -341,6 +342,27 @@ export default function PremiumReaderPreviewContent() {
   const [readerPage, setReaderPage] = useState(1);
   const [bookOpened, setBookOpened] = useState(false);
   const [bookOpening, setBookOpening] = useState(false);
+
+  // ── Shared "current book" pointer for Return to Book (Phase G-2B) ───
+  // Additive only — does not touch zoom, fullscreen, selection, AI
+  // Companion, or Study Workspace persistence below. The URL-page-restore
+  // effect itself lives further down, deliberately positioned to run
+  // AFTER the existing book-change reset effect (which sets readerPage
+  // back to 1 on every bookId change, including mount) — effects run in
+  // source order within a commit, so defining it earlier here would have
+  // its setReaderPage(urlPage) silently overwritten by that reset.
+  const appliedUrlPageRef = useRef(false);
+
+  useEffect(() => {
+    if (!bookId || !totalPages) return;
+    saveCurrentBook({
+      route: "/reader-premium",
+      bookId,
+      title: currentBook.title,
+      page: readerPage,
+      source: isUploadedBook ? "upload" : undefined,
+    });
+  }, [bookId, readerPage, currentBook.title, totalPages, isUploadedBook]);
 
   // ── Zoom / pan ────────────────────────────────────────────────────
   const [zoom, setZoom] = useState(100);
@@ -724,6 +746,22 @@ export default function PremiumReaderPreviewContent() {
     setAiSpeechState("idle");
     setAiVoiceNotice(null);
   }, [bookId]); // eslint-disable-line
+
+  // Applies a validated `?page=` once per book-load, AFTER the reset
+  // effect above (source order matters — this must run later in the same
+  // commit so its setReaderPage isn't the one getting overwritten).
+  // Premium Reader had no existing page query-param support or
+  // localStorage fallback to preserve, so precedence is simply: valid
+  // URL page, else the reset effect's own default of page 1.
+  useEffect(() => {
+    if (appliedUrlPageRef.current) return;
+    appliedUrlPageRef.current = true;
+    const urlPage = Number(searchParams.get("page"));
+    if (Number.isFinite(urlPage) && urlPage >= 1) {
+      navigateToPdfPage(urlPage);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bookId]);
 
   useEffect(() => { if (zoom <= 100) setPan({ x: 0, y: 0 }); }, [zoom]);
 

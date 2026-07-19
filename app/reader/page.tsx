@@ -7,6 +7,7 @@ import { useSearchParams } from "next/navigation";
 import { UI_TEXT } from "@/lib/i18n";
 import { useLanguage } from "@/lib/useLanguage";
 import FlipBookViewer from "@/components/reader/FlipBookViewer";
+import { saveCurrentBook } from "@/lib/currentBook";
 
 // Chapter ids and their body content are internal/demo content, not UI
 // chrome — kept in English and used as-is for state/comparisons/storage.
@@ -202,6 +203,24 @@ function ReaderPageContent() {
     setPageImage(leftImage);
     setRightPageImage(rightImage);
   }, [readerPage]);
+
+  // Shared "current book" pointer for Return to Book (Phase G-2B) — a
+  // separate, additive effect; does not replace or alter any existing
+  // Reader key above. `book` here is the same title string the Reader
+  // already uses to resolve demo content, so it round-trips correctly
+  // only for demo/catalog books; for a genuinely uploaded PDF this best-
+  // effort record still points back to /reader, which falls back to
+  // whatever is currently in localStorage — the same behavior /reader
+  // already has today when opened without a book id.
+  useEffect(() => {
+    saveCurrentBook({
+      route: "/reader",
+      bookId: book,
+      title: book,
+      page: readerPage,
+      source: isDemoBook ? "demo" : undefined,
+    });
+  }, [book, readerPage, isDemoBook]);
 
   useEffect(() => { localStorage.setItem("aiSavedNotes", JSON.stringify(savedNotes)); }, [savedNotes]);
   useEffect(() => { localStorage.setItem("aiBookmarks", JSON.stringify(bookmarks)); }, [bookmarks]);

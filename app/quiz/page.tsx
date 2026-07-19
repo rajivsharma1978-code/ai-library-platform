@@ -12,6 +12,7 @@ import { directorBooks } from "@/lib/directorBooks";
 import { trackAIUsage, logActivity } from "@/components/admin/adminData";
 import PageHeader from "@/components/ui/PageHeader";
 import LearningNav from "@/components/learning/LearningNav";
+import ReturnToBook from "@/components/learning/ReturnToBook";
 import InfoCard from "@/components/ui/InfoCard";
 import FilterBar from "@/components/ui/FilterBar";
 import AccessibilityToolbar from "@/components/ui/AccessibilityToolbar";
@@ -428,6 +429,7 @@ export default function QuizPage() {
         />
 
         <LearningNav />
+        <ReturnToBook />
 
         {/* ── SETUP ─────────────────────────────────────────────────── */}
         {stage === "setup" && (
