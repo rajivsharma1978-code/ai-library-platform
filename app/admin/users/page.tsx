@@ -115,7 +115,7 @@ export default function AdminUsersPage() {
   const suspended = users.filter(u => u.status === "Suspended").length;
 
   return (
-    <main className="min-h-screen bg-[radial-gradient(circle_at_top,#fff8e8_0%,#f3e6c8_45%,#eaddc0_100%)] flex">
+    <main className="min-h-screen bg-[radial-gradient(circle_at_top,#fff8e8_0%,#f3e6c8_45%,#eaddc0_100%)] flex flex-col lg:flex-row">
       <AdminSidebar />
       <section className="flex-1 p-8 overflow-auto">
         <PageHeader
@@ -123,6 +123,7 @@ export default function AdminUsersPage() {
           title={t.adminUsersTitle}
           subtitle={t.adminUsersSubtitle}
           homeLabel={t.commonHome}
+          showHomeLink={false}
         />
 
         <InfoCard tone="amber" className="mb-6 py-3 text-sm font-semibold">
