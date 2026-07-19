@@ -82,7 +82,11 @@ export function SiteFooter() {
         {/* Bottom bar */}
         <div className="mt-12 pt-8 border-t border-gray-100 flex flex-col sm:flex-row items-center justify-between gap-3">
           <p className="text-[12.5px] text-gray-400">{t.footerCopy}</p>
-          <p className="text-[12.5px] text-gray-400 flex items-center gap-1">{t.footerMadeWith} <span className="text-red-500 text-base">❤</span> {t.footerInIndia}</p>
+          <div className="flex items-center gap-3">
+            <p className="text-[12.5px] text-gray-400 flex items-center gap-1">{t.footerMadeWith} <span className="text-red-500 text-base">❤</span> {t.footerInIndia}</p>
+            <span className="h-3 w-px bg-gray-200" aria-hidden="true" />
+            <Link href="/admin-login" className="text-[12.5px] font-semibold text-gray-600 hover:text-orange-500 transition-colors">{t.adminConsoleLabel}</Link>
+          </div>
         </div>
       </div>
     </footer>

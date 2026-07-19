@@ -12,7 +12,6 @@ import { getPublicCatalog } from "@/lib/catalog";
 import { trackAIUsage, logActivity, type AIFeature } from "@/components/admin/adminData";
 import PremiumReaderLayout, { type PremiumReaderLayoutHandle } from "@/components/reader-premium/PremiumReaderLayout";
 import LanguagePopover from "@/components/reader-premium/LanguagePopover";
-import ReaderLearningMenu from "@/components/reader-premium/ReaderLearningMenu";
 import AccessibilityToolbar from "@/components/ui/AccessibilityToolbar";
 import { saveCurrentBook } from "@/lib/currentBook";
 // ── Phase 2: AI Notes, Highlights, Bookmarks, Study Workspace ─────────
@@ -340,20 +339,30 @@ export default function PremiumReaderPreviewContent() {
   );
 
   // ── Reader ────────────────────────────────────────────────────────
-  const [readerPage, setReaderPage] = useState(1);
-  const [bookOpened, setBookOpened] = useState(false);
+  // A requested `?page=` is resolved synchronously into BOTH of these
+  // initial states — not just `readerPage` — so the very first render
+  // already reflects it. Doing this only in an effect (as a first pass
+  // did) meant the component's first paint always used the plain
+  // defaults (page 1, cover shown), and the correct values only landed
+  // one commit later — a real, visible flash of the cover before the
+  // requested page appeared. `searchParams`/`totalPages`/`isSpreadBook`
+  // are all already resolved above by this point in the same render, so
+  // reading them here is safe and needs no separate state or effect.
+  const [readerPage, setReaderPage] = useState(() => {
+    const urlPage = Number(searchParams.get("page"));
+    if (!Number.isFinite(urlPage) || urlPage < 1) return 1;
+    const clamped = Math.min(Math.max(1, Math.floor(urlPage)), totalPages || urlPage);
+    return isSpreadBook && clamped > 1 ? (clamped % 2 === 0 ? clamped : clamped - 1) : clamped;
+  });
+  const [bookOpened, setBookOpened] = useState(() => {
+    const urlPage = Number(searchParams.get("page"));
+    return Number.isFinite(urlPage) && urlPage >= 1;
+  });
   const [bookOpening, setBookOpening] = useState(false);
 
   // ── Shared "current book" pointer for Return to Book (Phase G-2B) ───
   // Additive only — does not touch zoom, fullscreen, selection, AI
-  // Companion, or Study Workspace persistence below. The URL-page-restore
-  // effect itself lives further down, deliberately positioned to run
-  // AFTER the existing book-change reset effect (which sets readerPage
-  // back to 1 on every bookId change, including mount) — effects run in
-  // source order within a commit, so defining it earlier here would have
-  // its setReaderPage(urlPage) silently overwritten by that reset.
-  const appliedUrlPageRef = useRef(false);
-
+  // Companion, or Study Workspace persistence below.
   useEffect(() => {
     if (!bookId || !totalPages) return;
     saveCurrentBook({
@@ -722,9 +731,43 @@ export default function PremiumReaderPreviewContent() {
     setPan({ x: 0, y: 0 });
   }, [readerPage, bookId]); // eslint-disable-line
 
+  // Also applies a validated `?page=` — read fresh from `searchParams`
+  // every time this effect runs, rather than a "do it once, ever" ref
+  // guard. That guard was tried first, but a Link-driven client-side
+  // transition into this page from another route (e.g. Notes → Return
+  // to Book) doesn't remount this component fresh the way a full
+  // navigation does, so a once-only ref could end up permanently
+  // "spent" by the time `bookId`/`searchParams` actually reflected the
+  // requested book — silently leaving the reader on the cover with the
+  // right URL but the wrong visible page. Re-deriving from `searchParams`
+  // on every `bookId` change (mount or a genuine book switch) has no such
+  // race, and a plain in-book page turn never changes `bookId`, so it
+  // can't re-trigger this from an unrelated cause. The `readerPage`/
+  // `bookOpened` state declarations above already resolve the same
+  // `?page=` synchronously into the FIRST render (so there's no cover
+  // flash) — this effect exists for genuine subsequent book changes and
+  // to run the rest of the book-change reset below, and lands on the
+  // exact same value the initial state already used, so it's a no-op
+  // repeat on mount, not a second competing source of truth.
+  //
+  // A requested page also bypasses the cover-click gate: `bookOpened`
+  // is otherwise only ever flipped true by the user clicking the cover,
+  // so without this an explicit `?page=` was silently ignored on the
+  // visible screen even though readerPage was set correctly underneath.
+  // Skips the opening animation deliberately — that's for a deliberate
+  // "click to begin reading" moment, not a direct/restored deep link.
+  //
+  // `saveCurrentBook` is also called directly here (with the freshly
+  // resolved target page, not the possibly-still-stale `readerPage`
+  // state) rather than relying solely on the separate effect below —
+  // that effect reacts to `readerPage` generically and, on this exact
+  // same commit, would otherwise still be holding the PREVIOUS book's
+  // last page for one render until `setReaderPage` here takes effect,
+  // risking a transient wrong-page write to `ndl_current_book` between
+  // the two. Writing the correct value directly here removes that gap
+  // rather than depending on effect order to self-correct one render
+  // later.
   useEffect(() => {
-    setReaderPage(1);
-    setBookOpened(false);
     setBookOpening(false);
     setZoom(100);
     setPan({ x: 0, y: 0 });
@@ -746,23 +789,29 @@ export default function PremiumReaderPreviewContent() {
     aiSpeechStoppedRef.current = true;
     setAiSpeechState("idle");
     setAiVoiceNotice(null);
-  }, [bookId]); // eslint-disable-line
 
-  // Applies a validated `?page=` once per book-load, AFTER the reset
-  // effect above (source order matters — this must run later in the same
-  // commit so its setReaderPage isn't the one getting overwritten).
-  // Premium Reader had no existing page query-param support or
-  // localStorage fallback to preserve, so precedence is simply: valid
-  // URL page, else the reset effect's own default of page 1.
-  useEffect(() => {
-    if (appliedUrlPageRef.current) return;
-    appliedUrlPageRef.current = true;
     const urlPage = Number(searchParams.get("page"));
+    let resolvedPage = 1;
     if (Number.isFinite(urlPage) && urlPage >= 1) {
-      navigateToPdfPage(urlPage);
+      const clamped = Math.min(Math.max(1, Math.floor(urlPage)), totalPages || urlPage);
+      resolvedPage = isSpreadBook && clamped > 1 ? (clamped % 2 === 0 ? clamped : clamped - 1) : clamped;
+      setReaderPage(resolvedPage);
+      setBookOpened(true);
+    } else {
+      setReaderPage(1);
+      setBookOpened(false);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bookId]);
+
+    if (bookId && totalPages) {
+      saveCurrentBook({
+        route: "/reader-premium",
+        bookId,
+        title: currentBook.title,
+        page: resolvedPage,
+        source: isUploadedBook ? "upload" : undefined,
+      });
+    }
+  }, [bookId]); // eslint-disable-line
 
   useEffect(() => { if (zoom <= 100) setPan({ x: 0, y: 0 }); }, [zoom]);
 
@@ -2314,9 +2363,6 @@ export default function PremiumReaderPreviewContent() {
               </button>
               <LanguagePopover language={language} onLanguageChange={setLanguage} availableLanguages={availableToolbarLanguages} />
             </div>
-            <span className="h-5 w-px bg-amber-200/70" />
-
-            <ReaderLearningMenu />
           </div>
 
           {/* ── DRAG / SELECTION VISUAL OVERLAYS ───────────────

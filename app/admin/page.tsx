@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import AdminSidebar from "@/components/admin/AdminSidebar";
 import { UI_TEXT } from "@/lib/i18n";
@@ -114,28 +113,6 @@ export default function AdminPage() {
           <StatCard icon="🌐" label={t.adminNavLanguages} value={uniqueLanguages} />
           <StatCard icon="⬆️" label={t.adminNavUploadQueue} value={uploadQueueCount} />
           <StatCard icon="🕐" label={t.mySpaceRecentActivity} value={activity.length} />
-        </div>
-
-        {/* 4. Quick actions */}
-        <div className="mt-8">
-          <h3 className="text-lg font-black text-slate-950 mb-3">{t.aiTutorQuickActions}</h3>
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-            <Link href="/admin/book-management?action=add" className="rounded-2xl bg-orange-600 px-4 py-4 text-center text-sm font-bold text-white shadow-md shadow-orange-500/25 hover:bg-orange-700">
-              ➕ {t.adminQuickAddBook}
-            </Link>
-            <Link href="/admin/users" className="rounded-2xl bg-slate-950 px-4 py-4 text-center text-sm font-bold text-white shadow hover:bg-slate-800">
-              👥 {t.adminQuickManageUsers}
-            </Link>
-            <Link href="/admin/ai-usage" className="rounded-2xl bg-slate-950 px-4 py-4 text-center text-sm font-bold text-white shadow hover:bg-slate-800">
-              🤖 {t.adminQuickViewAiUsage}
-            </Link>
-            <Link href="/admin/languages" className="rounded-2xl bg-slate-950 px-4 py-4 text-center text-sm font-bold text-white shadow hover:bg-slate-800">
-              🌐 {t.adminQuickLanguageSettings}
-            </Link>
-            <Link href="/admin/upload-queue" className="rounded-2xl bg-slate-950 px-4 py-4 text-center text-sm font-bold text-white shadow hover:bg-slate-800">
-              ⬆️ {t.adminNavUploadQueue}
-            </Link>
-          </div>
         </div>
 
         {/* 3. Admin Activity */}

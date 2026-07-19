@@ -20,23 +20,15 @@ const DESTINATIONS: { href: string; icon: string; labelKey: DestinationKey }[] =
   { href: "/analytics", icon: "📊", labelKey: "navAnalytics" },
 ];
 
-/** Compact "My Learning" popover for the Premium Reader toolbar — the
- * seven My Learning destinations reachable from one trigger, without a
- * permanent nav bar or a second sidebar (ReaderNav's left rail already
- * covers Read/Library/Notes/Revision/AI Tutor/My Space as a persistent
- * rail; this is deliberately a separate, on-demand control, not a merge
- * into that rail, per the "no permanent 7-item bar" constraint).
- *
- * Shares the same viewport-clamped placement/interaction pattern as
- * LanguagePopover — the Reader's other toolbar popover, in the same
- * controls-strip row — so it behaves identically in fullscreen: fixed
- * positioning escapes the zoomed/transformed book area, same z-index,
- * already proven not to be clipped or layered behind the canvas.
- *
- * No current-book save happens here — PremiumReaderPreviewContent's
- * existing G-2B effect already saves on every bookId/readerPage change,
- * so by the time a destination is clicked the record is already current;
- * adding a second write here would be redundant. */
+/** Compact "My Learning" popover for the Normal Reader toolbar — the only
+ * route Normal Reader has into the connected learning journey (My Space,
+ * My Library, Notes, Revision, Flashcards, Quiz, Analytics), since this
+ * reader has no persistent nav rail the way Premium Reader does. Same
+ * viewport-clamped placement/interaction pattern as LanguagePopover and
+ * LearningNav's mobile menu — trigger + on-demand panel, onNavigate
+ * closes it on selection (this Next.js build's Link doesn't support a
+ * plain onClick for that; see AdminSidebar/LearningNav for the same
+ * fix), Escape/click-outside close it too. */
 export default function ReaderLearningMenu() {
   const [open, setOpen] = useState(false);
   const menuId = useId();
@@ -75,10 +67,10 @@ export default function ReaderLearningMenu() {
         aria-controls={menuId}
         aria-label={open ? t.learningNavCloseMenu : t.navMyLearning}
         title={t.navMyLearning}
-        className={`ndl-press inline-flex h-9 items-center gap-1.5 rounded-full px-4 text-xs font-bold transition-colors ${
+        className={`inline-flex h-9 items-center gap-1.5 rounded-xl px-4 text-xs font-bold transition-colors ${
           open
-            ? "bg-orange-600 text-white shadow"
-            : "bg-amber-50/70 text-slate-700 ring-1 ring-amber-100 hover:bg-amber-100"
+            ? "bg-slate-900 text-white"
+            : "bg-white text-slate-700 ring-1 ring-slate-200 hover:bg-slate-50"
         }`}
       >
         <span aria-hidden="true">🧭</span>
@@ -91,7 +83,7 @@ export default function ReaderLearningMenu() {
           ref={panelRef}
           role="menu"
           aria-label={t.navMyLearning}
-          className="ndl-fade-in-scale fixed z-[200] rounded-2xl border border-amber-100 bg-white p-2 shadow-[0_16px_50px_rgba(75,45,12,0.20)]"
+          className="fixed z-[200] rounded-2xl border border-slate-200 bg-white p-2 shadow-[0_16px_50px_rgba(15,23,42,0.20)]"
           style={{
             top: placement?.top ?? -9999,
             left: placement?.left ?? -9999,
@@ -109,7 +101,7 @@ export default function ReaderLearningMenu() {
                 href={d.href}
                 role="menuitem"
                 onNavigate={() => setOpen(false)}
-                className="flex flex-col items-center gap-1 rounded-xl bg-slate-50 px-2 py-2.5 text-center text-xs font-semibold text-slate-700 transition-colors hover:bg-amber-50 hover:text-amber-700"
+                className="flex flex-col items-center gap-1 rounded-xl bg-slate-50 px-2 py-2.5 text-center text-xs font-semibold text-slate-700 transition-colors hover:bg-slate-100"
               >
                 <span aria-hidden="true" className="text-base leading-none">{d.icon}</span>
                 <span className="leading-tight">{t[d.labelKey]}</span>

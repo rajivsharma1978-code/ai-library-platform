@@ -24,6 +24,9 @@ const LINKS: { href: string; icon: string }[] = [
   { href: "/library", icon: "🏛️" },
   { href: "/notes", icon: "📝" },
   { href: "/revision", icon: "🔄" },
+  { href: "/flashcards", icon: "🃏" },
+  { href: "/quiz", icon: "❓" },
+  { href: "/analytics", icon: "📊" },
   { href: "/ai-tutor", icon: "🤖" },
   { href: "/my-space", icon: "🧠" },
 ];
@@ -47,6 +50,9 @@ export default function ReaderNav({
     "/library": t.navLibrary,
     "/notes": t.navNotes,
     "/revision": t.navRevision,
+    "/flashcards": t.commonFlashcards,
+    "/quiz": t.quizPageTitle,
+    "/analytics": t.navAnalytics,
     "/ai-tutor": t.navAiTutor,
     "/my-space": t.navMySpace,
   };

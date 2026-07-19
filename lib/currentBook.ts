@@ -18,7 +18,7 @@
 // from storage), so a corrupted or tampered record can never produce a
 // link outside the two known Reader routes.
 
-export type ReaderRoute = "/reader" | "/reader-premium";
+export type ReaderRoute = "/reader" | "/reader-premium" | "/read";
 export type CurrentBookSource = "catalog" | "upload" | "demo";
 
 export interface CurrentBookRecord {
@@ -32,7 +32,7 @@ export interface CurrentBookRecord {
 }
 
 const STORAGE_KEY = "ndl_current_book";
-const ALLOWED_ROUTES: readonly ReaderRoute[] = ["/reader", "/reader-premium"];
+const ALLOWED_ROUTES: readonly ReaderRoute[] = ["/reader", "/reader-premium", "/read"];
 const ALLOWED_SOURCES: readonly CurrentBookSource[] = ["catalog", "upload", "demo"];
 
 function isWindowAvailable(): boolean {
@@ -148,6 +148,11 @@ export function buildCurrentBookUrl(record: CurrentBookRecord): string {
     const params = new URLSearchParams({ book: record.bookId, page: String(page) });
     if (record.source === "demo") params.set("demo", "true");
     return `/reader?${params.toString()}`;
+  }
+
+  if (record.route === "/read") {
+    const params = new URLSearchParams({ book: record.bookId, page: String(page) });
+    return `/read?${params.toString()}`;
   }
 
   const params = new URLSearchParams({ page: String(page) });

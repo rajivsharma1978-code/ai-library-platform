@@ -13,6 +13,8 @@ import InfoCard from "@/components/ui/InfoCard";
 import AccessibilityToolbar from "@/components/ui/AccessibilityToolbar";
 import BookCover from "@/components/ui/BookCover";
 import { saveUploadedPdf } from "@/lib/uploadedPdfStore";
+import { saveCurrentBook } from "@/lib/currentBook";
+import ReaderLearningMenu from "@/components/reader/ReaderLearningMenu";
 
 // ══════════════════════════════════════════════════════════════════════
 // Normal PDF Reader — /read
@@ -95,7 +97,16 @@ function ReadPageContent() {
         if (cancelled) return;
         setPdf(doc);
         setNumPages(doc.numPages);
-        setPage(1);
+        // A `?page=` in the URL (direct link, or Return to Book from
+        // Notes/Revision/etc) opens straight to that physical PDF page,
+        // clamped to this book's actual bounds — same canonical 1-based
+        // page index Premium Reader and `ndl_current_book` already use.
+        // No param falls back to page 1, exactly as before.
+        const urlPage = Number(searchParams.get("page"));
+        const initialPage = Number.isFinite(urlPage) && urlPage >= 1
+          ? Math.min(Math.floor(urlPage), doc.numPages)
+          : 1;
+        setPage(initialPage);
       } catch (err) {
         console.error("[Normal Reader] Failed to load PDF:", err);
         if (!cancelled) setLoadError(t.readerLoadError);
@@ -106,6 +117,15 @@ function ReadPageContent() {
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pdfSource]);
+
+  // ── Shared "current book" pointer for Return to Book ─────────────────
+  // Only for catalog books — a locally-uploaded PDF (blob: URL, path
+  // above) has no stable id that survives a reload, so there's nothing
+  // meaningful to reopen it by later anyway.
+  useEffect(() => {
+    if (!catalogBook || !numPages) return;
+    saveCurrentBook({ route: "/read", bookId: catalogBook.id, title: catalogBook.title, page });
+  }, [catalogBook?.id, catalogBook?.title, page, numPages]);
 
   useEffect(() => {
     if (!pdf) return;
@@ -399,8 +419,9 @@ function ReadPageContent() {
           <AppButton variant="secondary" size="sm" onClick={toggleFullscreen}>
             {isFullscreen ? `⤢ ${t.readerExitFullscreen}` : `⛶ ${t.readerFullscreen}`}
           </AppButton>
+          <ReaderLearningMenu />
           {catalogBook && (
-            <AppButton variant="accent" size="sm" href={`/reader-premium?book=${catalogBook.id}`}>
+            <AppButton variant="accent" size="sm" href={`/reader-premium?book=${catalogBook.id}&page=${page}`}>
               🤖 {t.readerReadWithAi}
             </AppButton>
           )}
