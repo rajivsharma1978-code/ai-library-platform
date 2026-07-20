@@ -1,22 +1,29 @@
 "use client";
 
 import Link from "next/link";
-import { useRef } from "react";
 import { usePublicCatalog } from "@/lib/catalog";
+import { useAdaptiveCarousel } from "@/lib/useAdaptiveCarousel";
 import RealBookCover from "./RealBookCover";
 import { UI_TEXT } from "@/lib/i18n";
 import { useLanguage } from "@/lib/useLanguage";
 
 // Premium horizontal carousel (Netflix / Disney+ Hotstar / Apple Books
-// pattern) — replaces the old large stacked two-column cards. Mobile
-// shows ~2.2 covers with a snap-scroll swipe; desktop widens each card
-// so 3-5 are visible at once. Same card width at every breakpoint, no
-// separate mobile/desktop layout to keep in sync.
+// pattern). Mobile shows ~2.2 covers with a snap-scroll swipe; desktop
+// widens each card so 3-5 are visible at once — same card width at every
+// breakpoint, no separate mobile/desktop layout to keep in sync.
+//
+// The row is adaptive: with a small catalogue (today, 3 demo books) the
+// cards don't fill the container, so useAdaptiveCarousel detects that and
+// the row centers itself — reading as a deliberately curated selection
+// rather than a scrollable list that happens to be missing books. Once
+// the catalogue is large enough to overflow, it automatically reverts to
+// the left-aligned, arrow-driven scrolling carousel — no code change
+// needed when real content arrives.
 export default function DirectorCollection() {
   const { language } = useLanguage();
   const t = UI_TEXT[language];
   const books = usePublicCatalog();
-  const scrollRef = useRef<HTMLDivElement>(null);
+  const { ref: scrollRef, overflowing } = useAdaptiveCarousel<HTMLDivElement>([books.length]);
 
   const scroll = (dir: "left" | "right") => {
     const card = scrollRef.current?.firstElementChild as HTMLElement | null;
@@ -25,17 +32,17 @@ export default function DirectorCollection() {
   };
 
   return (
-    <section className="bg-[#fff8ed] px-5 py-9 sm:px-6 md:py-12">
-      <div className="mx-auto max-w-7xl">
-        <div className="mb-4 flex items-end justify-between gap-4 sm:mb-5">
+    <section className="bg-[#fff8ed] px-4 py-16 sm:px-6 sm:py-24">
+      <div className="mx-auto max-w-6xl">
+        <div className="mb-8 flex items-end justify-between gap-4 sm:mb-10">
           <div className="min-w-0">
             <p className="text-[10.5px] font-black uppercase tracking-[0.3em] text-amber-700 sm:text-[11px]">
               {t.directorEyebrow}
             </p>
-            <h2 className="mt-1.5 text-xl font-black leading-tight text-slate-950 sm:text-2xl md:text-3xl">
+            <h2 className="mt-2 text-2xl font-black leading-tight tracking-tight text-slate-950 sm:text-3xl md:text-4xl">
               {t.directorHeading}
             </h2>
-            <p className="mt-1.5 hidden max-w-2xl text-sm text-slate-600 md:block">
+            <p className="mt-2 hidden max-w-2xl text-[15px] leading-relaxed text-slate-600 md:block">
               {t.directorDesc}
             </p>
           </div>
@@ -47,28 +54,32 @@ export default function DirectorCollection() {
             >
               {t.directorOpenPremiumReader} →
             </Link>
-            <button
-              type="button"
-              onClick={() => scroll("left")}
-              aria-label={t.commonPrevious}
-              className="hidden h-10 w-10 items-center justify-center rounded-full border border-amber-200 bg-white text-slate-600 shadow-sm transition-all active:scale-90 hover:border-amber-400 hover:text-amber-700 sm:flex"
-            >
-              ‹
-            </button>
-            <button
-              type="button"
-              onClick={() => scroll("right")}
-              aria-label={t.commonNext}
-              className="hidden h-10 w-10 items-center justify-center rounded-full border border-amber-200 bg-white text-slate-600 shadow-sm transition-all active:scale-90 hover:border-amber-400 hover:text-amber-700 sm:flex"
-            >
-              ›
-            </button>
+            {overflowing && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => scroll("left")}
+                  aria-label={t.commonPrevious}
+                  className="hidden h-10 w-10 items-center justify-center rounded-full border border-amber-200 bg-white text-slate-600 shadow-sm transition-all active:scale-90 hover:border-amber-400 hover:text-amber-700 sm:flex"
+                >
+                  ‹
+                </button>
+                <button
+                  type="button"
+                  onClick={() => scroll("right")}
+                  aria-label={t.commonNext}
+                  className="hidden h-10 w-10 items-center justify-center rounded-full border border-amber-200 bg-white text-slate-600 shadow-sm transition-all active:scale-90 hover:border-amber-400 hover:text-amber-700 sm:flex"
+                >
+                  ›
+                </button>
+              </>
+            )}
           </div>
         </div>
 
         <div
           ref={scrollRef}
-          className="flex snap-x snap-mandatory gap-4 overflow-x-auto pb-2 pl-0.5 pt-0.5"
+          className={`flex snap-x snap-mandatory gap-4 overflow-x-auto pb-2 pl-0.5 pt-0.5 ${overflowing ? "" : "justify-center"}`}
           style={{ scrollbarWidth: "none", msOverflowStyle: "none" }}
         >
           {books.map((book) => (

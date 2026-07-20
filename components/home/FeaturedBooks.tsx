@@ -1,9 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { useRef, useState, type MouseEvent } from "react";
+import { useState, type MouseEvent } from "react";
 import { motion } from "framer-motion";
 import { usePublicCatalog, type CatalogBook } from "@/lib/catalog";
+import { useAdaptiveCarousel } from "@/lib/useAdaptiveCarousel";
 import RealBookCover from "./RealBookCover";
 import { UI_TEXT } from "@/lib/i18n";
 import { useLanguage } from "@/lib/useLanguage";
@@ -12,19 +13,22 @@ import { useLanguage } from "@/lib/useLanguage";
 // horizontal-carousel language, deliberately smaller cards and a single
 // tap target per card (no stacked dual buttons) so it reads as the
 // lightweight "editorially featured" rail, not a second flagship shelf.
+// Adaptive like Director Collection — centers and hides arrows when the
+// catalogue doesn't fill the row; reverts to a scrollable carousel once
+// it does.
 export function FeaturedBooks() {
   const { language } = useLanguage();
   const t = UI_TEXT[language];
-  const scrollRef = useRef<HTMLDivElement>(null);
   const [summaryBook, setSummaryBook] = useState<CatalogBook | null>(null);
   const [summaryText, setSummaryText] = useState("");
   const [loading, setLoading] = useState(false);
 
   const books = usePublicCatalog();
+  const { ref: scrollRef, overflowing } = useAdaptiveCarousel<HTMLDivElement>([books.length]);
 
   const scroll = (dir: "left" | "right") => {
     const card = scrollRef.current?.firstElementChild as HTMLElement | null;
-    const step = card ? card.getBoundingClientRect().width + 12 : 200;
+    const step = card ? card.getBoundingClientRect().width + 16 : 220;
     scrollRef.current?.scrollBy({ left: dir === "right" ? step : -step, behavior: "smooth" });
   };
 
@@ -42,33 +46,40 @@ export function FeaturedBooks() {
 
   return (
     <>
-      <section className="bg-white px-4 py-8 sm:px-6 sm:py-10">
-        <div className="mx-auto max-w-7xl">
-          <div className="mb-4 flex items-center justify-between sm:mb-5">
-            <h2 className="text-[18px] font-extrabold text-gray-900 sm:text-[20px]">{t.featuredBooks}</h2>
-            <div className="flex items-center gap-1.5 sm:gap-2">
+      <section className="bg-white px-4 py-16 sm:px-6 sm:py-24">
+        <div className="mx-auto max-w-6xl">
+          <div className="mb-8 flex items-end justify-between gap-4 sm:mb-10">
+            <div className="min-w-0">
+              <h2 className="text-2xl font-black tracking-tight text-gray-900 sm:text-3xl">{t.featuredBooks}</h2>
+              <p className="mt-1.5 text-[13.5px] text-gray-500 sm:text-[15px]">{t.featuredBooksSub}</p>
+            </div>
+            <div className="flex flex-shrink-0 items-center gap-1.5 sm:gap-2">
               <Link href="/library" className="mr-1 text-[13px] font-semibold text-orange-500 hover:text-orange-600 sm:mr-2">{t.viewAll}</Link>
-              <button type="button" onClick={() => scroll("left")} aria-label={t.commonPrevious}
-                className="flex h-9 w-9 items-center justify-center rounded-full border border-gray-200 bg-white text-[15px] text-gray-600 shadow-sm transition-all active:scale-90 hover:border-orange-300 hover:bg-orange-50 hover:text-orange-500">
-                ‹
-              </button>
-              <button type="button" onClick={() => scroll("right")} aria-label={t.commonNext}
-                className="flex h-9 w-9 items-center justify-center rounded-full border border-gray-200 bg-white text-[15px] text-gray-600 shadow-sm transition-all active:scale-90 hover:border-orange-300 hover:bg-orange-50 hover:text-orange-500">
-                ›
-              </button>
+              {overflowing && (
+                <>
+                  <button type="button" onClick={() => scroll("left")} aria-label={t.commonPrevious}
+                    className="flex h-9 w-9 items-center justify-center rounded-full border border-gray-200 bg-white text-[15px] text-gray-600 shadow-sm transition-all active:scale-90 hover:border-orange-300 hover:bg-orange-50 hover:text-orange-500">
+                    ‹
+                  </button>
+                  <button type="button" onClick={() => scroll("right")} aria-label={t.commonNext}
+                    className="flex h-9 w-9 items-center justify-center rounded-full border border-gray-200 bg-white text-[15px] text-gray-600 shadow-sm transition-all active:scale-90 hover:border-orange-300 hover:bg-orange-50 hover:text-orange-500">
+                    ›
+                  </button>
+                </>
+              )}
             </div>
           </div>
 
           <div
             ref={scrollRef}
-            className="flex snap-x snap-mandatory gap-3 overflow-x-auto pb-1"
+            className={`flex snap-x snap-mandatory gap-4 overflow-x-auto pb-1 ${overflowing ? "" : "justify-center"}`}
             style={{ scrollbarWidth: "none", msOverflowStyle: "none" }}
           >
             {books.map((book, i) => (
               <motion.div key={book.id}
                 initial={{ opacity: 0, y: 10 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }}
                 transition={{ duration: 0.3, delay: i * 0.04 }}
-                className="w-[30%] flex-shrink-0 snap-start sm:w-[128px] md:w-[136px]">
+                className="w-[48%] flex-shrink-0 snap-start sm:w-[190px] md:w-[205px] lg:w-[215px]">
                 <Link href={`/reader-premium?book=${book.id}`} className="group block transition-transform duration-200 ease-out active:scale-[0.97] hover:-translate-y-1">
                   <div className="relative overflow-hidden rounded-xl bg-gray-100 shadow-md ring-1 ring-black/[0.03]" style={{ aspectRatio: "3 / 4" }}>
                     <RealBookCover book={book} className="h-full w-full transition-transform duration-500 ease-out group-hover:scale-[1.04]" />
