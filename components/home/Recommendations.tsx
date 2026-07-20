@@ -64,43 +64,13 @@ export function Recommendations() {
   return (
     <section id="recommendations" className="bg-white border-b border-gray-100">
 
-      {/* Testimonials — unchanged, not book-data related */}
-      <div className="py-12 border-b border-gray-100">
-        <div className="mx-auto max-w-[1200px] px-6">
-          <h2 className="text-[20px] font-extrabold text-gray-900 mb-8">{t.whatLearnersSay}</h2>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
-            {TESTIMONIALS.map((item, i) => (
-              <motion.div key={item.name}
-                initial={{opacity:0,y:16}} whileInView={{opacity:1,y:0}} viewport={{once:true}}
-                transition={{duration:0.4,delay:i*0.08}}
-                className="rounded-2xl border border-gray-100 bg-white p-6 shadow-sm hover:shadow-md transition-shadow">
-                <p className="text-[14px] text-gray-700 leading-relaxed italic mb-5">"{item.quote}"</p>
-                <div className="flex items-center gap-3">
-                  <div className={`w-10 h-10 rounded-full ${item.color} flex items-center justify-center text-white font-bold text-[13px] flex-shrink-0`}>
-                    {item.initials}
-                  </div>
-                  <div>
-                    <p className="text-[13px] font-bold text-gray-900">{item.name}</p>
-                    <p className="text-[11px] text-gray-400">{item.role}</p>
-                  </div>
-                </div>
-              </motion.div>
-            ))}
-          </div>
-          <div className="flex justify-center gap-1.5 mt-7">
-            <div className="w-5 h-2 rounded-full bg-orange-500"/>
-            <div className="w-2 h-2 rounded-full bg-gray-200"/>
-            <div className="w-2 h-2 rounded-full bg-gray-200"/>
-          </div>
-        </div>
-      </div>
-
-      {/* Continue Reading — now the REAL catalog + REAL progress */}
-      <div className="py-12">
-        <div className="mx-auto max-w-[1200px] px-6">
-          <div className="flex items-center justify-between mb-6">
+      {/* Continue Reading — the actionable, personalized section, so it
+          leads; static testimonial copy follows rather than gating it. */}
+      <div className="py-9 sm:py-12">
+        <div className="mx-auto max-w-[1200px] px-4 sm:px-6">
+          <div className="flex items-center justify-between mb-5 sm:mb-6">
             <div className="flex items-center gap-2">
-              <h2 className="text-[20px] font-extrabold text-gray-900">{t.continueReading}</h2>
+              <h2 className="text-[18px] font-extrabold text-gray-900 sm:text-[20px]">{t.continueReading}</h2>
               {usingDemoProgress && (
                 <span className="rounded-full bg-amber-100 px-2.5 py-0.5 text-[10px] font-bold uppercase text-amber-700">
                   {t.demoTagLabel}
@@ -114,7 +84,7 @@ export function Recommendations() {
               <motion.div key={book.id}
                 initial={{opacity:0,y:10}} whileInView={{opacity:1,y:0}} viewport={{once:true}}
                 transition={{delay:i*0.07}}
-                className="group rounded-2xl border border-gray-100 bg-white p-4 shadow-sm hover:shadow-md hover:border-orange-200 transition-all">
+                className="group rounded-2xl border border-gray-100 bg-white p-4 shadow-sm transition-all hover:border-orange-200 hover:shadow-md">
                 <div className="flex items-center gap-4">
                   <div className="flex-shrink-0 w-12 h-16 rounded-xl overflow-hidden shadow bg-gray-100">
                     <RealBookCover book={book} className="h-full w-full" />
@@ -135,13 +105,46 @@ export function Recommendations() {
                 {/* Two clear reading choices, per the site-wide requirement */}
                 <div className="mt-3 flex gap-2">
                   <Link href={`/read?book=${book.id}`}
-                    className="flex-1 rounded-lg bg-slate-100 px-2 py-1.5 text-center text-[11px] font-bold text-slate-700 hover:bg-slate-200">
+                    className="flex min-h-[40px] flex-1 items-center justify-center rounded-lg bg-slate-100 px-2 text-center text-[11px] font-bold text-slate-700 transition active:scale-[0.97] hover:bg-slate-200">
                     📖 {t.bookActionReadNormally}
                   </Link>
                   <Link href={`/reader-premium?book=${book.id}`}
-                    className="flex-1 rounded-lg bg-purple-600 px-2 py-1.5 text-center text-[11px] font-bold text-white hover:bg-purple-700">
+                    className="flex min-h-[40px] flex-1 items-center justify-center rounded-lg bg-purple-600 px-2 text-center text-[11px] font-bold text-white transition active:scale-[0.97] hover:bg-purple-700">
                     🤖 {t.navAiTutor}
                   </Link>
+                </div>
+              </motion.div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* Testimonials — a light horizontal strip of compact quote chips
+          instead of three full-width cards stacked to their own screenful.
+          Same carousel language as Director Collection above, so the two
+          horizontal-scroll moments on this page feel like one consistent
+          pattern rather than two different UI idioms. */}
+      <div className="py-9 border-t border-gray-100 sm:py-12">
+        <div className="mx-auto max-w-[1200px] px-4 sm:px-6">
+          <h2 className="text-[18px] font-extrabold text-gray-900 mb-5 sm:text-[20px] sm:mb-6">{t.whatLearnersSay}</h2>
+          <div
+            className="flex snap-x snap-mandatory gap-3 overflow-x-auto pb-1"
+            style={{ scrollbarWidth: "none", msOverflowStyle: "none" }}
+          >
+            {TESTIMONIALS.map((item, i) => (
+              <motion.div key={item.name}
+                initial={{opacity:0,y:12}} whileInView={{opacity:1,y:0}} viewport={{once:true}}
+                transition={{duration:0.35,delay:i*0.06}}
+                className="w-[78%] flex-shrink-0 snap-start rounded-2xl border border-gray-100 bg-white p-5 shadow-sm sm:w-[300px]">
+                <p className="text-[13.5px] text-gray-700 leading-relaxed italic mb-4">"{item.quote}"</p>
+                <div className="flex items-center gap-2.5">
+                  <div className={`w-8 h-8 rounded-full ${item.color} flex items-center justify-center text-white font-bold text-[11px] flex-shrink-0`}>
+                    {item.initials}
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-[12.5px] font-bold text-gray-900 truncate">{item.name}</p>
+                    <p className="text-[10.5px] text-gray-400 truncate">{item.role}</p>
+                  </div>
                 </div>
               </motion.div>
             ))}
