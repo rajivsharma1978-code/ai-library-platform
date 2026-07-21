@@ -498,7 +498,12 @@ export default function PdfBookSpread({
         pdfjsLib.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
         if (isCancelled()) return;
 
-        const pdf = await pdfjsLib.getDocument(pdfPath).promise;
+        // standardFontDataUrl is required whenever a page references a
+        // non-embedded standard PDF font — without it, render() doesn't
+        // fail, it hangs indefinitely on that page (same root cause
+        // documented in lib/coverManager.ts for chandrayaan-3.pdf's
+        // cover). A no-op for pages that don't need it.
+        const pdf = await pdfjsLib.getDocument({ url: pdfPath, standardFontDataUrl: "/standard_fonts/" }).promise;
         if (isCancelled()) return;
 
         const extractedTexts: Record<number, string> = {};

@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useRef, useState, type ChangeEvent } from "react";
 import { usePublicCatalog } from "@/lib/catalog";
 import { getPageDisplay, resolveBookPageInput, describePageForAI, getBookPageLabel } from "@/lib/pageNumbering";
+import { isSpreadPage, getSpreadRightPage, snapSpreadCursor, getNextSpreadCursor, getPrevSpreadCursor, type ReaderLayout } from "@/lib/spreadNavigation";
 import { UI_TEXT } from "@/lib/i18n";
 import { useLanguage } from "@/lib/useLanguage";
 import PageHeader from "@/components/ui/PageHeader";
@@ -12,7 +13,8 @@ import AppButton from "@/components/ui/AppButton";
 import InfoCard from "@/components/ui/InfoCard";
 import AccessibilityToolbar from "@/components/ui/AccessibilityToolbar";
 import BookCover from "@/components/ui/BookCover";
-import { saveUploadedPdf } from "@/lib/uploadedPdfStore";
+import { saveUploadedPdf, getUploadedPdf, saveUploadedBookMeta, getUploadedBookMeta, type UploadedBookMeta } from "@/lib/uploadedPdfStore";
+import { detectPdfLayout } from "@/lib/pdfLayoutDetection";
 import { saveCurrentBook } from "@/lib/currentBook";
 import ReaderLearningMenu from "@/components/reader/ReaderLearningMenu";
 
@@ -25,18 +27,22 @@ import ReaderLearningMenu from "@/components/reader/ReaderLearningMenu";
 // reading path alongside Premium Reader (/reader-premium), not a
 // replacement for it.
 //
-// Two completely separate upload paths live on this page on purpose:
+// Two upload paths live on this page on purpose:
 //   1. "Read Normally" upload — stays right here, renders locally via a
-//      blob: URL, no AI, no redirect.
+//      blob: URL, no persistence, no cross-mode handoff. A quick scratch
+//      read for a file you don't need again after this tab closes.
 //   2. "Read with AI Tutor" upload — reads the file as a base64 data
-//      URL and hands it off to PremiumReaderPreviewContent.tsx via
-//      IndexedDB (lib/uploadedPdfStore.ts) plus small sessionStorage
-//      pointer fields, then redirects to /reader-premium?source=upload.
-//      The payload used to go straight into sessionStorage under these
-//      same keys, but that has a ~5-10MB per-origin quota and a base64
-//      data URL runs ~33% larger than the source file — any upload past
-//      a few MB threw QuotaExceededError. Only the payload moved; the
-//      pointer fields below are unchanged.
+//      URL, saves the payload to IndexedDB (lib/uploadedPdfStore.ts)
+//      keyed by a generated id, detects its page layout once
+//      (lib/pdfLayoutDetection.ts) and persists {id, name, pages,
+//      layout} as a small metadata record (also uploadedPdfStore.ts) —
+//      then redirects to /reader-premium?source=upload&id=<id>.
+//      Because the id + metadata are persisted (not just sessionStorage
+//      pointers), THIS reader can also open the exact same upload via
+//      ?source=upload&id=<id> — see the resolution effect below — so
+//      switching between Normal and AI reading preserves both the page
+//      and the layout, and reopening later (refresh, or from My Books'
+//      "Uploaded" collection) works the same way.
 // ══════════════════════════════════════════════════════════════════════
 
 type DirectorBook = { id: string; title: string; author?: string; pdf: string; pages?: number | string; [k: string]: any };
@@ -61,13 +67,74 @@ function ReadPageContent() {
 
   // Locally-uploaded file for NORMAL (non-AI) reading — a plain blob: URL
   // is fine here since we never navigate away from this page for it.
+  // Ephemeral by design (see file header): no id, no persistence, so its
+  // layout is detected fresh each time and only kept in memory.
   const [uploadedUrl, setUploadedUrl] = useState<string | null>(null);
   const [uploadedName, setUploadedName] = useState<string>("");
+  const [localBlobLayout, setLocalBlobLayout] = useState<ReaderLayout>(undefined);
   const [aiUploadStatus, setAiUploadStatus] = useState<"idle" | "preparing" | "error">("idle");
   const [aiUploadError, setAiUploadError] = useState("");
 
-  const pdfSource = catalogBook?.pdf ?? uploadedUrl;
-  const displayTitle = catalogBook?.title ?? uploadedName;
+  // ── Persisted ("Read with AI Tutor") upload — resolved by id, same
+  // storage Premium Reader reads, so this reader can open the exact same
+  // upload (?source=upload&id=<id>). The `id` param is preferred; the
+  // sessionStorage pointer is a fallback for links generated before this
+  // param existed. ────────────────────────────────────────────────────
+  const uploadSourceRequested = searchParams.get("source") === "upload";
+  const uploadIdParam = searchParams.get("id");
+  const [uploadedBookMeta, setUploadedBookMeta] = useState<UploadedBookMeta | null>(null);
+  const [uploadedBookData, setUploadedBookData] = useState<string | null>(null);
+  useEffect(() => {
+    if (!uploadSourceRequested) { setUploadedBookMeta(null); setUploadedBookData(null); return; }
+    const id = uploadIdParam || (typeof window !== "undefined" ? window.sessionStorage.getItem(AI_UPLOAD_KEYS.id) : null);
+    if (!id) return;
+    let cancelled = false;
+    (async () => {
+      const data = await getUploadedPdf(id);
+      if (cancelled || !data) return;
+      setUploadedBookData(data);
+      const existingMeta = getUploadedBookMeta(id);
+      if (existingMeta) { setUploadedBookMeta(existingMeta); return; }
+      // Backward compat: an upload made before uploaded-book metadata
+      // existed has the IndexedDB payload but no metadata record — detect
+      // its layout now and persist it, so every future open is instant.
+      try {
+        const pdfjsLib = await import("pdfjs-dist");
+        pdfjsLib.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
+        const doc = await pdfjsLib.getDocument(data).promise;
+        const layout = await detectPdfLayout(doc);
+        const name = window.sessionStorage.getItem(AI_UPLOAD_KEYS.name) || t.premiumReaderUploadedDocumentFallback;
+        const meta: UploadedBookMeta = { id, name, pages: doc.numPages, layout, uploadedAt: Date.now() };
+        saveUploadedBookMeta(meta);
+        if (!cancelled) setUploadedBookMeta(meta);
+      } catch {
+        // Leave meta null — isUploadedBook below still resolves via
+        // uploadedBookData, and layout falls back to the safe "spread"
+        // default a few lines down.
+      }
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [uploadSourceRequested, uploadIdParam]);
+  const isUploadedBook = Boolean(uploadSourceRequested && uploadedBookData);
+
+  // Same canonical concept Premium Reader reads (lib/directorBooks.ts'
+  // DirectorBook.layout) — see lib/spreadNavigation.ts for why every
+  // reader must derive spread pairing from one resolved value instead of
+  // each guessing independently. Priority: explicit persisted metadata
+  // (catalog book, or a completed uploaded-book detection) first, then
+  // in-session detection for a still-loading local blob upload, then the
+  // safe portrait-PDF default of "spread" for anything not yet resolved.
+  let layout: ReaderLayout;
+  if (catalogBook) layout = catalogBook.layout;
+  else if (isUploadedBook) layout = uploadedBookMeta?.layout ?? "spread";
+  else if (uploadedUrl) layout = localBlobLayout ?? "spread";
+  else layout = undefined;
+
+  const pdfSource = isUploadedBook ? uploadedBookData : (catalogBook?.pdf ?? uploadedUrl);
+  const displayTitle = isUploadedBook
+    ? (uploadedBookMeta?.name || t.premiumReaderUploadedDocumentFallback)
+    : (catalogBook?.title ?? uploadedName);
 
   // ── pdf.js state ─────────────────────────────────────────────────────
   const [pdf, setPdf] = useState<any>(null);
@@ -81,8 +148,18 @@ function ReadPageContent() {
   const [showThumbnails, setShowThumbnails] = useState(true);
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const rightCanvasRef = useRef<HTMLCanvasElement>(null);
   const viewportContainerRef = useRef<HTMLDivElement>(null);
   const outerRef = useRef<HTMLDivElement>(null);
+  // pdf.js refuses to start a new render() on a canvas that still has one
+  // in flight ("Cannot use the same canvas during multiple render()
+  // operations") — these track the live RenderTask per canvas so a new
+  // effect run can explicitly .cancel() the previous one first, instead
+  // of just racing it via the `cancelled` closure flag (which stops our
+  // own code from proceeding but doesn't stop pdf.js's in-progress task
+  // from touching the canvas).
+  const leftRenderTaskRef = useRef<{ cancel: () => void } | null>(null);
+  const rightRenderTaskRef = useRef<{ cancel: () => void } | null>(null);
 
   useEffect(() => {
     if (!pdfSource) { setPdf(null); setNumPages(0); return; }
@@ -93,20 +170,37 @@ function ReadPageContent() {
       try {
         const pdfjsLib = await import("pdfjs-dist");
         pdfjsLib.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
-        const doc = await pdfjsLib.getDocument(pdfSource).promise;
+        // standardFontDataUrl covers pages that reference a non-embedded
+        // standard PDF font (root-caused for chandrayaan-3.pdf's cover in
+        // lib/coverManager.ts) — a no-op for pages that don't need it.
+        const doc = await pdfjsLib.getDocument({ url: pdfSource, standardFontDataUrl: "/standard_fonts/" }).promise;
         if (cancelled) return;
         setPdf(doc);
         setNumPages(doc.numPages);
+
+        // For a local ("Read Normally") blob upload, detect + cache its
+        // layout right here so even the very first paint below already
+        // reflects it — the same synchronous-first-paint reasoning as
+        // the `page` snap immediately after. Catalog books and persisted
+        // uploads already have their layout resolved by this point.
+        let effectiveLayout = layout;
+        if (!catalogBook && !isUploadedBook && uploadedUrl) {
+          const detected = await detectPdfLayout(doc);
+          if (cancelled) return;
+          setLocalBlobLayout(detected);
+          effectiveLayout = detected;
+        }
+
         // A `?page=` in the URL (direct link, or Return to Book from
         // Notes/Revision/etc) opens straight to that physical PDF page,
         // clamped to this book's actual bounds — same canonical 1-based
         // page index Premium Reader and `ndl_current_book` already use.
         // No param falls back to page 1, exactly as before.
         const urlPage = Number(searchParams.get("page"));
-        const initialPage = Number.isFinite(urlPage) && urlPage >= 1
+        const rawInitialPage = Number.isFinite(urlPage) && urlPage >= 1
           ? Math.min(Math.floor(urlPage), doc.numPages)
           : 1;
-        setPage(initialPage);
+        setPage(snapSpreadCursor(rawInitialPage, effectiveLayout));
       } catch (err) {
         console.error("[Normal Reader] Failed to load PDF:", err);
         if (!cancelled) setLoadError(t.readerLoadError);
@@ -119,47 +213,99 @@ function ReadPageContent() {
   }, [pdfSource]);
 
   // ── Shared "current book" pointer for Return to Book ─────────────────
-  // Only for catalog books — a locally-uploaded PDF (blob: URL, path
-  // above) has no stable id that survives a reload, so there's nothing
-  // meaningful to reopen it by later anyway.
+  // Catalog books and persisted uploads both have a stable id worth
+  // reopening later. The local ("Read Normally") blob upload doesn't —
+  // no id, nothing survives a reload — so there's nothing meaningful to
+  // point at for that path.
   useEffect(() => {
-    if (!catalogBook || !numPages) return;
-    saveCurrentBook({ route: "/read", bookId: catalogBook.id, title: catalogBook.title, page });
-  }, [catalogBook?.id, catalogBook?.title, page, numPages]);
+    if (!numPages) return;
+    if (catalogBook) {
+      saveCurrentBook({ route: "/read", bookId: catalogBook.id, title: catalogBook.title, page });
+    } else if (isUploadedBook && uploadedBookMeta) {
+      saveCurrentBook({ route: "/read", bookId: uploadedBookMeta.id, title: uploadedBookMeta.name, page, source: "upload" });
+    }
+  }, [catalogBook?.id, catalogBook?.title, isUploadedBook, uploadedBookMeta?.id, uploadedBookMeta?.name, page, numPages]);
 
+  // Spread-aware: when this book's layout is "spread" (see
+  // lib/directorBooks.ts) and `page` isn't the solo cover, the right-hand
+  // page (page + 1, from lib/spreadNavigation.ts — the same source
+  // Premium Reader/PdfBookSpread use) renders alongside it into a second
+  // canvas, so a genuine single-page-per-side PDF opens as a proper
+  // two-page spread here exactly like it does in Premium Reader. "single"
+  // layout books (Nalanda, Chandrayaan-3) are unaffected — their PDF
+  // pages are already baked two-up spread images, so this always renders
+  // just the one canvas for them, same as before.
   useEffect(() => {
     if (!pdf) return;
     let cancelled = false;
     (async () => {
       try {
-        const pg = await pdf.getPage(page);
+        const rightPageNum = getSpreadRightPage(page, layout);
+        const showRight = rightPageNum != null && rightPageNum <= numPages;
+
+        const [leftPg, rightPg] = await Promise.all([
+          pdf.getPage(page),
+          showRight ? pdf.getPage(rightPageNum as number) : Promise.resolve(null),
+        ]);
         if (cancelled) return;
-        const baseVp = pg.getViewport({ scale: 1 });
+        const leftBaseVp = leftPg.getViewport({ scale: 1 });
+        const rightBaseVp = rightPg ? rightPg.getViewport({ scale: 1 }) : null;
+
+        const combinedWidth = leftBaseVp.width + (rightBaseVp ? rightBaseVp.width : 0);
+        const combinedHeight = Math.max(leftBaseVp.height, rightBaseVp ? rightBaseVp.height : 0);
 
         let scale = zoom;
         const container = viewportContainerRef.current;
         if (fitMode === "width" && container) {
-          scale = Math.max(0.2, (container.clientWidth - 48) / baseVp.width);
+          scale = Math.max(0.2, (container.clientWidth - 48) / combinedWidth);
         } else if (fitMode === "page" && container) {
           const availW = container.clientWidth - 48;
           const availH = container.clientHeight - 48;
-          scale = Math.max(0.2, Math.min(availW / baseVp.width, availH / baseVp.height));
+          scale = Math.max(0.2, Math.min(availW / combinedWidth, availH / combinedHeight));
         }
 
-        const viewport = pg.getViewport({ scale });
         const canvas = canvasRef.current;
         if (!canvas) return;
-        canvas.width = Math.ceil(viewport.width);
-        canvas.height = Math.ceil(viewport.height);
+        const leftViewport = leftPg.getViewport({ scale });
+        canvas.width = Math.ceil(leftViewport.width);
+        canvas.height = Math.ceil(leftViewport.height);
         const ctx = canvas.getContext("2d");
         if (!ctx) return;
-        await pg.render({ canvasContext: ctx, viewport, canvas }).promise;
+
+        // Cancel any still-running render before this run touches the
+        // same canvases, then kick off both pages' renders WITHOUT
+        // awaiting one before starting the other — pdf.js's render()
+        // promise does not reliably settle for every page in every
+        // environment (it still paints the canvas correctly either way),
+        // so a right-page render must never be sequenced behind awaiting
+        // the left page's promise. Each render() call paints its own
+        // canvas independently once its own work completes.
+        leftRenderTaskRef.current?.cancel();
+        rightRenderTaskRef.current?.cancel();
+        const leftTask = leftPg.render({ canvasContext: ctx, viewport: leftViewport, canvas });
+        leftRenderTaskRef.current = leftTask;
+        leftTask.promise.catch(() => {});
+
+        if (rightPg && rightBaseVp) {
+          const rightCanvas = rightCanvasRef.current;
+          if (rightCanvas) {
+            const rightViewport = rightPg.getViewport({ scale });
+            rightCanvas.width = Math.ceil(rightViewport.width);
+            rightCanvas.height = Math.ceil(rightViewport.height);
+            const rightCtx = rightCanvas.getContext("2d");
+            if (rightCtx) {
+              const rightTask = rightPg.render({ canvasContext: rightCtx, viewport: rightViewport, canvas: rightCanvas });
+              rightRenderTaskRef.current = rightTask;
+              rightTask.promise.catch(() => {});
+            }
+          }
+        }
       } catch (err) {
         console.error("[Normal Reader] Page render error:", err);
       }
     })();
     return () => { cancelled = true; };
-  }, [pdf, page, zoom, fitMode]);
+  }, [pdf, page, zoom, fitMode, numPages, layout]);
 
   useEffect(() => {
     function onFsChange() { setIsFullscreen(!!document.fullscreenElement); }
@@ -194,8 +340,13 @@ function ReadPageContent() {
     }, FADE_MS);
   }
 
-  function goPrev() { if (page <= 1 || isTransitioning) return; changePage(page - 1); }
-  function goNext() { if (page >= numPages || isTransitioning) return; changePage(Math.min(numPages || 1, page + 1)); }
+  // Spread-aware stepping (lib/spreadNavigation.ts) — for a "spread" book
+  // this steps by 2 pages once past the cover, the same pairing Premium
+  // Reader uses, instead of always advancing by exactly 1.
+  const canGoPrev = !isTransitioning && getPrevSpreadCursor(page, layout) !== page;
+  const canGoNext = !isTransitioning && getNextSpreadCursor(page, numPages || 1, layout) !== page;
+  function goPrev() { if (!canGoPrev) return; changePage(getPrevSpreadCursor(page, layout)); }
+  function goNext() { if (!canGoNext) return; changePage(getNextSpreadCursor(page, numPages || 1, layout)); }
   function zoomIn() { setFitMode("custom"); setZoom(z => Math.min(3, z + 0.15)); }
   function zoomOut() { setFitMode("custom"); setZoom(z => Math.max(0.3, z - 0.15)); }
 
@@ -227,13 +378,13 @@ function ReadPageContent() {
   // instead of whatever was current when the listener was first attached
   // — the same stale-closure pitfall fixed in AccessibilityToolbar.
   const voiceStateRef = useRef({
-    page, numPages, isTransitioning, voiceSpeaking, pageNumbering: catalogBook?.pageNumbering,
+    page, numPages, isTransitioning, voiceSpeaking, pageNumbering: catalogBook?.pageNumbering, layout,
     goNext, goPrev, changePage, zoomIn, zoomOut, setFitMode, toggleFullscreen,
     voiceReadPage, voicePauseReading, voiceResumeReading, voiceStopReading,
   });
   useEffect(() => {
     voiceStateRef.current = {
-      page, numPages, isTransitioning, voiceSpeaking, pageNumbering: catalogBook?.pageNumbering,
+      page, numPages, isTransitioning, voiceSpeaking, pageNumbering: catalogBook?.pageNumbering, layout,
       goNext, goPrev, changePage, zoomIn, zoomOut, setFitMode, toggleFullscreen,
       voiceReadPage, voicePauseReading, voiceResumeReading, voiceStopReading,
     };
@@ -258,7 +409,7 @@ function ReadPageContent() {
           // page doesn't resolve.
           if (detail.page && !v.isTransitioning) {
             const { pdfPage, usedFallback } = resolveBookPageInput(detail.page, v.pageNumbering, v.numPages || 1);
-            v.changePage(pdfPage);
+            v.changePage(snapSpreadCursor(pdfPage, v.layout));
             if (usedFallback && v.pageNumbering && typeof window !== "undefined") {
               const utt = new SpeechSynthesisUtterance(
                 `No printed page ${detail.page} found — showing PDF page ${pdfPage} instead.`
@@ -291,11 +442,12 @@ function ReadPageContent() {
     const file = e.target.files?.[0];
     if (!file) return;
     if (uploadedUrl) URL.revokeObjectURL(uploadedUrl);
+    setLocalBlobLayout(undefined); // re-detected fresh for this new file
     setUploadedUrl(URL.createObjectURL(file));
     setUploadedName(file.name);
   }
 
-  // ── Upload path 2: Read with AI Tutor — unchanged handoff mechanism ───
+  // ── Upload path 2: Read with AI Tutor ────────────────────────────────
   async function handleAiUpload(e: ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -317,17 +469,22 @@ function ReadPageContent() {
       pdfjsLib.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
       const doc = await pdfjsLib.getDocument(dataUrl).promise;
       const pageCount = doc.numPages;
+      const layout = await detectPdfLayout(doc);
       const uploadId = `uploaded-${Date.now()}`;
 
-      // The (potentially large) PDF payload goes to IndexedDB; only
-      // small pointer fields go in sessionStorage — see the module
-      // comment above for why.
+      // The (potentially large) PDF payload goes to IndexedDB; the small
+      // metadata record (name/pages/layout) is persisted separately so
+      // this exact upload can be reopened later — by id — from either
+      // reader, after a refresh, or from My Books' "Uploaded" collection.
+      // sessionStorage pointer fields are still written too, purely as a
+      // fallback for any link generated before the ?id= param existed.
       await saveUploadedPdf(uploadId, dataUrl);
+      saveUploadedBookMeta({ id: uploadId, name: file.name, pages: pageCount, layout, uploadedAt: Date.now() });
       window.sessionStorage.setItem(AI_UPLOAD_KEYS.name, file.name);
       window.sessionStorage.setItem(AI_UPLOAD_KEYS.pages, String(pageCount));
       window.sessionStorage.setItem(AI_UPLOAD_KEYS.id, uploadId);
 
-      router.push("/reader-premium?source=upload");
+      router.push(`/reader-premium?source=upload&id=${uploadId}`);
     } catch (err) {
       console.error("[Normal Reader] Failed to prepare AI upload:", err);
       setAiUploadStatus("error");
@@ -425,6 +582,11 @@ function ReadPageContent() {
               🤖 {t.readerReadWithAi}
             </AppButton>
           )}
+          {isUploadedBook && uploadedBookMeta && (
+            <AppButton variant="accent" size="sm" href={`/reader-premium?source=upload&id=${uploadedBookMeta.id}&page=${page}`}>
+              🤖 {t.readerReadWithAi}
+            </AppButton>
+          )}
           <AppButton variant="danger" size="sm" href="/read">✕ {t.commonClose}</AppButton>
         </div>
       </header>
@@ -435,7 +597,7 @@ function ReadPageContent() {
             <p className="mb-2 text-[10px] font-black uppercase tracking-widest text-slate-400">{t.readerPages}</p>
             <div className="flex flex-col gap-1.5">
               {thumbnailPages.map(p => (
-                <button key={p} onClick={() => setPage(p)}
+                <button key={p} onClick={() => setPage(snapSpreadCursor(p, layout))}
                   className={`rounded-lg px-3 py-2 text-left text-xs font-bold ${page === p ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"}`}>
                   {getBookPageLabel(p, catalogBook?.pageNumbering) ?? `${t.commonPage} ${p}`}
                 </button>
@@ -465,26 +627,34 @@ function ReadPageContent() {
                 transitionDuration: `${FADE_MS}ms`,
               }}
             >
-              <canvas ref={canvasRef} className="block shadow-xl" />
+              <div className="flex items-end gap-0.5">
+                <canvas ref={canvasRef} className="block shadow-xl" />
+                {isSpreadPage(page, layout) && (getSpreadRightPage(page, layout) ?? 0) <= numPages && (
+                  <canvas ref={rightCanvasRef} className="block shadow-xl" />
+                )}
+              </div>
             </div>
           )}
         </main>
       </div>
 
       <footer className="flex flex-shrink-0 items-center justify-center gap-4 border-t border-slate-200 bg-white px-6 py-3">
-        <button onClick={goPrev} disabled={page <= 1 || isTransitioning} className="rounded-full bg-slate-900 px-5 py-2 text-xs font-bold text-white disabled:opacity-30">← {t.commonPrevious}</button>
+        <button onClick={goPrev} disabled={!canGoPrev} className="rounded-full bg-slate-900 px-5 py-2 text-xs font-bold text-white disabled:opacity-30">← {t.commonPrevious}</button>
         {(() => {
+          const rightPageNum = getSpreadRightPage(page, layout);
+          const showRight = rightPageNum != null && rightPageNum <= numPages;
+          const pdfRangeLabel = showRight ? `${page}–${rightPageNum}` : `${page}`;
           const display = getPageDisplay(page, numPages || 1, catalogBook?.pageNumbering);
           return display.bookLabel ? (
             <span className="flex flex-col items-center leading-tight">
               <span className="text-xs font-bold text-slate-700">{display.bookLabel}</span>
-              <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">PDF {page} {t.commonOf} {numPages || "…"}</span>
+              <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">PDF {pdfRangeLabel} {t.commonOf} {numPages || "…"}</span>
             </span>
           ) : (
-            <span className="text-xs font-bold text-slate-500">{t.commonPage} {page} {t.commonOf} {numPages || "…"}</span>
+            <span className="text-xs font-bold text-slate-500">{t.commonPage} {pdfRangeLabel} {t.commonOf} {numPages || "…"}</span>
           );
         })()}
-        <button onClick={goNext} disabled={page >= numPages || isTransitioning} className="rounded-full bg-slate-900 px-5 py-2 text-xs font-bold text-white disabled:opacity-30">{t.commonNext} →</button>
+        <button onClick={goNext} disabled={!canGoNext} className="rounded-full bg-slate-900 px-5 py-2 text-xs font-bold text-white disabled:opacity-30">{t.commonNext} →</button>
       </footer>
 
       {/* Page transition — Normal Reader only. Deliberately simple: a

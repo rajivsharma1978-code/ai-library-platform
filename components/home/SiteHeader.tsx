@@ -150,6 +150,15 @@ export function SiteHeader() {
 
   const isActivePath = (href: string) => href === "/" ? pathname === "/" : pathname?.startsWith(href);
 
+  // Tamil's translated nav labels ("ஆராயுங்கள்", "மேலும்" etc.) run
+  // noticeably wider than the other 5 languages at this same nav — wide
+  // enough that at exactly the `lg` breakpoint (1024px, the narrowest
+  // width the desktop nav renders at) the row overflows the header by
+  // ~45px. Every other language has 80px+ of spare room at 1024px, so
+  // this is scoped to Tamil only rather than tightening the nav globally.
+  const isTamil = language === "ta";
+  const navItemPad = isTamil ? "px-1.5" : "px-2.5";
+
   return (
     <header className="sticky top-0 z-50 bg-white border-b border-gray-100 shadow-sm">
       <div className="mx-auto flex max-w-[1200px] items-center justify-between px-3 h-[60px] sm:px-6">
@@ -178,7 +187,7 @@ export function SiteHeader() {
             the same inline-flex + items-center + hover:text-orange-500
             treatment for a consistent hover/alignment rhythm. */}
         <nav className="hidden lg:flex items-center gap-0.5">
-          <Link href="/" className="inline-flex items-center px-2.5 py-1.5 text-[13.5px] font-semibold text-orange-500 border-b-2 border-orange-500">
+          <Link href="/" className={`inline-flex items-center ${navItemPad} py-1.5 text-[13.5px] font-semibold text-orange-500 border-b-2 border-orange-500`}>
             {t.commonHome}
           </Link>
           {([
@@ -187,7 +196,7 @@ export function SiteHeader() {
             [t.navAiTutor, "/ai-tutor"],
           ] as [string, string][]).map(([l, h]) => (
             <Link key={h} href={h}
-              className="inline-flex items-center px-2.5 py-1.5 text-[13.5px] font-medium text-gray-700 hover:text-orange-500 transition-colors">
+              className={`inline-flex items-center ${navItemPad} py-1.5 text-[13.5px] font-medium text-gray-700 hover:text-orange-500 transition-colors`}>
               {l}
             </Link>
           ))}
@@ -195,7 +204,7 @@ export function SiteHeader() {
           {/* My Learning dropdown */}
           <div className="relative">
             <button onClick={() => { setLearningOpen(!learningOpen); setMoreOpen(false); }}
-              className="inline-flex items-center gap-1 px-2.5 py-1.5 text-[13.5px] font-medium text-gray-700 hover:text-orange-500 transition-colors">
+              className={`inline-flex items-center gap-1 ${navItemPad} py-1.5 text-[13.5px] font-medium text-gray-700 hover:text-orange-500 transition-colors`}>
               {t.navMyLearning} <span className="text-[10px] mt-0.5">▾</span>
             </button>
             {learningOpen && (
@@ -213,7 +222,7 @@ export function SiteHeader() {
           {/* More dropdown — utility tools only, Admin Login removed */}
           <div className="relative">
             <button onClick={() => { setMoreOpen(!moreOpen); setLearningOpen(false); }}
-              className="inline-flex items-center gap-1 px-2.5 py-1.5 text-[13.5px] font-medium text-gray-700 hover:text-orange-500 transition-colors">
+              className={`inline-flex items-center gap-1 ${navItemPad} py-1.5 text-[13.5px] font-medium text-gray-700 hover:text-orange-500 transition-colors`}>
               {t.moreLabel} <span className="text-[10px] mt-0.5">▾</span>
             </button>
             {moreOpen && (

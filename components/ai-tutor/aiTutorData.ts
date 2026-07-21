@@ -92,7 +92,7 @@ export function buildAiTutorDashboard(catalogBooks: DirectorBook[]): AiTutorDash
   // else whatever the merged catalog has first. ──────────────────────────
   const sortedProgress = [...progressEntries].sort((a, b) => b.lastReadAt - a.lastReadAt);
   const continueBook = (sortedProgress.length > 0 ? findBook(catalogBooks, sortedProgress[0].bookId) : undefined)
-    ?? findBook(catalogBooks, "quantum")
+    ?? findBook(catalogBooks, "artificial-intelligence-technology")
     ?? catalogBooks[0];
   const continueProgress = progressEntries.find(p => p.bookId === continueBook?.id);
   const usingFallbackContinue = !continueProgress;
@@ -129,7 +129,7 @@ export function buildAiTutorDashboard(catalogBooks: DirectorBook[]): AiTutorDash
   // ── Recommended for You — same seed-then-extend approach the previous
   // AI Tutor page already used, so a newly-published catalog book (e.g.
   // admin-approved from the Upload Queue) still surfaces here. ───────────
-  const seedIds = ["quantum", "nalanda", "chandrayaan-3"];
+  const seedIds = ["artificial-intelligence-technology", "nalanda", "chandrayaan-3"];
   const seeded = seedIds.map(id => findBook(catalogBooks, id)).filter((b): b is DirectorBook => !!b);
   const extra = catalogBooks.filter(b => !seedIds.includes(b.id));
   const recommended = [...seeded, ...extra]

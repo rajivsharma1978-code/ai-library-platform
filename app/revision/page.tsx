@@ -52,14 +52,14 @@ function isToday(ts: number) {
   return new Date(ts).toDateString() === new Date().toDateString();
 }
 
-const DEMO_TOPICS = ["Quantum Superposition", "Ancient Indian Universities", "Chandrayaan Descent Sequence", "Classical Algorithms"];
+const DEMO_TOPICS = ["AI Bias & Fairness", "Ancient Indian Universities", "Chandrayaan Descent Sequence", "Neural Network Foundations"];
 
 type RevisionItem =
   | { kind: "highlight"; id: string; bookId: string; page: number; preview: string; createdAt: number }
   | { kind: "note"; id: string; bookId: string; page: number; preview: string; createdAt: number };
 
 const DEMO_TODAY: RevisionItem[] = [
-  { kind: "highlight", id: "d1", bookId: "quantum", page: 42, preview: "A qubit can exist in a superposition of the |0⟩ and |1⟩ states simultaneously.", createdAt: Date.now() - 1000 * 60 * 40 },
+  { kind: "highlight", id: "d1", bookId: "artificial-intelligence-technology", page: 42, preview: "AI systems can inherit bias from training data even when sensitive attributes like race or gender are excluded.", createdAt: Date.now() - 1000 * 60 * 40 },
   { kind: "note",      id: "d2", bookId: "nalanda", page: 12, preview: "Good exam point — compare with Takshashila as ancient Indian higher education.", createdAt: Date.now() - 1000 * 60 * 60 * 4 },
   { kind: "highlight", id: "d3", bookId: "chandrayaan-3", page: 8, preview: "The lander used laser and camera-based hazard detection during descent.", createdAt: Date.now() - 1000 * 60 * 60 * 20 },
 ];

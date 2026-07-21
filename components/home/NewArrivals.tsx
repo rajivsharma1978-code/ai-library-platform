@@ -3,18 +3,25 @@
 import Link from "next/link";
 import { motion } from "framer-motion";
 import { usePublicCatalog } from "@/lib/catalog";
+import { comingSoonBooks } from "@/lib/comingSoonBooks";
 import { useAdaptiveCarousel } from "@/lib/useAdaptiveCarousel";
+import { useAutoScroll } from "@/lib/useAutoScroll";
 import RealBookCover from "./RealBookCover";
+import { ComingSoonCover } from "./ComingSoonCover";
 import { UI_TEXT } from "@/lib/i18n";
 import { useLanguage } from "@/lib/useLanguage";
 
-// Recently-added books — a genuinely different product responsibility from
-// both Director Collection (curated showcase) and Featured Books (editorial
-// picks): this rail is chronological, not curated or personalized. Compact
-// list-chip shape (small thumbnail + text, not a cover grid) keeps it
-// visually distinct from the two cover-carousels above it. Adaptive like
-// the other two rails — centers and hides arrows when the catalogue
-// doesn't fill the row.
+// Recently-added books — a different product responsibility from both
+// Director Collection (curated showcase) and Featured Books (editorial
+// picks): this rail is chronological, not curated. It used to be a
+// compact list-chip row (small thumbnail + sideways text) specifically to
+// look distinct from the two cover-carousels above it — but that broke
+// the page's visual rhythm, jumping straight from full covers to tiny
+// thumbnails. It now shares Featured Books' card family (same cover-
+// forward shape, one size step down) so all three rails read as one
+// coherent shelf, with the "New Arrivals" heading itself carrying the
+// distinction rather than a different card shape. Adaptive + auto-
+// scrolling like Featured Books.
 //
 // NOTE: DirectorBook has no "date added" field yet (see lib/directorBooks.ts)
 // — there's nothing to sort by with the current 3-book demo catalog, so this
@@ -26,17 +33,20 @@ export function NewArrivals() {
   const t = UI_TEXT[language];
   const catalog = usePublicCatalog();
   const books = [...catalog].reverse();
-  const { ref: scrollRef, overflowing } = useAdaptiveCarousel<HTMLDivElement>([books.length]);
+  const previewBooks = comingSoonBooks.slice(3, 5);
+  const { ref: scrollRef, overflowing } = useAdaptiveCarousel<HTMLDivElement>([books.length + previewBooks.length]);
+  useAutoScroll(scrollRef, overflowing);
+
   const scroll = (dir: "left" | "right") => {
     const card = scrollRef.current?.firstElementChild as HTMLElement | null;
-    const step = card ? card.getBoundingClientRect().width + 16 : 240;
+    const step = card ? card.getBoundingClientRect().width + 16 : 200;
     scrollRef.current?.scrollBy({ left: dir === "right" ? step : -step, behavior: "smooth" });
   };
 
   return (
-    <section className="bg-white px-4 py-16 sm:px-6 sm:py-24">
+    <section className="bg-white px-4 py-10 sm:px-6 sm:py-16">
       <div className="mx-auto max-w-6xl">
-        <div className="mb-8 flex items-end justify-between gap-4 sm:mb-10">
+        <div className="mb-5 flex items-end justify-between gap-4 sm:mb-6">
           <div className="min-w-0">
             <h2 className="text-2xl font-black tracking-tight text-gray-900 sm:text-3xl">{t.newArrivalsHeading}</h2>
             <p className="mt-1.5 text-[13.5px] text-gray-500 sm:text-[15px]">{t.newArrivalsSub}</p>
@@ -56,30 +66,36 @@ export function NewArrivals() {
 
         <div
           ref={scrollRef}
-          className={`flex snap-x snap-mandatory gap-4 overflow-x-auto pb-1 ${overflowing ? "" : "justify-center"}`}
+          className={`flex gap-4 overflow-x-auto pb-1 ${overflowing ? "" : "justify-center"}`}
           style={{ scrollbarWidth: "none", msOverflowStyle: "none" }}
         >
           {books.map((book, i) => (
             <motion.div key={book.id}
-              initial={{ opacity: 0, x: 8 }} whileInView={{ opacity: 1, x: 0 }} viewport={{ once: true }}
-              transition={{ duration: 0.3, delay: i * 0.05 }}
-              className="w-[60%] flex-shrink-0 snap-start sm:w-[215px] lg:w-[230px]">
-              <Link href={`/reader-premium?book=${book.id}`}
-                className="group flex min-h-[64px] items-center gap-3 rounded-xl border border-gray-100 bg-white p-2 shadow-sm transition-all active:scale-[0.98] hover:-translate-y-0.5 hover:border-orange-200 hover:shadow-md">
-                <div className="h-[52px] w-[40px] flex-shrink-0 overflow-hidden rounded-lg bg-gray-100 shadow-sm">
-                  <RealBookCover book={book} className="h-full w-full" />
+              initial={{ opacity: 0, y: 10 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }}
+              transition={{ duration: 0.3, delay: i * 0.04 }}
+              className="w-[41%] flex-shrink-0 sm:w-[178px] md:w-[194px] lg:w-[206px]">
+              <Link href={`/reader-premium?book=${book.id}`} className="group block transition-transform duration-200 ease-out active:scale-[0.97] hover:-translate-y-1">
+                <div className="overflow-hidden rounded-2xl bg-gray-100 shadow-[0_8px_20px_-8px_rgba(15,23,42,0.18)] ring-1 ring-black/[0.05] transition-shadow duration-300 group-hover:shadow-[0_16px_32px_-10px_rgba(15,23,42,0.28)]" style={{ aspectRatio: "3 / 4" }}>
+                  <RealBookCover book={book} className="h-full w-full transition-transform duration-500 ease-out group-hover:scale-[1.04]" />
                 </div>
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-1.5">
-                    <p className="min-w-0 truncate text-[12.5px] font-semibold leading-tight text-gray-900 transition-colors group-hover:text-orange-500">{book.title}</p>
-                    <span className="flex-shrink-0 rounded-full bg-emerald-50 px-1.5 py-0.5 text-[9px] font-bold uppercase text-emerald-600">
-                      {t.badgeNew}
-                    </span>
-                  </div>
-                  <p className="mt-0.5 text-[10.5px] text-gray-400 truncate">{book.author}</p>
-                </div>
+                <p className="mt-2 text-[12.5px] font-bold leading-tight text-gray-900 truncate group-hover:text-orange-500 transition-colors">
+                  {book.title}
+                </p>
+                <p className="mt-0.5 text-[10.5px] text-gray-400 truncate">{book.author}</p>
               </Link>
             </motion.div>
+          ))}
+
+          {previewBooks.map((book) => (
+            <div key={book.id} className="w-[41%] flex-shrink-0 cursor-default sm:w-[178px] md:w-[194px] lg:w-[206px]">
+              <div className="overflow-hidden rounded-2xl opacity-[0.78] shadow-[0_4px_12px_-6px_rgba(15,23,42,0.14)] saturate-[0.82]" style={{ aspectRatio: "3 / 4" }}>
+                <ComingSoonCover id={book.id} className="h-full w-full" />
+              </div>
+              <p className="mt-2 text-[12.5px] font-semibold leading-tight text-gray-600 truncate">
+                {book.title}
+              </p>
+              <p className="mt-0.5 text-[10.5px] text-gray-400 truncate">{book.author}</p>
+            </div>
           ))}
         </div>
       </div>

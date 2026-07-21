@@ -14,6 +14,7 @@ import AppButton from "@/components/ui/AppButton";
 import QuickLinks from "@/components/ui/QuickLinks";
 import AccessibilityToolbar from "@/components/ui/AccessibilityToolbar";
 import CoverThumb from "@/components/ui/BookCover";
+import { listUploadedBooks, type UploadedBookMeta } from "@/lib/uploadedPdfStore";
 
 // ── Local, read-only types mirroring Reader/Study Workspace/My Space/My
 // Library data shapes. This page is self-contained on purpose — it does
@@ -84,12 +85,15 @@ export default function MyBooksPage() {
   const [collection, setCollection] = useState<Collection>("all");
   const catalogBooks = usePublicCatalog();
 
+  const [uploadedBooks, setUploadedBooks] = useState<UploadedBookMeta[]>([]);
+
   useEffect(() => {
     setRawLibrary(readArray<RawLibraryEntry>("ndl_my_library"));
     setProgress(readArray<ReadingProgressEntry>("ndl_reading_progress"));
     setHighlights(readArray<StoredHighlightLite>("ndl_highlights"));
     setNotes(readArray<StoredNoteLite>("ndl_notes"));
     setBookmarks(readArray<StoredBookmarkLite>("ndl_bookmarks"));
+    setUploadedBooks(listUploadedBooks());
     setMounted(true);
   }, []);
 
@@ -99,15 +103,6 @@ export default function MyBooksPage() {
   );
   const usingDemoShelf = resolvedShelf.length === 0;
   const allBooks: DirectorBook[] = usingDemoShelf ? catalogBooks : resolvedShelf;
-
-  // "Uploaded Books" = entries in ndl_my_library that don't resolve to any
-  // catalog book at all (i.e. not in lib/directorBooks.ts). There's no
-  // separate upload-tracking key in this app yet, so this collection is
-  // structurally correct but will usually be empty today.
-  const uploadedBooks = useMemo(
-    () => rawLibrary.filter(e => !resolveLibraryBook(e, catalogBooks)),
-    [rawLibrary, catalogBooks]
-  );
 
   function progressFor(bookId: string) {
     const p = progress.find(x => x.bookId === bookId);
@@ -235,7 +230,27 @@ export default function MyBooksPage() {
             uploadedBooks.length === 0 ? (
               <p className="text-slate-600">{t.myBooksNoUploads}</p>
             ) : (
-              <p className="text-slate-600">{t.myBooksUploadedMatchFailed.replace("{count}", String(uploadedBooks.length))}</p>
+              <div className="grid gap-5 md:grid-cols-3 lg:grid-cols-4">
+                {uploadedBooks.map(u => (
+                  <div key={u.id} className="flex h-full flex-col rounded-2xl border p-4 hover:shadow-lg">
+                    <div className="flex h-52 w-full items-center justify-center rounded-xl bg-gradient-to-br from-amber-200 via-orange-300 to-slate-700 text-white shadow">
+                      <span style={{ fontSize: "2.6em" }}>📄</span>
+                    </div>
+                    <h3 className="mt-3 truncate font-bold text-slate-900">{u.name}</h3>
+                    <p className="mt-0.5 truncate text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+                      {u.pages} {t.readerPages}
+                    </p>
+                    <div className="mt-auto flex gap-2 pt-4">
+                      <AppButton href={`/read?source=upload&id=${u.id}`} variant="secondary" size="sm" fullWidth>
+                        📖 {t.myLibraryNormal}
+                      </AppButton>
+                      <AppButton href={`/reader-premium?source=upload&id=${u.id}`} variant="primary" size="sm" fullWidth>
+                        🤖 {t.myLibraryAiTutor}
+                      </AppButton>
+                    </div>
+                  </div>
+                ))}
+              </div>
             )
           ) : visibleBooks.length === 0 ? (
             <p className="text-slate-600">{t.searchNoResults}</p>

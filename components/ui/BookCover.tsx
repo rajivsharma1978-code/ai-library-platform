@@ -7,31 +7,34 @@
 // ai-tutor, and my-space) — same logic, four/five separate places to
 // drift out of sync. Now imported everywhere instead.
 //
-// Tier 1: a real cover image field (cover/coverUrl/image/thumbnail).
-// Tier 2: the book's own PDF, first page rendered to a <canvas> — this
-//         IS the real cover for illustrated director books that were
-//         never given a separate cover image asset (e.g. Chandrayaan 3),
-//         so this tier is not just a placeholder, it's often the actual
-//         artwork.
+// Tier 1: a real cover image field (cover/coverUrl/image/thumbnail) —
+//         for the three launch titles this is a pre-generated static
+//         asset in public/book-covers/ (see lib/directorBooks.ts), not
+//         a live render.
+// Tier 2: lib/coverManager's cached PDF-first-page renderer — the
+//         fallback for any book that doesn't have a Tier-1 asset yet
+//         (a future upload before an admin promotes its generated cover
+//         to permanent storage). Renders once per PDF, then serves
+//         every subsequent request — anywhere in the app — from cache
+//         instead of re-rendering the PDF on every mount.
 // Tier 3: initials on a gradient — the true last resort.
 //
-// Root-cause fix folded in here, found via a standalone Node repro
-// against chandrayaan-3.pdf: getDocument/getPage/getViewport all resolve
-// instantly, but page.getOperatorList() warned
+// Root-cause fix for the underlying render, found via a standalone Node
+// repro against chandrayaan-3.pdf: getDocument/getPage/getViewport all
+// resolve instantly, but page.getOperatorList() warned
 // "UnknownErrorException: Ensure that the `standardFontDataUrl` API
 // parameter is provided" — this book's cover page references a
 // non-embedded standard PDF font, and without standardFontDataUrl
 // pointing at pdf.js's bundled glyph data, rendering it hangs
-// indefinitely instead of failing fast. Fixed by (a) passing
-// standardFontDataUrl (glyph files copied to public/standard_fonts/,
-// same pattern as the existing /pdf.worker.min.mjs) and (b) adding a
-// bounded timeout as defense-in-depth so ANY PDF that still can't render
-// its first page — for this or any other reason — reliably falls
-// through to the initials tier instead of hanging forever.
+// indefinitely instead of failing fast. Fixed in coverManager by
+// passing standardFontDataUrl (glyph files copied to
+// public/standard_fonts/, same pattern as the existing
+// /pdf.worker.min.mjs).
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { UI_TEXT } from "@/lib/i18n";
 import { useLanguage } from "@/lib/useLanguage";
+import { getCachedCoverForPdf } from "@/lib/coverManager";
 
 export type CoverableBook = {
   id?: string;
@@ -44,6 +47,11 @@ export type CoverableBook = {
   [k: string]: any;
 };
 
+// Only a ceiling on how long THIS mount waits before showing the Tier-3
+// fallback — the underlying generateCoverFromPdf() call isn't cancelled
+// when this fires, so a slow first-ever render still finishes and
+// populates the cache, benefiting the very next mount even if this one
+// already gave up and moved on.
 const PDF_RENDER_TIMEOUT_MS = 8000;
 
 function resolveCoverUrl(book?: CoverableBook): string | undefined {
@@ -52,8 +60,7 @@ function resolveCoverUrl(book?: CoverableBook): string | undefined {
 }
 
 function PdfFirstPageCover({ pdfPath, onFail }: { pdfPath: string; onFail: () => void }) {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [rendered, setRendered] = useState(false);
+  const [dataUrl, setDataUrl] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -65,44 +72,27 @@ function PdfFirstPageCover({ pdfPath, onFail }: { pdfPath: string; onFail: () =>
       onFail();
     }, PDF_RENDER_TIMEOUT_MS);
 
-    (async () => {
-      try {
-        const pdfjsLib = await import("pdfjs-dist");
-        pdfjsLib.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
-        const pdf = await pdfjsLib.getDocument({ url: pdfPath, standardFontDataUrl: "/standard_fonts/" }).promise;
-        const page = await pdf.getPage(1);
-        const baseVp = page.getViewport({ scale: 1 });
-        const scale = 300 / baseVp.width;
-        const viewport = page.getViewport({ scale });
-        const canvas = canvasRef.current;
-        if (!canvas || cancelled || settled) return;
-        canvas.width = Math.ceil(viewport.width);
-        canvas.height = Math.ceil(viewport.height);
-        const ctx = canvas.getContext("2d");
-        if (!ctx) throw new Error("no 2d context");
-        await page.render({ canvasContext: ctx, viewport, canvas }).promise;
+    getCachedCoverForPdf(pdfPath)
+      .then((url) => {
         if (cancelled || settled) return;
         settled = true;
         clearTimeout(timeoutId);
-        setRendered(true);
-      } catch {
+        setDataUrl(url);
+      })
+      .catch(() => {
         if (cancelled || settled) return;
         settled = true;
         clearTimeout(timeoutId);
         onFail();
-      }
-    })();
+      });
 
     return () => { cancelled = true; clearTimeout(timeoutId); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pdfPath]);
 
-  return (
-    <canvas
-      ref={canvasRef}
-      style={{ width: "100%", height: "100%", objectFit: "cover", display: rendered ? "block" : "none" }}
-    />
-  );
+  if (!dataUrl) return null;
+  // eslint-disable-next-line @next/next/no-img-element
+  return <img src={dataUrl} alt="" loading="lazy" decoding="async" className="h-full w-full object-contain" />;
 }
 
 export default function BookCover({ book, className = "" }: { book?: CoverableBook; className?: string }) {
@@ -124,7 +114,9 @@ export default function BookCover({ book, className = "" }: { book?: CoverableBo
       <img
         src={staticCover}
         alt={coverOfTitle ?? t.bookCoverGeneric}
-        className={`object-cover ${className}`}
+        className={`object-contain ${className}`}
+        loading="lazy"
+        decoding="async"
         onError={() => setStaticFailed(true)}
       />
     );

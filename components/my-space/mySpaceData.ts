@@ -167,15 +167,15 @@ export type DirectorBook = {
   };
   
   export function getDemoTopics(t: UIText): string[] {
-    return [t.mySpaceTopicQuantumComputing, t.mySpaceTopicClassicalAlgorithms, t.mySpaceTopicLinearAlgebra, t.mySpaceTopicAiCognition, t.mySpaceTopicIndianHistory];
+    return [t.mySpaceTopicMachineLearning, t.mySpaceTopicClassicalAlgorithms, t.mySpaceTopicLinearAlgebra, t.mySpaceTopicAiCognition, t.mySpaceTopicIndianHistory];
   }
 
   export function getDemoActivity(t: UIText): LearningActivityEntry[] {
     return [
-      { id: "demo-1", type: "quiz",      bookId: "quantum",  bookTitle: "Quantum Computing", detail: t.mySpaceDemoDetailQuiz,      timestamp: Date.now() - 1000 * 60 * 25 },
+      { id: "demo-1", type: "quiz",      bookId: "artificial-intelligence-technology",  bookTitle: "Artificial Intelligence Technology", detail: t.mySpaceDemoDetailQuiz,      timestamp: Date.now() - 1000 * 60 * 25 },
       { id: "demo-2", type: "bookmark",  bookId: "nalanda",   bookTitle: "Nalanda",            detail: t.mySpaceDemoDetailBookmark,  timestamp: Date.now() - 1000 * 60 * 60 * 3 },
-      { id: "demo-3", type: "note",      bookId: "quantum",  bookTitle: "Quantum Computing",  detail: t.mySpaceDemoDetailNote,      timestamp: Date.now() - 1000 * 60 * 60 * 20 },
-      { id: "demo-4", type: "highlight", bookId: "quantum",  bookTitle: "Quantum Computing",  detail: t.mySpaceDemoDetailHighlight, timestamp: Date.now() - 1000 * 60 * 60 * 26 },
+      { id: "demo-3", type: "note",      bookId: "artificial-intelligence-technology",  bookTitle: "Artificial Intelligence Technology",  detail: t.mySpaceDemoDetailNote,      timestamp: Date.now() - 1000 * 60 * 60 * 20 },
+      { id: "demo-4", type: "highlight", bookId: "artificial-intelligence-technology",  bookTitle: "Artificial Intelligence Technology",  detail: t.mySpaceDemoDetailHighlight, timestamp: Date.now() - 1000 * 60 * 60 * 26 },
       { id: "demo-5", type: "open_book", bookId: "chandrayaan-3", bookTitle: "Chandrayaan-3",  detail: t.mySpaceDemoDetailOpenBook,  timestamp: Date.now() - 1000 * 60 * 60 * 48 },
     ];
   }
@@ -215,10 +215,10 @@ export type DirectorBook = {
           const fallbackBook = directorBooks[0];
           const total = bookTotalPages(fallbackBook);
           return {
-            bookId: fallbackBook?.id ?? "quantum",
+            bookId: fallbackBook?.id ?? "nalanda",
             currentPage: Math.max(1, Math.round(total * 0.42)),
             totalPages: total,
-            chapter: "Chapter 4 — Superposition & Entanglement",
+            chapter: "Chapter 4",
             lastReadAt: Date.now() - 1000 * 60 * 45,
           };
         })();

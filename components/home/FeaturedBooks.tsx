@@ -4,18 +4,23 @@ import Link from "next/link";
 import { useState, type MouseEvent } from "react";
 import { motion } from "framer-motion";
 import { usePublicCatalog, type CatalogBook } from "@/lib/catalog";
+import { comingSoonBooks } from "@/lib/comingSoonBooks";
 import { useAdaptiveCarousel } from "@/lib/useAdaptiveCarousel";
+import { useAutoScroll } from "@/lib/useAutoScroll";
 import RealBookCover from "./RealBookCover";
+import { ComingSoonCover } from "./ComingSoonCover";
 import { UI_TEXT } from "@/lib/i18n";
 import { useLanguage } from "@/lib/useLanguage";
 
 // A distinct, lighter discovery mechanism from Director Collection — same
-// horizontal-carousel language, deliberately smaller cards and a single
-// tap target per card (no stacked dual buttons) so it reads as the
-// lightweight "editorially featured" rail, not a second flagship shelf.
-// Adaptive like Director Collection — centers and hides arrows when the
-// catalogue doesn't fill the row; reverts to a scrollable carousel once
-// it does.
+// carousel language, deliberately smaller cards and a single tap target
+// per card (no stacked dual buttons) so it reads as the lightweight
+// "editorially featured" rail, not a second flagship shelf. Adaptive like
+// Director Collection — centers and hides arrows when the catalogue
+// doesn't fill the row; reverts to a scrollable carousel once it does.
+// Also drifts gently on its own (useAutoScroll) once there's enough
+// content to scroll, pausing on hover/touch — manual swipe always wins.
+// Mixes in one muted, non-interactive preview title after the real ones.
 export function FeaturedBooks() {
   const { language } = useLanguage();
   const t = UI_TEXT[language];
@@ -24,7 +29,9 @@ export function FeaturedBooks() {
   const [loading, setLoading] = useState(false);
 
   const books = usePublicCatalog();
-  const { ref: scrollRef, overflowing } = useAdaptiveCarousel<HTMLDivElement>([books.length]);
+  const previewBooks = comingSoonBooks.slice(2, 3);
+  const { ref: scrollRef, overflowing } = useAdaptiveCarousel<HTMLDivElement>([books.length + previewBooks.length]);
+  useAutoScroll(scrollRef, overflowing);
 
   const scroll = (dir: "left" | "right") => {
     const card = scrollRef.current?.firstElementChild as HTMLElement | null;
@@ -46,9 +53,9 @@ export function FeaturedBooks() {
 
   return (
     <>
-      <section className="bg-white px-4 py-16 sm:px-6 sm:py-24">
+      <section className="bg-white px-4 py-10 sm:px-6 sm:py-16">
         <div className="mx-auto max-w-6xl">
-          <div className="mb-8 flex items-end justify-between gap-4 sm:mb-10">
+          <div className="mb-5 flex items-end justify-between gap-4 sm:mb-6">
             <div className="min-w-0">
               <h2 className="text-2xl font-black tracking-tight text-gray-900 sm:text-3xl">{t.featuredBooks}</h2>
               <p className="mt-1.5 text-[13.5px] text-gray-500 sm:text-[15px]">{t.featuredBooksSub}</p>
@@ -72,16 +79,16 @@ export function FeaturedBooks() {
 
           <div
             ref={scrollRef}
-            className={`flex snap-x snap-mandatory gap-4 overflow-x-auto pb-1 ${overflowing ? "" : "justify-center"}`}
+            className={`flex gap-4 overflow-x-auto pb-1 ${overflowing ? "" : "justify-center"}`}
             style={{ scrollbarWidth: "none", msOverflowStyle: "none" }}
           >
             {books.map((book, i) => (
               <motion.div key={book.id}
                 initial={{ opacity: 0, y: 10 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }}
                 transition={{ duration: 0.3, delay: i * 0.04 }}
-                className="w-[48%] flex-shrink-0 snap-start sm:w-[190px] md:w-[205px] lg:w-[215px]">
+                className="w-[41%] flex-shrink-0 sm:w-[180px] md:w-[198px] lg:w-[214px]">
                 <Link href={`/reader-premium?book=${book.id}`} className="group block transition-transform duration-200 ease-out active:scale-[0.97] hover:-translate-y-1">
-                  <div className="relative overflow-hidden rounded-xl bg-gray-100 shadow-md ring-1 ring-black/[0.03]" style={{ aspectRatio: "3 / 4" }}>
+                  <div className="relative overflow-hidden rounded-2xl bg-gray-100 shadow-[0_8px_20px_-8px_rgba(15,23,42,0.18)] ring-1 ring-black/[0.05] transition-shadow duration-300 group-hover:shadow-[0_16px_32px_-10px_rgba(15,23,42,0.28)]" style={{ aspectRatio: "3 / 4" }}>
                     <RealBookCover book={book} className="h-full w-full transition-transform duration-500 ease-out group-hover:scale-[1.04]" />
                     <button
                       type="button"
@@ -98,6 +105,18 @@ export function FeaturedBooks() {
                   <p className="mt-0.5 text-[10.5px] text-gray-400 truncate">{book.author}</p>
                 </Link>
               </motion.div>
+            ))}
+
+            {previewBooks.map((book) => (
+              <div key={book.id} className="w-[41%] flex-shrink-0 cursor-default sm:w-[180px] md:w-[198px] lg:w-[214px]">
+                <div className="overflow-hidden rounded-2xl opacity-[0.78] shadow-[0_4px_12px_-6px_rgba(15,23,42,0.14)] saturate-[0.82]" style={{ aspectRatio: "3 / 4" }}>
+                  <ComingSoonCover id={book.id} className="h-full w-full" />
+                </div>
+                <p className="mt-2 text-[12.5px] font-semibold leading-tight text-gray-600 truncate">
+                  {book.title}
+                </p>
+                <p className="mt-0.5 text-[10.5px] text-gray-400 truncate">{book.author}</p>
+              </div>
             ))}
           </div>
         </div>

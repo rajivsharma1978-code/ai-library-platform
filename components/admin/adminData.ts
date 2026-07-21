@@ -301,7 +301,7 @@ export interface ModerationFlag {
   flaggedAt: number;
 }
 const DEMO_MODERATION: ModerationFlag[] = [
-  { id: "mod-1", subject: "Quantum Computing",       reason: "Flagged for language tagging review", severity: "Low",    status: "Open", flaggedAt: Date.now() - 1000 * 60 * 60 * 20 },
+  { id: "mod-1", subject: "Artificial Intelligence Technology", reason: "Flagged for language tagging review", severity: "Low",    status: "Open", flaggedAt: Date.now() - 1000 * 60 * 60 * 20 },
   { id: "mod-2", subject: "User comment on Nalanda",  reason: "Reported as off-topic",                severity: "Medium", status: "Open", flaggedAt: Date.now() - 1000 * 60 * 60 * 5 },
   { id: "mod-3", subject: "Uploaded PDF (Chandrayaan)", reason: "OCR quality below threshold",        severity: "Low",    status: "Open", flaggedAt: Date.now() - 1000 * 60 * 60 * 48 },
 ];

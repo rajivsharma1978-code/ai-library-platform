@@ -14,6 +14,7 @@ import {
 import PageHeader from "@/components/ui/PageHeader";
 import StatCard from "@/components/ui/StatCard";
 import InfoCard from "@/components/ui/InfoCard";
+import AppButton from "@/components/ui/AppButton";
 
 const DEMO_AI_QUESTIONS = 24;
 
@@ -97,6 +98,11 @@ export default function AdminPage() {
           subtitle={t.adminDashboardSubtitle}
           homeLabel={t.commonHome}
           showHomeLink={false}
+          right={
+            <AppButton href="/admin/ministerial-report" variant="secondary" size="sm">
+              📄 {t.adminReportButton}
+            </AppButton>
+          }
         />
 
         <InfoCard tone="amber" className="mb-8 py-3 text-sm font-semibold">

@@ -79,9 +79,9 @@ function findBook(bookId: string): DirectorBook | undefined {
 // ── Polished demo fallback — shown only when ndl_notes is genuinely empty.
 const DEMO_NOTES: StoredNoteLite[] = [
   {
-    id: "demo-1", bookId: "quantum", page: 42,
-    selectedText: "A qubit can exist in a superposition of the |0⟩ and |1⟩ states simultaneously, unlike a classical bit.",
-    note: "Remember: superposition ≠ being in both states at once in the classical sense — it's a probability amplitude until measured.",
+    id: "demo-1", bookId: "artificial-intelligence-technology", page: 42,
+    selectedText: "AI systems can inherit bias from training data even when sensitive attributes like race or gender are excluded.",
+    note: "Remember: removing an attribute doesn't remove its influence — correlated features (like postal code) can still encode it.",
     createdAt: Date.now() - 1000 * 60 * 60 * 5, aiImproved: true,
   },
   {

@@ -18,7 +18,7 @@ export function WhyNdlAi() {
   ];
 
   return (
-    <section className="bg-[#fff8ed] px-4 py-16 sm:px-6 sm:py-28">
+    <section className="bg-[#fff8ed] px-4 py-12 sm:px-6 sm:py-20">
       <div className="mx-auto max-w-6xl">
         <motion.div initial={{ opacity: 0, y: 10 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }}
           className="text-center">

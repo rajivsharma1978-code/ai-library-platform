@@ -27,9 +27,11 @@ import NotePopover, { NoteAIAction } from "@/components/reader-premium/study/Not
 import type { RevisionAction } from "@/components/reader-premium/study/StudyWorkspace";
 import type { PageOverlayHighlight, PageOverlayNote } from "@/components/reader-premium/PdfBookSpread";
 import { getPrintedPageMap, getPageDescriptionForAI, resolvePrintedPageTarget, getDisplayLabel, getSpreadDisplayLabel } from "@/lib/printedPageMap";
+import { snapSpreadCursor, getNextSpreadCursor, getPrevSpreadCursor } from "@/lib/spreadNavigation";
 import { cleanOcrTextForAi, sanitizeForSpeech, resolvePageText } from "@/lib/premium-reader/pageTextExtractor";
 import { chunkBookText, buildChapterWindowText, dedupeChapterText, mapWithConcurrency, withTimeout } from "@/lib/premium-reader/aiContext";
-import { getUploadedPdf } from "@/lib/uploadedPdfStore";
+import { getUploadedPdf, getUploadedBookMeta, saveUploadedBookMeta, type UploadedBookMeta } from "@/lib/uploadedPdfStore";
+import { detectPdfLayout } from "@/lib/pdfLayoutDetection";
 import { getSpeechLanguage } from "@/lib/premium-reader/aiActions";
 import { loadVoices, pickVoiceForLanguage, stripMarkdownForSpeech, splitIntoSpeechChunks } from "@/lib/premium-reader/speech";
 import { useEnabledLanguages, LANGUAGE_NAME_TO_CODE } from "@/lib/languageSettings";
@@ -269,9 +271,12 @@ export default function PremiumReaderPreviewContent() {
   // intentionally "BookCover updates only after client mount," not
   // eliminated.
   const uploadedSource = searchParams.get("source") === "upload";
-  const uploadedPdfName = isHydrated ? window.sessionStorage.getItem("ndl_uploaded_pdf_name") : null;
-  const uploadedPdfPages = isHydrated ? window.sessionStorage.getItem("ndl_uploaded_pdf_pages") : null;
-  const uploadedPdfId = isHydrated ? window.sessionStorage.getItem("ndl_uploaded_pdf_id") : null;
+  // `?id=` is the URL itself (available even before hydration, safe for
+  // SSR) and is preferred; the sessionStorage pointer is a fallback for
+  // links generated before this param existed — see app/read/page.tsx's
+  // handleAiUpload for where both are written.
+  const uploadIdParam = searchParams.get("id");
+  const uploadedPdfId = uploadIdParam || (isHydrated ? window.sessionStorage.getItem("ndl_uploaded_pdf_id") : null);
 
   // The PDF's actual bytes — unlike the pointer fields above, this is an
   // async IndexedDB read, so it starts null and resolves once via effect.
@@ -290,6 +295,36 @@ export default function PremiumReaderPreviewContent() {
     return () => { cancelled = true; };
   }, [isHydrated, uploadedSource, uploadedPdfId]);
 
+  // Small persistent metadata record (name/pages/layout) — see
+  // lib/uploadedPdfStore.ts. Separate from the pdf-bytes effect above
+  // since this is a synchronous localStorage read, no fetch involved; if
+  // it's missing (an upload made before this record existed), detect the
+  // layout once the bytes are in and persist it — self-healing, so every
+  // future open of the same upload is instant.
+  const [uploadedBookMeta, setUploadedBookMeta] = useState<UploadedBookMeta | null>(null);
+  useEffect(() => {
+    if (!isHydrated || !uploadedSource || !uploadedPdfId || !uploadedPdfData) return;
+    const existing = getUploadedBookMeta(uploadedPdfId);
+    if (existing) { setUploadedBookMeta(existing); return; }
+    let cancelled = false;
+    (async () => {
+      try {
+        const pdfjsLib = await import("pdfjs-dist");
+        pdfjsLib.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
+        const doc = await pdfjsLib.getDocument(uploadedPdfData).promise;
+        const layout = await detectPdfLayout(doc);
+        const name = window.sessionStorage.getItem("ndl_uploaded_pdf_name") || t.premiumReaderUploadedDocumentFallback;
+        const meta: UploadedBookMeta = { id: uploadedPdfId, name, pages: doc.numPages, layout, uploadedAt: Date.now() };
+        saveUploadedBookMeta(meta);
+        if (!cancelled) setUploadedBookMeta(meta);
+      } catch {
+        // Leave meta null — currentBook below still falls back to the
+        // safe "spread" default and the sessionStorage page-count pointer.
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [isHydrated, uploadedSource, uploadedPdfId, uploadedPdfData]);
+
   // Explicit AND — requires both the URL's stated intent (?source=upload)
   // and the data actually being present, so a stale/bad link (or leftover
   // sessionStorage from a previous session) never silently hijacks a
@@ -306,7 +341,7 @@ export default function PremiumReaderPreviewContent() {
   const currentBook = isUploadedBook
     ? {
         id: uploadedPdfId as string,
-        title: uploadedPdfName || t.premiumReaderUploadedDocumentFallback,
+        title: uploadedBookMeta?.name || (isHydrated ? window.sessionStorage.getItem("ndl_uploaded_pdf_name") : null) || t.premiumReaderUploadedDocumentFallback,
         author: "",
         description: "",
         language: "",
@@ -316,8 +351,13 @@ export default function PremiumReaderPreviewContent() {
         // data: URL is fetchable the same way a /director-books/*.pdf
         // path is, so PdfBookSpread needed zero changes for this to work.
         pdf: uploadedPdfData as string,
-        pages: Number(uploadedPdfPages) || 1,
-        layout: "single" as const,
+        pages: uploadedBookMeta?.pages || Number(isHydrated ? window.sessionStorage.getItem("ndl_uploaded_pdf_pages") : null) || 1,
+        // Same canonical field/values as DirectorBook.layout — resolved
+        // from the persisted metadata record (lib/uploadedPdfStore.ts,
+        // detected once at upload time via lib/pdfLayoutDetection.ts).
+        // "spread" is the safe portrait-PDF default while that record is
+        // still being read/detected, never a silent "single".
+        layout: uploadedBookMeta?.layout ?? "spread",
       }
     : (catalogBooks.find((b) => b.id === bookId) || catalogBooks[0]);
   const book = currentBook.title;
@@ -352,7 +392,7 @@ export default function PremiumReaderPreviewContent() {
     const urlPage = Number(searchParams.get("page"));
     if (!Number.isFinite(urlPage) || urlPage < 1) return 1;
     const clamped = Math.min(Math.max(1, Math.floor(urlPage)), totalPages || urlPage);
-    return isSpreadBook && clamped > 1 ? (clamped % 2 === 0 ? clamped : clamped - 1) : clamped;
+    return snapSpreadCursor(clamped, currentBook.layout);
   });
   const [bookOpened, setBookOpened] = useState(() => {
     const urlPage = Number(searchParams.get("page"));
@@ -1172,22 +1212,11 @@ export default function PremiumReaderPreviewContent() {
   // is nothing left for this component to orchestrate around a flip.
   function goNext() {
     autoFitDone.current = false;
-    if (isSpreadBook) {
-      if (readerPage === 1) { setReaderPage(2); return; }
-      const next = readerPage + 2;
-      if (next <= totalPages) setReaderPage(next);
-    } else {
-      setReaderPage(p => Math.min(totalPages, p + 1));
-    }
+    setReaderPage(p => getNextSpreadCursor(p, totalPages, currentBook.layout));
   }
   function goPrev() {
     autoFitDone.current = false;
-    if (isSpreadBook) {
-      if (readerPage <= 2) { setReaderPage(1); return; }
-      setReaderPage(p => Math.max(1, p - 2));
-    } else {
-      setReaderPage(p => Math.max(1, p - 1));
-    }
+    setReaderPage(p => getPrevSpreadCursor(p, currentBook.layout));
   }
   function fitScreen() { setZoom(100); setPan({ x: 0, y: 0 }); autoFitDone.current = false; }
 
@@ -1198,13 +1227,16 @@ export default function PremiumReaderPreviewContent() {
   function navigateToPdfPage(target: number) {
     autoFitDone.current = false;
     const pdfPage = Math.min(Math.max(1, target), totalPages);
-    if (isSpreadBook && pdfPage > 1) setReaderPage(pdfPage % 2 === 0 ? pdfPage : pdfPage - 1);
-    else setReaderPage(pdfPage);
+    setReaderPage(snapSpreadCursor(pdfPage, currentBook.layout));
   }
 
-  // "Go to page" always means the printed page number — there is no PDF-
-  // page mode. Resolved entirely synchronously against the book's static
-  // map (lib/printedPageMap.ts) — no OCR, no background indexing, nothing
+  // "Go to page" always means the printed page number — for a book with
+  // a verified static map that's a real printed-page label; for a book
+  // with no map at all it falls back to the raw PDF page number (see
+  // resolvePrintedPageTarget), which is the only sensible number to
+  // accept when there's no printed-page data to translate against.
+  // Resolved entirely synchronously against the book's static map
+  // (lib/printedPageMap.ts) — no OCR, no background indexing, nothing
   // to wait for, so there is no window in which a second, overlapping
   // request could resolve out of order and show a stale result (that was
   // the root cause of a previous "typed 10, saw an error about 15" bug:
@@ -1220,7 +1252,7 @@ export default function PremiumReaderPreviewContent() {
     setGoToInput("");
     setAiResponse(""); // clear any previous Go to Page message before showing a new one
 
-    const pdfPage = resolvePrintedPageTarget(n, printedPageMap);
+    const pdfPage = resolvePrintedPageTarget(n, printedPageMap, totalPages);
     if (pdfPage !== null) {
       navigateToPdfPage(pdfPage);
     } else {
@@ -1891,7 +1923,8 @@ export default function PremiumReaderPreviewContent() {
 
 
   // ── Resolve which physical page a screen point falls on ─────────────
-  // In double-page/spread layout (e.g. Quantum Computing), `readerPage`
+  // In double-page/spread layout (a real textbook laid out two pages at
+  // a time), `readerPage`
   // is only ever the LEFT page's number — the right page is readerPage+1,
   // rendered as a completely separate canvas. Every selection/crop path
   // below used to hardcode `readerPage`, which meant: (a) a highlight/
@@ -2278,17 +2311,32 @@ export default function PremiumReaderPreviewContent() {
               the fs* tokens above, nothing is removed or hidden. ──────── */}
           <div className={`mx-auto ${fsBarGapY} flex w-full max-w-[1340px] flex-shrink-0 items-center justify-between gap-3 px-1`}>
               <div className="flex min-w-0 items-center gap-3">
+                <Link href="/"
+                  title={t.commonHome}
+                  aria-label={t.commonHome}
+                  className={`ndl-press inline-flex ${fsBtnH} ${fsSquareW} items-center justify-center rounded-full bg-white ${fsBtnText} font-bold text-slate-700 shadow ring-1 ring-slate-200 hover:bg-amber-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-500`}>
+                  <span aria-hidden="true">🏠</span>
+                </Link>
                 <Link href="/library"
                   className={`ndl-press inline-flex ${fsBtnH} items-center gap-1 rounded-full bg-white px-3 ${fsBtnText} font-bold text-slate-700 shadow ring-1 ring-slate-200 hover:bg-amber-50`}>
                   ← {t.commonBack}
                 </Link>
                 <h1 className={`truncate font-black text-slate-900 ${isFullscreenLayout ? "text-sm" : "text-base"}`}>{book}</h1>
               </div>
-              {displayLabel && (
-                <span className={`flex-shrink-0 rounded-full bg-white px-3 ${isFullscreenLayout ? "py-1" : "py-1.5"} ${fsBtnText} font-bold text-slate-600 shadow ring-1 ring-amber-100`}>
-                  {displayLabel}
-                </span>
-              )}
+              <div className="flex flex-shrink-0 items-center gap-2">
+                {isUploadedBook && (
+                  <Link href={`/read?source=upload&id=${bookId}&page=${readerPage}`}
+                    title={t.readerReadNormally}
+                    className={`ndl-press inline-flex ${fsBtnH} items-center gap-1 rounded-full bg-white px-3 ${fsBtnText} font-bold text-slate-700 shadow ring-1 ring-slate-200 hover:bg-amber-50`}>
+                    📖 {t.readerReadNormally}
+                  </Link>
+                )}
+                {displayLabel && (
+                  <span className={`rounded-full bg-white px-3 ${isFullscreenLayout ? "py-1" : "py-1.5"} ${fsBtnText} font-bold text-slate-600 shadow ring-1 ring-amber-100`}>
+                    {displayLabel}
+                  </span>
+                )}
+              </div>
             </div>
 
           {/* ── Controls strip — page-level tools, grouped into logical

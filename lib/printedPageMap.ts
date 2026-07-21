@@ -19,41 +19,12 @@ export type PageMapEntry = {
    *  Chandrayaan-3: one PDF page = two printed pages side by side). */
   left?: number | string;
   /** Right half of a scanned two-up PDF page. Absent for an ordinary
-   *  single-printed-page PDF page (e.g. every page of Quantum, which
-   *  uses layoutMode "spread" to pair two SEPARATE PDF pages instead —
-   *  see getSpreadDisplayLabel). */
+   *  single-printed-page PDF page (a real textbook using layoutMode
+   *  "spread" to pair two SEPARATE PDF pages instead — see
+   *  getSpreadDisplayLabel). */
   right?: number | string;
 };
 export type PrintedPageMap = Record<number, PageMapEntry>;
-
-// ── Quantum: real textbook, one printed page per PDF page ──────────────
-// Verified directly against the PDF's own text layer in an earlier pass:
-// printed "1" lands on PDF page 13, and the offset holds exactly (+12)
-// all the way through page 300 (spot-checked at 13, 14, 15, 20, 49-52,
-// 150, 200, 250, 300). Generated once from that verified linear
-// relationship rather than writing out 400 lines by hand — still fully
-// deterministic and static, not detected at runtime.
-function buildQuantumMap(): PrintedPageMap {
-  const map: PrintedPageMap = {
-    1: { left: "Cover" },
-    2: { left: "Title" },
-    3: { left: "Copyright" },
-    4: { left: "Contents" },
-    5: { left: "Contents" },
-    6: { left: "Contents" },
-    7: { left: "Preface" },
-    8: { left: "Preface" },
-    // 9-12: front matter with no distinct label and no printed number —
-    // left blank deliberately (no entry) rather than guessing.
-  };
-  const START_PDF_PAGE = 13;
-  const START_PRINTED_PAGE = 1;
-  const TOTAL_PAGES = 400;
-  for (let pdfPage = START_PDF_PAGE; pdfPage <= TOTAL_PAGES; pdfPage++) {
-    map[pdfPage] = { left: START_PRINTED_PAGE + (pdfPage - START_PDF_PAGE) };
-  }
-  return map;
-}
 
 // ── Nalanda & Chandrayaan-3: illustrated picture books, scanned as
 // two-up spreads ───────────────────────────────────────────────────────
@@ -106,12 +77,10 @@ function buildTwoUpSpreadMap(opts: {
 
 const NALANDA_MAP = buildTwoUpSpreadMap({ totalPages: 32, firstSpreadPdfPage: 4, lastSpreadPdfPage: 30 });
 const CHANDRAYAAN_MAP = buildTwoUpSpreadMap({ totalPages: 35, firstSpreadPdfPage: 4, lastSpreadPdfPage: 33 });
-const QUANTUM_MAP = buildQuantumMap();
 
 const PRINTED_PAGE_MAPS: Record<string, PrintedPageMap> = {
   nalanda: NALANDA_MAP,
   "chandrayaan-3": CHANDRAYAAN_MAP,
-  quantum: QUANTUM_MAP,
 };
 
 /** Returns the static map for a book, or an empty map for anything not
@@ -138,7 +107,7 @@ export function getDisplayLabel(pdfPage: number, map: PrintedPageMap): string {
   return entryToLabel(map[pdfPage]);
 }
 
-/** Combines two ADJACENT PDF pages (spread layoutMode, e.g. Quantum,
+/** Combines two ADJACENT PDF pages (spread layoutMode — a real textbook
  *  where each PDF page is independently a single printed page) into one
  *  display label — "184–185", or just one side if only one is mapped. */
 export function getSpreadDisplayLabel(leftPdfPage: number, rightPdfPage: number | null, map: PrintedPageMap): string {
@@ -160,13 +129,28 @@ export function getPageDescriptionForAI(pdfPage: number, map: PrintedPageMap): s
   return /^[a-zA-Z]/.test(label) ? label.toLowerCase() : `printed page ${label}`;
 }
 
-/** Go to Page / voice "go to page N" resolution — N is always a printed
- *  page number, matched against either side of any entry. Returns null
- *  if this book has no page mapped to that printed number — the caller
- *  decides how to say so without ever mentioning a PDF page index. */
-export function resolvePrintedPageTarget(requested: number, map: PrintedPageMap): number | null {
+/** Go to Page / voice "go to page N" resolution — N is a printed page
+ *  number, matched against either side of any entry. For a book WITH a
+ *  static map (Nalanda, Chandrayaan-3), a number that isn't actually in
+ *  the map returns null — the caller says the printed page doesn't
+ *  exist, never a PDF page index.
+ *
+ *  For a book with NO map at all (getPrintedPageMap returns `{}` for
+ *  every book that doesn't have one explicitly built above — any real
+ *  textbook without a hand-verified printed-page offset, any future
+ *  upload), there is no printed-page data to be wrong about, so
+ *  treating every lookup as "not found" made Go to Page unusable for
+ *  every such book — including a real 308-page textbook where "page
+ *  10" obviously exists. The correct fallback, and the same one
+ *  BookCover/pageNumbering already use elsewhere in this codebase for
+ *  "no mapping configured": the PDF page number IS the displayed page
+ *  number, bounded by the book's real page count. */
+export function resolvePrintedPageTarget(requested: number, map: PrintedPageMap, totalPages?: number): number | null {
   for (const [pdfPageStr, entry] of Object.entries(map)) {
     if (entry.left === requested || entry.right === requested) return Number(pdfPageStr);
+  }
+  if (Object.keys(map).length === 0 && totalPages != null && requested >= 1 && requested <= totalPages) {
+    return requested;
   }
   return null;
 }

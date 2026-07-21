@@ -9,6 +9,36 @@ export function HeroSection() {
   const t = UI_TEXT[language];
   const chips = ["UPSC", "NCERT", t.chipScience, t.chipHistory, "AI", t.chipEngineering, t.chipPsychology];
 
+  // Every non-English UI language here (Hindi, Tamil, Bengali, Telugu,
+  // Marathi) is an Indic script — Devanagari/Bengali/Tamil/Telugu glyphs
+  // carry matras and conjuncts that extend well above and below the
+  // baseline, unlike Latin capitals. The tight leading (1.05) and large
+  // size tuned for English's three short forced-break lines was crowding
+  // or overlapping those scripts at the same size, not because the
+  // translated phrases are longer. Rather than shrink the headline
+  // globally, only non-Latin scripts get a smaller size + roomier
+  // line-height + relaxed tracking; English keeps its original scale.
+  const isIndicScript = language !== "en";
+  // Tamil glyphs run noticeably wider than Hindi/Bengali/Telugu/Marathi at
+  // the same point size (measured: ~2x the rendered width for the same
+  // phrase) — wide enough that at the desktop two-column layout, where
+  // the heading column narrows to ~0.82fr, the standard Indic size still
+  // wrapped mid-phrase. That column is itself narrower right at `lg`
+  // (1024px, ~313px available) than it is at `xl` (1280px, ~418px
+  // available), so Tamil needs two steps, not one: a smaller size for
+  // the tight 1024px edge, stepping up once there's more room at 1280px.
+  // Every other size/breakpoint is shared with the rest of the Indic
+  // scripts.
+  const isTamil = language === "ta";
+  // Reduced one responsive step from the previous scale (English
+  // 30/40/56 -> 26/34/48; Indic 26/32/44 -> 22/28/38; Tamil's lg/xl pair
+  // shifted down by the same proportion) for a calmer, less illustration-
+  // dominating headline — same leading/tracking/Tamil-breakpoint
+  // protections carried over unchanged.
+  const heroHeadingClass = isIndicScript
+    ? `mt-4 text-[22px] font-black leading-[1.4] tracking-normal text-slate-950 sm:mt-5 sm:text-[28px] ${isTamil ? "lg:text-[24px] xl:text-[30px]" : "lg:text-[38px]"}`
+    : "mt-4 text-[26px] font-black leading-[1.05] tracking-tight text-slate-950 sm:mt-5 sm:text-[34px] lg:text-[48px]";
+
   return (
     <section className="px-4 pt-0 sm:px-6">
       <div className="relative mx-auto max-w-7xl overflow-hidden rounded-[1.75rem] border border-orange-100 bg-[#fff8ed] shadow-2xl sm:rounded-[2.5rem]">
@@ -19,7 +49,7 @@ export function HeroSection() {
               {t.heroKicker}
             </div>
 
-            <h1 className="mt-4 text-[30px] font-black leading-[1.05] tracking-tight text-slate-950 sm:mt-5 sm:text-[40px] lg:text-[56px]">
+            <h1 className={heroHeadingClass}>
               {t.heroH1Line1}
               <br />
               {t.heroH1Line2}

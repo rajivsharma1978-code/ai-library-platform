@@ -57,3 +57,69 @@ export async function getUploadedPdf(id: string): Promise<string | null> {
     db.close();
   }
 }
+
+// ── Uploaded-book metadata (small, persistent, cross-tab) ─────────────
+// The IndexedDB store above holds only the heavy PDF payload. This is
+// the small companion record — name/page-count/layout — kept in
+// localStorage (same durability class as lib/currentBook.ts's pointer)
+// so it survives a refresh AND being reopened later from a listing (My
+// Books' "Uploaded" collection) in a way sessionStorage's per-tab
+// pointer fields never could. Deliberately its own key/array rather than
+// reusing ndl_my_library, which only ever stores catalog-book
+// references (see app/my-books/page.tsx's resolveLibraryBook).
+export type UploadedPdfLayout = "single" | "spread";
+export interface UploadedBookMeta {
+  id: string;
+  name: string;
+  pages: number;
+  layout: UploadedPdfLayout;
+  uploadedAt: number;
+}
+
+const META_KEY = "ndl_uploaded_books";
+
+function readMetaList(): UploadedBookMeta[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = window.localStorage.getItem(META_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeMetaList(list: UploadedBookMeta[]): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(META_KEY, JSON.stringify(list));
+  } catch {
+    // best-effort only — a quota/serialization failure here just means
+    // layout detection re-runs next time this upload is opened
+  }
+}
+
+/** Upserts one uploaded book's metadata record (by id). Called once at
+ *  upload time, and again (self-healing) if an older upload made before
+ *  this record existed is opened and its layout has to be detected on
+ *  the fly. */
+export function saveUploadedBookMeta(meta: UploadedBookMeta): void {
+  if (typeof window === "undefined") return;
+  const list = readMetaList().filter((m) => m.id !== meta.id);
+  list.unshift(meta);
+  writeMetaList(list);
+}
+
+/** Returns the metadata record for an upload id, or null if this upload
+ *  predates the metadata record existing (backward-compat case — caller
+ *  falls back to detecting + saving it). */
+export function getUploadedBookMeta(id: string): UploadedBookMeta | null {
+  return readMetaList().find((m) => m.id === id) ?? null;
+}
+
+/** Every uploaded book with a metadata record, most recent first — used
+ *  by My Books' "Uploaded" collection. */
+export function listUploadedBooks(): UploadedBookMeta[] {
+  return readMetaList();
+}

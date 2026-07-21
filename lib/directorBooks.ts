@@ -30,10 +30,15 @@ export const directorBooks: DirectorBook[] = [
     description:
       "A richly illustrated story that brings the legacy of Nalanda to life for young readers through history, culture, imagination, and learning.",
     language: "English",
-    // Same audit finding as Chandrayaan below: no static cover asset was
-    // ever added for this book either — "" lets the PDF first-page
-    // fallback take over immediately instead of a doomed 404 first.
-    cover: "",
+    // The book's own real cover — page 1 of nalanda.pdf, extracted once
+    // via scripts/extract-covers.mjs and stored permanently here instead
+    // of ever being re-rendered live in the browser (that path reliably
+    // timed out on Home, since all three discovery rails render this
+    // book at once and the 26MB PDF's first-page render couldn't finish
+    // inside BookCover's 8s budget for all three simultaneously). Page 1
+    // is actually the full front+spine+back wrap, so the extraction
+    // script crops to just the front-cover portion.
+    cover: "/book-covers/nalanda.jpg",
     pdf: "/director-books/nalanda.pdf",
     pages: 32,
     layout: "single",
@@ -59,15 +64,11 @@ export const directorBooks: DirectorBook[] = [
     description:
       "An inspiring illustrated book on India's Chandrayaan 3 mission, space exploration, science, curiosity, and national achievement.",
     language: "English",
-    // The original path here (chandrayaan-3-cover.jpg) never existed —
-    // see the audit in this same commit. The PDF first-page fallback
-    // tier was tried as the fix, but this book's cover page hangs
-    // indefinitely in pdf.js's renderer regardless of timeout/font-data
-    // fixes (root cause not fully isolated — see BookCover.tsx's
-    // comment). A real designed cover (same approach already used for
-    // "quantum" below) is the reliable fix: an actual asset that always
-    // resolves, instead of depending on a renderer that doesn't.
-    cover: "/director-books/chandrayaan-3-cover.svg",
+    // The book's own real cover — page 1 of chandrayaan-3.pdf, extracted
+    // once via scripts/extract-covers.mjs. (A hand-illustrated SVG stood
+    // in here for a while during earlier iteration; replaced with the
+    // book's actual artwork now that extraction is reliable.)
+    cover: "/book-covers/chandrayaan.jpg",
     pdf: "/director-books/chandrayaan-3.pdf",
     pages: 35,
     layout: "single",
@@ -83,34 +84,44 @@ export const directorBooks: DirectorBook[] = [
     },
   },
   {
-    id: "quantum",
-    title: "Introduction to Classical and Quantum Computing",
-    author: "Thomas G. Wong",
+    // Replaces the earlier "quantum" (Introduction to Classical and
+    // Quantum Computing) entry — see git history for that book's data
+    // if it's ever needed again. quantum-computing.pdf itself is left
+    // on disk: app/reader-premium-v2/page.tsx (a separate experimental
+    // reader route, not part of the public catalogue) still references
+    // it directly.
+    id: "artificial-intelligence-technology",
+    title: "Artificial Intelligence Technology",
+    author: "Huawei Technologies Co., Ltd.",
     description:
-      "A comprehensive textbook introducing the mathematical foundations of both classical and quantum computing, written for students with a basic background in linear algebra.",
+      "An official Huawei ICT Academy textbook covering the foundations of artificial intelligence — machine learning, neural networks, and real-world AI applications — alongside Huawei's own AI development platforms and tools.",
     language: "English",
-    // Real cover asset (was pointing to a non-existent .jpg — the book's
-    // PDF opens on a plain academic title page, so a designed SVG cover
-    // was added instead of relying on the PDF-first-page fallback).
-    cover: "/director-books/quantum-cover.svg",
-    pdf: "/director-books/quantum-computing.pdf",
-    pages: 400,
+    // The book's own real cover — page 1 of
+    // artificial-intelligence-technology.pdf, extracted once via
+    // scripts/extract-covers.mjs. Verified against the PDF: a complete,
+    // clean published cover with no scanner margins, nothing cropped.
+    cover: "/book-covers/artificial-intelligence-technology.jpg",
+    pdf: "/director-books/artificial-intelligence-technology.pdf",
+    pages: 308,
+    // "spread", not "single" — those two values don't mean "one page vs
+    // two pages on screen," they mean "does the reader need to pair PDF
+    // pages itself." Nalanda/Chandrayaan-3 are "single" because their
+    // PDFs are pre-scanned: one PDF page already IS a two-page spread
+    // image, so the reader just shows it as-is (and it happens to look
+    // like two pages because that's what's baked into the scan). This
+    // book's PDF is the opposite — verified via inspection that page 1
+    // is one genuine single portrait page (aspect ratio 0.66), the same
+    // structure the old Quantum entry had — so it needs the reader to
+    // pair two SEPARATE adjacent PDF pages into one view, which is
+    // exactly what "spread" does.
     layout: "spread",
-    category: "Computing",
-    // Fallback only now — real detection (lib/printedPageDetection.ts) is
-    // primary. Verified against the actual PDF text layer: printed "1"
-    // lands on PDF page 13, confirmed consistent (offset of exactly 12)
-    // all the way through page 300. Front matter (cover through preface)
-    // runs PDF pages 1-12.
-    pageNumbering: {
-      type: "offset",
-      startPdfPage: 13,
-      startBookPage: 1,
-      labels: {
-        1: "Cover", 2: "Title Page", 3: "Copyright",
-        4: "Contents", 5: "Contents", 6: "Contents",
-        7: "Preface", 8: "Preface",
-      },
-    },
+    category: "Artificial Intelligence",
+    // No pageNumbering config — verified via the PDF's own text layer
+    // (pages 1, 50, 150, 250, 308 all carry real selectable text; page 1
+    // is the actual cover), but the printed-page-vs-PDF-page offset
+    // wasn't independently established the way Quantum's was. Absent
+    // here just means the reader falls back to today's default (PDF
+    // page number shown as-is) — same safe default every other book
+    // without this field already uses.
   },
 ];

@@ -2,8 +2,10 @@
 
 import Link from "next/link";
 import { usePublicCatalog } from "@/lib/catalog";
+import { comingSoonBooks } from "@/lib/comingSoonBooks";
 import { useAdaptiveCarousel } from "@/lib/useAdaptiveCarousel";
 import RealBookCover from "./RealBookCover";
+import { ComingSoonCover } from "./ComingSoonCover";
 import { UI_TEXT } from "@/lib/i18n";
 import { useLanguage } from "@/lib/useLanguage";
 
@@ -12,18 +14,25 @@ import { useLanguage } from "@/lib/useLanguage";
 // widens each card so 3-5 are visible at once — same card width at every
 // breakpoint, no separate mobile/desktop layout to keep in sync.
 //
-// The row is adaptive: with a small catalogue (today, 3 demo books) the
-// cards don't fill the container, so useAdaptiveCarousel detects that and
-// the row centers itself — reading as a deliberately curated selection
-// rather than a scrollable list that happens to be missing books. Once
-// the catalogue is large enough to overflow, it automatically reverts to
-// the left-aligned, arrow-driven scrolling carousel — no code change
-// needed when real content arrives.
+// The row is adaptive: useAdaptiveCarousel detects whether the row's
+// content actually overflows its container and switches between a
+// centered, arrow-free presentation and a left-aligned scrolling one
+// accordingly — no code change needed as the catalogue grows.
+//
+// The rail also mixes in a small number of "preview" titles after the
+// real, fully-working books — enough that the shelf reads as a growing
+// library, not so many that they crowd out the real catalogue. Real
+// books stay exactly as they were (full brightness, clickable, hover,
+// "Read Now"); preview titles render through their own bookstore-quality
+// cover art but muted, static, and non-interactive — the editorial note
+// above already sets expectations, so no per-card label repeats it.
 export default function DirectorCollection() {
   const { language } = useLanguage();
   const t = UI_TEXT[language];
-  const books = usePublicCatalog();
-  const { ref: scrollRef, overflowing } = useAdaptiveCarousel<HTMLDivElement>([books.length]);
+  const liveBooks = usePublicCatalog();
+  const previewBooks = comingSoonBooks.slice(0, 2);
+  const totalCount = liveBooks.length + previewBooks.length;
+  const { ref: scrollRef, overflowing } = useAdaptiveCarousel<HTMLDivElement>([totalCount]);
 
   const scroll = (dir: "left" | "right") => {
     const card = scrollRef.current?.firstElementChild as HTMLElement | null;
@@ -32,9 +41,13 @@ export default function DirectorCollection() {
   };
 
   return (
-    <section className="bg-[#fff8ed] px-4 py-16 sm:px-6 sm:py-24">
+    <section className="bg-[#fff8ed] px-4 py-10 sm:px-6 sm:py-16">
       <div className="mx-auto max-w-6xl">
-        <div className="mb-8 flex items-end justify-between gap-4 sm:mb-10">
+        <p className="mb-2.5 max-w-2xl text-[13px] italic leading-relaxed text-amber-800/80 sm:mb-3 sm:text-[14px]">
+          {t.directorEditorialNote}
+        </p>
+
+        <div className="mb-5 flex items-end justify-between gap-4 sm:mb-6">
           <div className="min-w-0">
             <p className="text-[10.5px] font-black uppercase tracking-[0.3em] text-amber-700 sm:text-[11px]">
               {t.directorEyebrow}
@@ -82,14 +95,14 @@ export default function DirectorCollection() {
           className={`flex snap-x snap-mandatory gap-4 overflow-x-auto pb-2 pl-0.5 pt-0.5 ${overflowing ? "" : "justify-center"}`}
           style={{ scrollbarWidth: "none", msOverflowStyle: "none" }}
         >
-          {books.map((book) => (
+          {liveBooks.map((book) => (
             <Link
               key={book.id}
               href={`/reader-premium?book=${book.id}`}
-              className="group w-[42%] flex-shrink-0 snap-start transition-transform duration-200 ease-out active:scale-[0.97] hover:-translate-y-1 sm:w-[188px] md:w-[208px] lg:w-[224px]"
+              className="group w-[44%] flex-shrink-0 snap-start transition-transform duration-200 ease-out active:scale-[0.97] hover:-translate-y-1 sm:w-[190px] md:w-[210px] lg:w-[228px]"
             >
               <div
-                className="relative overflow-hidden rounded-2xl bg-white shadow-[0_10px_28px_-8px_rgba(146,90,20,0.28)] ring-1 ring-amber-900/[0.06] transition-shadow duration-300 group-hover:shadow-[0_18px_38px_-10px_rgba(146,90,20,0.38)]"
+                className="relative overflow-hidden rounded-2xl bg-white shadow-[0_8px_20px_-8px_rgba(15,23,42,0.18)] ring-1 ring-black/[0.05] transition-shadow duration-300 group-hover:shadow-[0_16px_32px_-10px_rgba(15,23,42,0.28)]"
                 style={{ aspectRatio: "3 / 4" }}
               >
                 <RealBookCover book={book} className="h-full w-full transition-transform duration-500 ease-out group-hover:scale-[1.04]" />
@@ -106,6 +119,25 @@ export default function DirectorCollection() {
                 {t.readNow}
               </span>
             </Link>
+          ))}
+
+          {previewBooks.map((book) => (
+            <div
+              key={book.id}
+              className="w-[44%] flex-shrink-0 snap-start cursor-default sm:w-[190px] md:w-[210px] lg:w-[228px]"
+            >
+              <div
+                className="overflow-hidden rounded-2xl opacity-[0.78] shadow-[0_4px_12px_-6px_rgba(15,23,42,0.14)] saturate-[0.82]"
+                style={{ aspectRatio: "3 / 4" }}
+              >
+                <ComingSoonCover id={book.id} className="h-full w-full" />
+              </div>
+
+              <p className="mt-2.5 text-[13.5px] font-semibold leading-tight text-slate-600 line-clamp-2">
+                {book.title}
+              </p>
+              <p className="mt-0.5 text-[11.5px] text-slate-400 truncate">{book.author}</p>
+            </div>
           ))}
         </div>
       </div>
