@@ -106,7 +106,7 @@ export default function AdminUploadQueuePage() {
 
   // Reads a REAL PDF chosen by the admin — a data: URL (so it can be
   // reopened later, same technique app/read.tsx already uses for its
-  // "Read with AI Tutor" upload path) plus its real page count via
+  // "AI Tutor" upload path) plus its real page count via
   // pdf.js. Nothing here touches Book Management's own separate
   // mock-upload UI.
   async function handleFileSelected(e: ChangeEvent<HTMLInputElement>) {

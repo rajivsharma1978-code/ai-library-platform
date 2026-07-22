@@ -28,10 +28,10 @@ import ReaderLearningMenu from "@/components/reader/ReaderLearningMenu";
 // replacement for it.
 //
 // Two upload paths live on this page on purpose:
-//   1. "Read Normally" upload — stays right here, renders locally via a
+//   1. "Standard Mode" upload — stays right here, renders locally via a
 //      blob: URL, no persistence, no cross-mode handoff. A quick scratch
 //      read for a file you don't need again after this tab closes.
-//   2. "Read with AI Tutor" upload — reads the file as a base64 data
+//   2. "AI Tutor" upload — reads the file as a base64 data
 //      URL, saves the payload to IndexedDB (lib/uploadedPdfStore.ts)
 //      keyed by a generated id, detects its page layout once
 //      (lib/pdfLayoutDetection.ts) and persists {id, name, pages,
@@ -75,7 +75,7 @@ function ReadPageContent() {
   const [aiUploadStatus, setAiUploadStatus] = useState<"idle" | "preparing" | "error">("idle");
   const [aiUploadError, setAiUploadError] = useState("");
 
-  // ── Persisted ("Read with AI Tutor") upload — resolved by id, same
+  // ── Persisted ("AI Tutor") upload — resolved by id, same
   // storage Premium Reader reads, so this reader can open the exact same
   // upload (?source=upload&id=<id>). The `id` param is preferred; the
   // sessionStorage pointer is a fallback for links generated before this
@@ -178,7 +178,7 @@ function ReadPageContent() {
         setPdf(doc);
         setNumPages(doc.numPages);
 
-        // For a local ("Read Normally") blob upload, detect + cache its
+        // For a local ("Standard Mode") blob upload, detect + cache its
         // layout right here so even the very first paint below already
         // reflects it — the same synchronous-first-paint reasoning as
         // the `page` snap immediately after. Catalog books and persisted
@@ -214,7 +214,7 @@ function ReadPageContent() {
 
   // ── Shared "current book" pointer for Return to Book ─────────────────
   // Catalog books and persisted uploads both have a stable id worth
-  // reopening later. The local ("Read Normally") blob upload doesn't —
+  // reopening later. The local ("Standard Mode") blob upload doesn't —
   // no id, nothing survives a reload — so there's nothing meaningful to
   // point at for that path.
   useEffect(() => {
@@ -437,7 +437,7 @@ function ReadPageContent() {
     return () => { window.speechSynthesis?.cancel(); };
   }, []);
 
-  // ── Upload path 1: Read Normally (stays on this page, no AI) ─────────
+  // ── Upload path 1: Standard Mode (stays on this page, no AI) ─────────
   function handleNormalUpload(e: ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -447,7 +447,7 @@ function ReadPageContent() {
     setUploadedName(file.name);
   }
 
-  // ── Upload path 2: Read with AI Tutor ────────────────────────────────
+  // ── Upload path 2: AI Tutor ────────────────────────────────────────────
   async function handleAiUpload(e: ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;

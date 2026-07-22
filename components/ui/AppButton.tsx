@@ -10,7 +10,7 @@ export type AppButtonVariant = "primary" | "secondary" | "ghost" | "danger" | "a
 // Action / Continue Studying buttons (bg-slate-950), NOT the orange brand
 // accent. secondary = the neutral alternate action. accent = orange, kept
 // for the rare *singular* highlighted action within a view (e.g. the one
-// "Read with AI Tutor" toggle in the Normal Reader's toolbar) — orange is
+// "AI Tutor" toggle in the Normal Reader's toolbar) — orange is
 // reserved for cases like that, never repeated across a whole grid.
 const VARIANT_CLASSES: Record<AppButtonVariant, string> = {
   primary:   "bg-slate-950 text-white hover:bg-slate-800",
@@ -38,7 +38,7 @@ type AppButtonAsButton = CommonProps & ButtonHTMLAttributes<HTMLButtonElement> &
 type AppButtonAsLink = CommonProps & { href: string; onClick?: () => void };
 
 /** One consistent button component for both real buttons and internal
- * links (Read Normally / Read with AI Tutor / Save / Cancel / etc.),
+ * links (Standard Mode / AI Tutor / Save / Cancel / etc.),
  * so every page shares the same radius, weight, and variant palette
  * instead of each page inventing its own button classes. */
 export default function AppButton(props: AppButtonAsButton | AppButtonAsLink) {
