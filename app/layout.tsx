@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono, Cormorant_Garamond, Outfit } from "next/font/google";
 import { LanguageProvider } from "@/lib/LanguageProvider";
+import MobileNavShell from "@/components/mobile/MobileNavShell";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -45,7 +46,7 @@ export default function RootLayout({
     >
       <body className="min-h-full flex flex-col bg-background text-foreground">
         <LanguageProvider>
-          {children}
+          <MobileNavShell>{children}</MobileNavShell>
         </LanguageProvider>
       </body>
     </html>

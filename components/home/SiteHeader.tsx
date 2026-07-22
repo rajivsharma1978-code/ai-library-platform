@@ -129,12 +129,15 @@ export function SiteHeader() {
     [t.aiTutorNavSettings, "/settings"],
   ];
 
-  // Mobile drawer — primary destinations, exactly mirroring the desktop
-  // top-level bar (Home / Library / Explore / AI Tutor).
+  // Mobile drawer — primary destinations. Home / Library / Explore are
+  // deliberately NOT repeated here (Phase B1) — the new fixed
+  // MobileBottomNav (lib/mobileNav.ts) already puts all three one tap
+  // away at all times below `lg`, so keeping them here too would just be
+  // the same three links shown twice on the same screen. AI Tutor has no
+  // bottom-nav tab (it's a contextual capability, not a destination — see
+  // the approved mobile architecture), so it keeps its place here as the
+  // drawer's one remaining "primary" entry.
   const DRAWER_PRIMARY_NAV: [string, string][] = [
-    [t.commonHome, "/"],
-    [t.navLibrary, "/library"],
-    [t.navExplore, "/explore"],
     [t.navAiTutor, "/ai-tutor"],
   ];
 

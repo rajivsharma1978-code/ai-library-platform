@@ -112,6 +112,10 @@ export const UI_TEXT = {
 
     /* Phase F Batch 4 — Home page localization */
     navExplore: "Explore",
+    navLearn: "Learn",
+    navProfile: "Profile",
+    learnPageSubtitle: "Your personal learning workspace",
+    primaryNavLabel: "Primary navigation",
     workspaceLabel: "Workspace",
     signOut: "Sign Out",
     adminDashboard: "Admin Dashboard",
@@ -1153,6 +1157,10 @@ export const UI_TEXT = {
 
     /* Phase F Batch 4 — Home page localization */
     navExplore: "एक्सप्लोर करें",
+    navLearn: "सीखें",
+    navProfile: "प्रोफ़ाइल",
+    learnPageSubtitle: "आपका व्यक्तिगत शिक्षण कार्यक्षेत्र",
+    primaryNavLabel: "मुख्य नेविगेशन",
     workspaceLabel: "कार्यक्षेत्र",
     signOut: "साइन आउट",
     adminDashboard: "एडमिन डैशबोर्ड",
@@ -2182,6 +2190,10 @@ export const UI_TEXT = {
 
     /* Phase F Batch 4 — Home page localization */
     navExplore: "ஆராயுங்கள்",
+    navLearn: "கற்க",
+    navProfile: "சுயவிவரம்",
+    learnPageSubtitle: "உங்கள் தனிப்பட்ட கற்றல் பணியிடம்",
+    primaryNavLabel: "முதன்மை வழிசெலுத்தல்",
     workspaceLabel: "பணியிடம்",
     signOut: "வெளியேறு",
     adminDashboard: "நிர்வாக டாஷ்போர்டு",
@@ -3211,6 +3223,10 @@ export const UI_TEXT = {
 
     /* Phase F Batch 4 — Home page localization */
     navExplore: "অন্বেষণ করুন",
+    navLearn: "শিখুন",
+    navProfile: "প্রোফাইল",
+    learnPageSubtitle: "আপনার ব্যক্তিগত শেখার কর্মক্ষেত্র",
+    primaryNavLabel: "প্রধান নেভিগেশন",
     workspaceLabel: "কর্মক্ষেত্র",
     signOut: "সাইন আউট",
     adminDashboard: "অ্যাডমিন ড্যাশবোর্ড",
@@ -4240,6 +4256,10 @@ export const UI_TEXT = {
 
     /* Phase F Batch 4 — Home page localization */
     navExplore: "అన్వేషించండి",
+    navLearn: "నేర్చుకోండి",
+    navProfile: "ప్రొఫైల్",
+    learnPageSubtitle: "మీ వ్యక్తిగత అభ్యాస కార్యస్థలం",
+    primaryNavLabel: "ప్రధాన నావిగేషన్",
     workspaceLabel: "కార్యస్థలం",
     signOut: "సైన్ అవుట్",
     adminDashboard: "అడ్మిన్ డాష్‌బోర్డ్",
@@ -5269,6 +5289,10 @@ export const UI_TEXT = {
 
     /* Phase F Batch 4 — Home page localization */
     navExplore: "एक्सप्लोर करा",
+    navLearn: "शिका",
+    navProfile: "प्रोफाइल",
+    learnPageSubtitle: "तुमचे वैयक्तिक शिक्षण कार्यक्षेत्र",
+    primaryNavLabel: "मुख्य नेव्हिगेशन",
     workspaceLabel: "कार्यक्षेत्र",
     signOut: "साइन आउट",
     adminDashboard: "अ‍ॅडमिन डॅशबोर्ड",
