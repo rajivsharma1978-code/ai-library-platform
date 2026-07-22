@@ -24,6 +24,10 @@ const SIZE_CLASSES = {
   sm: "px-3 py-1.5 text-xs",
   md: "px-4 py-2.5 text-sm",
   lg: "px-6 py-3 text-sm",
+  // Additive — does not replace `sm`. Guarantees a 44px minimum regardless
+  // of script (Tamil/Telugu glyphs can run taller than Latin/Devanagari),
+  // for mobile touch targets per the NDL AI Mobile Design System §4.
+  touch: "px-4 py-3 text-sm min-h-[44px]",
 };
 
 interface CommonProps {

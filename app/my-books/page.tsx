@@ -232,7 +232,7 @@ export default function MyBooksPage() {
             ) : (
               <div className="grid gap-5 md:grid-cols-3 lg:grid-cols-4">
                 {uploadedBooks.map(u => (
-                  <div key={u.id} className="flex h-full flex-col rounded-2xl border p-4 hover:shadow-lg">
+                  <div key={u.id} className="flex h-full min-w-0 flex-col rounded-2xl border p-4 hover:shadow-lg">
                     <div className="flex h-52 w-full items-center justify-center rounded-xl bg-gradient-to-br from-amber-200 via-orange-300 to-slate-700 text-white shadow">
                       <span style={{ fontSize: "2.6em" }}>📄</span>
                     </div>
@@ -260,7 +260,7 @@ export default function MyBooksPage() {
                 const p = progressFor(book.id);
                 const counts = countsFor(book.id);
                 return (
-                  <div key={book.id} className="flex h-full flex-col rounded-2xl border p-4 hover:shadow-lg">
+                  <div key={book.id} className="flex h-full min-w-0 flex-col rounded-2xl border p-4 hover:shadow-lg">
                     <div className="h-52 w-full overflow-hidden rounded-xl shadow">
                       <CoverThumb book={book} className="h-full w-full" />
                     </div>

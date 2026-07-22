@@ -260,7 +260,7 @@ export default function RevisionPage() {
         </div>
 
         <div className="grid gap-8 lg:grid-cols-3">
-          <div className="lg:col-span-2 flex flex-col gap-8">
+          <div className="lg:col-span-2 flex min-w-0 flex-col gap-8">
 
             {/* 2. Today's Revision */}
             <section>
@@ -350,7 +350,7 @@ export default function RevisionPage() {
           </div>
 
           {/* 5. Study Plan */}
-          <div>
+          <div className="min-w-0">
             <h2 className="mb-4 text-lg font-black text-slate-900">
               {t.revisionStudyPlanTitle}
             </h2>

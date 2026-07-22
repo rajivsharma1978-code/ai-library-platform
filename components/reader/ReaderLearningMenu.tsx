@@ -67,7 +67,7 @@ export default function ReaderLearningMenu() {
         aria-controls={menuId}
         aria-label={open ? t.learningNavCloseMenu : t.navMyLearning}
         title={t.navMyLearning}
-        className={`inline-flex h-9 items-center gap-1.5 rounded-xl px-4 text-xs font-bold transition-colors ${
+        className={`inline-flex h-10 items-center gap-1.5 rounded-xl px-4 text-xs font-bold transition-colors ${
           open
             ? "bg-slate-900 text-white"
             : "bg-white text-slate-700 ring-1 ring-slate-200 hover:bg-slate-50"

@@ -250,7 +250,7 @@ export default function MyLibraryPage() {
               const total = p.totalPages || bookTotalPages(book);
               const pct = Math.min(100, Math.round((p.currentPage / Math.max(1, total)) * 100));
               return (
-                <div key={book.id} className="flex h-full gap-4 rounded-2xl border border-slate-100 p-4 hover:shadow-md">
+                <div key={book.id} className="flex h-full min-w-0 gap-4 rounded-2xl border border-slate-100 p-4 hover:shadow-md">
                   <div className="h-28 w-20 flex-shrink-0 overflow-hidden rounded-xl shadow">
                     <CoverThumb book={book} className="h-full w-full" />
                   </div>
@@ -261,7 +261,15 @@ export default function MyLibraryPage() {
                     <div className="mt-2 h-2 rounded-full bg-slate-100">
                       <div className="h-2 rounded-full bg-amber-500" style={{ width: `${pct}%` }} />
                     </div>
-                    <div className="mt-auto flex gap-2 pt-3">
+                    {/* flex-wrap (not fullWidth) — on desktop this row has
+                        room and both buttons stay exactly as before,
+                        auto-width, single line. Only when the column gets
+                        too narrow for both at once (phone widths, this
+                        card's fixed cover thumbnail eats most of the
+                        width) does the second button drop to its own
+                        line, instead of forcing the card wider than the
+                        viewport. */}
+                    <div className="mt-auto flex flex-wrap gap-2 pt-3">
                       <AppButton href={`/read?book=${book.id}`} variant="secondary" size="sm">
                         📖 {t.myLibraryNormal}
                       </AppButton>
@@ -296,7 +304,7 @@ export default function MyLibraryPage() {
                 const p = progressFor(book.id);
                 const pct = p?.pct ?? 0;
                 return (
-                  <div key={book.id} className="flex h-full flex-col rounded-2xl border p-4 hover:shadow-lg">
+                  <div key={book.id} className="flex h-full min-w-0 flex-col rounded-2xl border p-4 hover:shadow-lg">
                     <div className="h-52 w-full overflow-hidden rounded-xl shadow">
                       <CoverThumb book={book} className="h-full w-full" />
                     </div>

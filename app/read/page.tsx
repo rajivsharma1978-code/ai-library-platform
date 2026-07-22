@@ -16,6 +16,7 @@ import BookCover from "@/components/ui/BookCover";
 import { saveUploadedPdf, getUploadedPdf, saveUploadedBookMeta, getUploadedBookMeta, type UploadedBookMeta } from "@/lib/uploadedPdfStore";
 import { detectPdfLayout } from "@/lib/pdfLayoutDetection";
 import { saveCurrentBook } from "@/lib/currentBook";
+import { useAdaptivePanelPlacement } from "@/lib/panelPlacement";
 import ReaderLearningMenu from "@/components/reader/ReaderLearningMenu";
 
 // ══════════════════════════════════════════════════════════════════════
@@ -146,6 +147,15 @@ function ReadPageContent() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [showThumbnails, setShowThumbnails] = useState(true);
+  // Mobile-only toolbar overflow menu (Thumbnails/Fit Width/Fit Page/
+  // Fullscreen) — see the "More" button in the header below. Desktop
+  // never sets this true (the trigger is sm:hidden). Viewport-clamped via
+  // the same adaptive placement hook AccessibilityToolbar/ReaderLearningMenu
+  // already use, so it can never render partly off-screen the way a plain
+  // `absolute right-0` would on a trigger that isn't flush with the
+  // viewport's right edge (it isn't, once other buttons sit to its right).
+  const [moreMenuOpen, setMoreMenuOpen] = useState(false);
+  const { triggerRef: moreTriggerRef, panelRef: moreMenuRef, placement: morePlacement } = useAdaptivePanelPlacement(moreMenuOpen, 224);
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const rightCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -390,6 +400,27 @@ function ReadPageContent() {
     };
   });
 
+  // Mobile toolbar "More" menu — outside-click and Escape close it, same
+  // interaction contract as ReaderLearningMenu/LanguagePopover elsewhere
+  // in the reader chrome.
+  useEffect(() => {
+    if (!moreMenuOpen) return;
+    function onDocClick(e: MouseEvent) {
+      const target = e.target as Node;
+      if (moreMenuRef.current?.contains(target) || moreTriggerRef.current?.contains(target)) return;
+      setMoreMenuOpen(false);
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") setMoreMenuOpen(false);
+    }
+    document.addEventListener("mousedown", onDocClick);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDocClick);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [moreMenuOpen]);
+
   // VoiceAssistant (rendered inside AccessibilityToolbar) never imports
   // this page's internals — it only ever broadcasts a "ndl-voice-command"
   // CustomEvent. This is the ONLY place that turns that event into calls
@@ -559,35 +590,110 @@ function ReadPageContent() {
   // ── Reading view ───────────────────────────────────────────────────
   return (
     <div ref={outerRef} className="flex h-screen flex-col bg-slate-100">
-      <header className="flex flex-shrink-0 flex-wrap items-center justify-between gap-3 border-b border-slate-200 bg-white px-6 py-3">
+      <header className="flex flex-shrink-0 flex-wrap items-center justify-between gap-3 border-b border-slate-200 bg-white px-4 py-3 sm:px-6">
         <div className="min-w-0">
           <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">{t.readerBadge}</p>
           <h1 className="truncate text-lg font-bold text-slate-900">{displayTitle}</h1>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <AppButton variant="secondary" size="sm" onClick={() => setShowThumbnails(s => !s)}>
-            {showThumbnails ? t.readerHideThumbs : t.readerShowThumbs}
-          </AppButton>
-          <AppButton variant="secondary" size="sm" onClick={zoomOut}>−</AppButton>
+          {/* Thumbnails toggle — hidden on mobile, folded into the "More"
+              menu below instead. Same button, same handler, just not a
+              permanent row-1 item on a 375px screen. */}
+          <div className="hidden sm:block">
+            <AppButton variant="secondary" size="sm" onClick={() => setShowThumbnails(s => !s)}>
+              {showThumbnails ? t.readerHideThumbs : t.readerShowThumbs}
+            </AppButton>
+          </div>
+
+          <AppButton variant="secondary" size="touch" onClick={zoomOut}>−</AppButton>
           <span className="text-xs font-bold text-slate-500">{Math.round(zoom * 100)}%</span>
-          <AppButton variant="secondary" size="sm" onClick={zoomIn}>+</AppButton>
-          <AppButton variant={fitMode === "width" ? "primary" : "secondary"} size="sm" onClick={() => setFitMode("width")}>{t.readerFitWidth}</AppButton>
-          <AppButton variant={fitMode === "page" ? "primary" : "secondary"} size="sm" onClick={() => setFitMode("page")}>{t.readerFitPage}</AppButton>
-          <AppButton variant="secondary" size="sm" onClick={toggleFullscreen}>
-            {isFullscreen ? `⤢ ${t.readerExitFullscreen}` : `⛶ ${t.readerFullscreen}`}
-          </AppButton>
+          <AppButton variant="secondary" size="touch" onClick={zoomIn}>+</AppButton>
+
+          {/* Fit Width / Fit Page / Fullscreen — same three buttons as
+              before, unchanged on desktop; on mobile they move into the
+              "More" menu instead of wrapping onto a third toolbar row. */}
+          <div className="hidden items-center gap-2 sm:flex">
+            <AppButton variant={fitMode === "width" ? "primary" : "secondary"} size="sm" onClick={() => setFitMode("width")}>{t.readerFitWidth}</AppButton>
+            <AppButton variant={fitMode === "page" ? "primary" : "secondary"} size="sm" onClick={() => setFitMode("page")}>{t.readerFitPage}</AppButton>
+            <AppButton variant="secondary" size="sm" onClick={toggleFullscreen}>
+              {isFullscreen ? `⤢ ${t.readerExitFullscreen}` : `⛶ ${t.readerFullscreen}`}
+            </AppButton>
+          </div>
+
+          <div className="sm:hidden">
+            <button
+              ref={moreTriggerRef as React.RefObject<HTMLButtonElement>}
+              type="button"
+              onClick={() => setMoreMenuOpen(o => !o)}
+              aria-expanded={moreMenuOpen}
+              aria-haspopup="menu"
+              aria-label={t.moreLabel}
+              title={t.moreLabel}
+              className="ndl-press inline-flex h-11 w-11 items-center justify-center rounded-xl bg-white text-lg text-slate-700 ring-1 ring-slate-200 hover:bg-slate-50"
+            >
+              <span aria-hidden="true">⋯</span>
+            </button>
+            {moreMenuOpen && (
+              <div
+                role="menu"
+                aria-label={t.moreLabel}
+                ref={moreMenuRef}
+                className="fixed z-[100] w-56 rounded-2xl border border-slate-200 bg-white p-2 shadow-[0_16px_50px_rgba(15,23,42,0.20)]"
+                style={{
+                  top: morePlacement?.top ?? -9999,
+                  left: morePlacement?.left ?? -9999,
+                  visibility: morePlacement ? "visible" : "hidden",
+                }}
+              >
+                {/* Close first, then act — so the menu always dismisses even
+                    if the action itself throws (e.g. requestFullscreen()
+                    can reject/throw outside a clean user-gesture context);
+                    a stuck-open menu is a worse failure than a no-op
+                    action. */}
+                <button
+                  role="menuitem"
+                  onClick={() => { setMoreMenuOpen(false); setShowThumbnails(s => !s); }}
+                  className="flex min-h-11 w-full items-center rounded-xl px-3 text-left text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                >
+                  {showThumbnails ? t.readerHideThumbs : t.readerShowThumbs}
+                </button>
+                <button
+                  role="menuitem"
+                  onClick={() => { setMoreMenuOpen(false); setFitMode("width"); }}
+                  className={`flex min-h-11 w-full items-center rounded-xl px-3 text-left text-sm font-semibold hover:bg-slate-50 ${fitMode === "width" ? "text-orange-600" : "text-slate-700"}`}
+                >
+                  {t.readerFitWidth}
+                </button>
+                <button
+                  role="menuitem"
+                  onClick={() => { setMoreMenuOpen(false); setFitMode("page"); }}
+                  className={`flex min-h-11 w-full items-center rounded-xl px-3 text-left text-sm font-semibold hover:bg-slate-50 ${fitMode === "page" ? "text-orange-600" : "text-slate-700"}`}
+                >
+                  {t.readerFitPage}
+                </button>
+                <button
+                  role="menuitem"
+                  onClick={() => { setMoreMenuOpen(false); toggleFullscreen(); }}
+                  className="flex min-h-11 w-full items-center rounded-xl px-3 text-left text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                >
+                  {isFullscreen ? `⤢ ${t.readerExitFullscreen}` : `⛶ ${t.readerFullscreen}`}
+                </button>
+              </div>
+            )}
+          </div>
+
           <ReaderLearningMenu />
           {catalogBook && (
-            <AppButton variant="accent" size="sm" href={`/reader-premium?book=${catalogBook.id}&page=${page}`}>
+            <AppButton variant="accent" size="touch" href={`/reader-premium?book=${catalogBook.id}&page=${page}`}>
               🤖 {t.readerReadWithAi}
             </AppButton>
           )}
           {isUploadedBook && uploadedBookMeta && (
-            <AppButton variant="accent" size="sm" href={`/reader-premium?source=upload&id=${uploadedBookMeta.id}&page=${page}`}>
+            <AppButton variant="accent" size="touch" href={`/reader-premium?source=upload&id=${uploadedBookMeta.id}&page=${page}`}>
               🤖 {t.readerReadWithAi}
             </AppButton>
           )}
-          <AppButton variant="danger" size="sm" href="/read">✕ {t.commonClose}</AppButton>
+          <AppButton variant="danger" size="touch" href="/read">✕ {t.commonClose}</AppButton>
         </div>
       </header>
 

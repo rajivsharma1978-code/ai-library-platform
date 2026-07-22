@@ -143,7 +143,7 @@ export default function LibraryPage() {
   function BookCard({ book }: { book: CatalogBook }) {
     const saved = savedIds.has(book.id);
     return (
-      <div className="flex h-full flex-col rounded-2xl border border-slate-100 p-4 hover:shadow-lg transition">
+      <div className="flex h-full min-w-0 flex-col rounded-2xl border border-slate-100 p-4 hover:shadow-lg transition">
         <div className="h-52 w-full overflow-hidden rounded-xl shadow">
           <BookCover book={book} className="h-full w-full" />
         </div>
