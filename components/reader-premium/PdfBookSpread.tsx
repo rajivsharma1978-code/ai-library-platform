@@ -67,6 +67,18 @@ export type PdfBookSpreadProps = {
 const PAGE_MAX_W = 860;
 const PAGE_MAX_H = 700;
 
+// ── Render timeout / retry safety net ────────────────────────────────
+// PDF.js can hang indefinitely (no error, no rejection) on a given
+// document/page — e.g. the same "non-embedded standard font" failure
+// mode already documented above for standardFontDataUrl, but there can
+// be other causes (worker stall, a malformed resource, etc.). Without a
+// bound, a hang leaves the reader stuck on the loading skeleton forever
+// with no way out. This bounds ONE attempt; RENDER_MAX_ATTEMPTS caps the
+// total tries (1 initial + 1 automatic retry) before surfacing a
+// visible, user-actionable failure state instead of spinning forever.
+const RENDER_TIMEOUT_MS = 12000;
+const RENDER_MAX_ATTEMPTS = 2;
+
 // ── Whitespace crop ─────────────────────────────────────────────────
 const SAMPLE_STEP = 2, WHITE_THRESHOLD = 245, SAFE_PADDING = 6, MIN_CROP_FRAC = 0.04;
 interface CropBox { x: number; y: number; w: number; h: number }
@@ -433,6 +445,16 @@ export default function PdfBookSpread({
   const [leftSize,   setLeftSize]   = useState<{ w: number; h: number } | null>(null);
   const [rightSize,  setRightSize]  = useState<{ w: number; h: number } | null>(null);
 
+  // ── Render timeout / retry / failure state ───────────────────────────
+  // `failed` is true only after BOTH the initial attempt and the single
+  // automatic retry have failed to paint this page in time — it replaces
+  // the loading UI with a visible error + manual Retry action, never a
+  // silent/indefinite spinner. `retryToken` exists purely so the manual
+  // Retry button can force the render effect below to run again for the
+  // exact same page/book (it's otherwise a no-op dependency).
+  const [failed, setFailed] = useState(false);
+  const [retryToken, setRetryToken] = useState(0);
+
   const safePage = Math.max(1, Number(pageNumber) || 1);
   const total    = Math.max(1, Number(totalPages)  || 1);
   const isSpread = layoutMode === "spread" && safePage > 1;
@@ -477,8 +499,8 @@ export default function PdfBookSpread({
   }
 
   useEffect(() => {
-    const id = ++renderIdRef.current;
     let cancelled = false;
+    let id = ++renderIdRef.current;
     const isCancelled = () => cancelled || renderIdRef.current !== id;
 
     const direction: "next" | "prev" = safePage === prevPageRef.current
@@ -487,118 +509,197 @@ export default function PdfBookSpread({
     prevPageRef.current = safePage;
 
     renderedCallbackFired.current = false;
+    setFailed(false);
     // Deliberately NOT clearing singleSize/leftSize/rightSize here — the
     // canvas keeps showing the outgoing page's pixels until the new page
     // is actually ready to paint over it, so there is never a blank frame.
 
-    async function go() {
+    // Set inside renderCritical() the instant the visible page/spread is
+    // actually painted — the timeout below only ever acts while this is
+    // still false, so it can never fire against a page that already
+    // rendered successfully.
+    let painted = false;
+    let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
+    const clearRenderTimeout = () => {
+      if (timeoutHandle) { clearTimeout(timeoutHandle); timeoutHandle = null; }
+    };
+
+    // The visible page + its text layer — bounded by RENDER_TIMEOUT_MS
+    // in attempt() below, with one automatic retry on hang or thrown
+    // error (see the "Render timeout / retry safety net" comment up
+    // top). Background neighbor preloading (preloadNeighbors, below) is
+    // deliberately NOT part of this contract — it's best-effort and must
+    // never block or fail the visible page.
+    async function renderCritical(): Promise<{ pdf: any; pdfjsLib: any } | null> {
       const cache = pageCacheRef.current;
-      try {
-        const pdfjsLib = await import("pdfjs-dist");
-        pdfjsLib.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
-        if (isCancelled()) return;
+      const pdfjsLib = await import("pdfjs-dist");
+      pdfjsLib.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
+      if (isCancelled()) return null;
 
-        // standardFontDataUrl is required whenever a page references a
-        // non-embedded standard PDF font — without it, render() doesn't
-        // fail, it hangs indefinitely on that page (same root cause
-        // documented in lib/coverManager.ts for chandrayaan-3.pdf's
-        // cover). A no-op for pages that don't need it.
-        const pdf = await pdfjsLib.getDocument({ url: pdfPath, standardFontDataUrl: "/standard_fonts/" }).promise;
-        if (isCancelled()) return;
+      // standardFontDataUrl is required whenever a page references a
+      // non-embedded standard PDF font — without it, render() doesn't
+      // fail, it hangs indefinitely on that page (same root cause
+      // documented in lib/coverManager.ts for chandrayaan-3.pdf's
+      // cover). A no-op for pages that don't need it.
+      const pdf = await pdfjsLib.getDocument({ url: pdfPath, standardFontDataUrl: "/standard_fonts/" }).promise;
+      if (isCancelled()) return null;
 
-        const extractedTexts: Record<number, string> = {};
+      const extractedTexts: Record<number, string> = {};
 
-        if (!isSpread) {
-          if (!canvasRef.current) return;
-          const key = `${pdfPath}::${safePage}::s`;
-          const cached = cache.get(key);
-          if (!cached) setLoading(true);
-          const entry = cached ?? await getOrRenderPage(cache, key, pdf, safePage, pdfjsLib, PAGE_MAX_W, PAGE_MAX_H, isCancelled);
-          if (isCancelled()) return;
-          setLoading(false);
-          if (entry) {
-            paintEntry(entry, canvasRef.current, textRef.current);
-            setSingleSize({ w: entry.cssW, h: entry.cssH });
-            extractedTexts[safePage] = entry.text;
-            pulseEnter(direction, isCancelled);
-            if (!renderedCallbackFired.current) {
-              renderedCallbackFired.current = true;
-              requestAnimationFrame(() => {
-                const card = bookCardRef.current;
-                onPageRendered?.(entry.cssW, entry.cssH, card?.clientWidth || 0, card?.clientHeight || 0);
-              });
-            }
-          }
-        } else {
-          const halfW = Math.floor(PAGE_MAX_W * 0.50);
-          const lKey = `${pdfPath}::${safePage}::l`;
-          const rKey = `${pdfPath}::${rightPage}::r`;
-          const lCached = cache.get(lKey);
-          const rCached = rightPage <= total ? cache.get(rKey) : null;
-          if (!lCached || (rightPage <= total && !rCached)) setLoading(true);
-          const [lResult, rResult] = await Promise.all([
-            lCached ?? (leftCanvasRef.current ? getOrRenderPage(cache, lKey, pdf, safePage, pdfjsLib, halfW, PAGE_MAX_H, isCancelled) : Promise.resolve(null)),
-            rCached ?? (rightPage <= total && rightCanvasRef.current ? getOrRenderPage(cache, rKey, pdf, rightPage, pdfjsLib, halfW, PAGE_MAX_H, isCancelled) : Promise.resolve(null)),
-          ]);
-          if (isCancelled()) return;
-          setLoading(false);
-          if (lResult && leftCanvasRef.current) { paintEntry(lResult, leftCanvasRef.current, leftTextRef.current); setLeftSize({ w: lResult.cssW, h: lResult.cssH }); extractedTexts[safePage] = lResult.text; }
-          if (rResult && rightCanvasRef.current) { paintEntry(rResult, rightCanvasRef.current, rightTextRef.current); setRightSize({ w: rResult.cssW, h: rResult.cssH }); extractedTexts[rightPage] = rResult.text; }
-          if (lResult || rResult) {
-            pulseEnter(direction, isCancelled);
-            if (!renderedCallbackFired.current) {
-              renderedCallbackFired.current = true;
-              const totalW = (lResult?.cssW || 0) + (rResult?.cssW || 0) + 4;
-              const maxH   = Math.max(lResult?.cssH || 0, rResult?.cssH || 0);
-              requestAnimationFrame(() => {
-                const card = bookCardRef.current;
-                onPageRendered?.(totalW, maxH, card?.clientWidth || 0, card?.clientHeight || 0);
-              });
-            }
+      if (!isSpread) {
+        if (!canvasRef.current) return { pdf, pdfjsLib };
+        const key = `${pdfPath}::${safePage}::s`;
+        const cached = cache.get(key);
+        if (!cached) setLoading(true);
+        const entry = cached ?? await getOrRenderPage(cache, key, pdf, safePage, pdfjsLib, PAGE_MAX_W, PAGE_MAX_H, isCancelled);
+        if (isCancelled()) return null;
+        setLoading(false);
+        if (entry) {
+          paintEntry(entry, canvasRef.current, textRef.current);
+          setSingleSize({ w: entry.cssW, h: entry.cssH });
+          painted = true;
+          extractedTexts[safePage] = entry.text;
+          pulseEnter(direction, isCancelled);
+          if (!renderedCallbackFired.current) {
+            renderedCallbackFired.current = true;
+            requestAnimationFrame(() => {
+              const card = bookCardRef.current;
+              onPageRendered?.(entry.cssW, entry.cssH, card?.clientWidth || 0, card?.clientHeight || 0);
+            });
           }
         }
-
-        if (!isCancelled() && Object.keys(extractedTexts).length > 0) {
-          onTextExtracted?.(extractedTexts);
-        }
-
-        // ── Background preload of adjacent pages ─────────────────────
-        // Starts only after the current page above is fully painted, and
-        // renders sequentially (not in parallel) so it never competes
-        // with a fresh user-triggered navigation for CPU. Each iteration
-        // re-checks isCancelled() so a new page/book change aborts it.
-        if (!isCancelled()) {
-          const neighbors: Array<{ pageNo: number; key: string; maxW: number; maxH: number }> = [];
-          if (!isSpread) {
-            if (safePage + 1 <= total) neighbors.push({ pageNo: safePage + 1, key: `${pdfPath}::${safePage + 1}::s`, maxW: PAGE_MAX_W, maxH: PAGE_MAX_H });
-            if (safePage - 1 >= 1)     neighbors.push({ pageNo: safePage - 1, key: `${pdfPath}::${safePage - 1}::s`, maxW: PAGE_MAX_W, maxH: PAGE_MAX_H });
-          } else {
-            const halfW = Math.floor(PAGE_MAX_W * 0.50);
-            const nextLeft = safePage + 2, prevLeft = safePage - 2;
-            if (nextLeft <= total) {
-              neighbors.push({ pageNo: nextLeft, key: `${pdfPath}::${nextLeft}::l`, maxW: halfW, maxH: PAGE_MAX_H });
-              if (nextLeft + 1 <= total) neighbors.push({ pageNo: nextLeft + 1, key: `${pdfPath}::${nextLeft + 1}::r`, maxW: halfW, maxH: PAGE_MAX_H });
-            }
-            if (prevLeft >= 1) {
-              neighbors.push({ pageNo: prevLeft, key: `${pdfPath}::${prevLeft}::l`, maxW: halfW, maxH: PAGE_MAX_H });
-              if (prevLeft + 1 <= total) neighbors.push({ pageNo: prevLeft + 1, key: `${pdfPath}::${prevLeft + 1}::r`, maxW: halfW, maxH: PAGE_MAX_H });
-            }
-          }
-          for (const n of neighbors) {
-            if (isCancelled()) break;
-            if (cache.has(n.key)) continue;
-            await getOrRenderPage(cache, n.key, pdf, n.pageNo, pdfjsLib, n.maxW, n.maxH, isCancelled);
+      } else {
+        const halfW = Math.floor(PAGE_MAX_W * 0.50);
+        const lKey = `${pdfPath}::${safePage}::l`;
+        const rKey = `${pdfPath}::${rightPage}::r`;
+        const lCached = cache.get(lKey);
+        const rCached = rightPage <= total ? cache.get(rKey) : null;
+        if (!lCached || (rightPage <= total && !rCached)) setLoading(true);
+        const [lResult, rResult] = await Promise.all([
+          lCached ?? (leftCanvasRef.current ? getOrRenderPage(cache, lKey, pdf, safePage, pdfjsLib, halfW, PAGE_MAX_H, isCancelled) : Promise.resolve(null)),
+          rCached ?? (rightPage <= total && rightCanvasRef.current ? getOrRenderPage(cache, rKey, pdf, rightPage, pdfjsLib, halfW, PAGE_MAX_H, isCancelled) : Promise.resolve(null)),
+        ]);
+        if (isCancelled()) return null;
+        setLoading(false);
+        if (lResult && leftCanvasRef.current) { paintEntry(lResult, leftCanvasRef.current, leftTextRef.current); setLeftSize({ w: lResult.cssW, h: lResult.cssH }); extractedTexts[safePage] = lResult.text; }
+        if (rResult && rightCanvasRef.current) { paintEntry(rResult, rightCanvasRef.current, rightTextRef.current); setRightSize({ w: rResult.cssW, h: rResult.cssH }); extractedTexts[rightPage] = rResult.text; }
+        if (lResult || rResult) {
+          painted = true;
+          pulseEnter(direction, isCancelled);
+          if (!renderedCallbackFired.current) {
+            renderedCallbackFired.current = true;
+            const totalW = (lResult?.cssW || 0) + (rResult?.cssW || 0) + 4;
+            const maxH   = Math.max(lResult?.cssH || 0, rResult?.cssH || 0);
+            requestAnimationFrame(() => {
+              const card = bookCardRef.current;
+              onPageRendered?.(totalW, maxH, card?.clientWidth || 0, card?.clientHeight || 0);
+            });
           }
         }
-      } catch (err) {
-        console.error("PDF render error:", err);
-        if (!cancelled && renderIdRef.current === id) setLoading(false);
+      }
+
+      if (!isCancelled() && Object.keys(extractedTexts).length > 0) {
+        onTextExtracted?.(extractedTexts);
+      }
+
+      return { pdf, pdfjsLib };
+    }
+
+    // Background preload of adjacent pages — starts only after the
+    // current page above is fully painted, and renders sequentially (not
+    // in parallel) so it never competes with a fresh user-triggered
+    // navigation for CPU. Each iteration re-checks isCancelled() so a new
+    // page/book change aborts it. Best-effort only: any failure here is
+    // swallowed by the .catch() at the call site below and never affects
+    // `failed`/loading state — the visible page has already painted by
+    // the time this runs.
+    async function preloadNeighbors(pdf: any, pdfjsLib: any) {
+      const cache = pageCacheRef.current;
+      const neighbors: Array<{ pageNo: number; key: string; maxW: number; maxH: number }> = [];
+      if (!isSpread) {
+        if (safePage + 1 <= total) neighbors.push({ pageNo: safePage + 1, key: `${pdfPath}::${safePage + 1}::s`, maxW: PAGE_MAX_W, maxH: PAGE_MAX_H });
+        if (safePage - 1 >= 1)     neighbors.push({ pageNo: safePage - 1, key: `${pdfPath}::${safePage - 1}::s`, maxW: PAGE_MAX_W, maxH: PAGE_MAX_H });
+      } else {
+        const halfW = Math.floor(PAGE_MAX_W * 0.50);
+        const nextLeft = safePage + 2, prevLeft = safePage - 2;
+        if (nextLeft <= total) {
+          neighbors.push({ pageNo: nextLeft, key: `${pdfPath}::${nextLeft}::l`, maxW: halfW, maxH: PAGE_MAX_H });
+          if (nextLeft + 1 <= total) neighbors.push({ pageNo: nextLeft + 1, key: `${pdfPath}::${nextLeft + 1}::r`, maxW: halfW, maxH: PAGE_MAX_H });
+        }
+        if (prevLeft >= 1) {
+          neighbors.push({ pageNo: prevLeft, key: `${pdfPath}::${prevLeft}::l`, maxW: halfW, maxH: PAGE_MAX_H });
+          if (prevLeft + 1 <= total) neighbors.push({ pageNo: prevLeft + 1, key: `${pdfPath}::${prevLeft + 1}::r`, maxW: halfW, maxH: PAGE_MAX_H });
+        }
+      }
+      for (const n of neighbors) {
+        if (isCancelled()) break;
+        if (cache.has(n.key)) continue;
+        await getOrRenderPage(cache, n.key, pdf, n.pageNo, pdfjsLib, n.maxW, n.maxH, isCancelled);
       }
     }
 
-    go();
-    return () => { cancelled = true; };
-  }, [pdfPath, safePage, isSpread, total]); // eslint-disable-line
+    // ── Bounded attempt with one automatic retry ────────────────────────
+    // attemptNumber 1 = the normal first try; 2 = the single automatic
+    // retry after a hang or thrown error. Once attemptNumber reaches
+    // RENDER_MAX_ATTEMPTS and still fails, `failed` is set — never a
+    // further automatic retry (that's the manual Retry button's job).
+    function attempt(attemptNumber: number) {
+      painted = false;
+      clearRenderTimeout();
+      timeoutHandle = setTimeout(() => {
+        timeoutHandle = null;
+        if (isCancelled() || painted) return; // already succeeded, or superseded by a newer attempt/page — nothing to do
+        // This attempt hung — invalidate it (its eventual settlement, if
+        // any, becomes a no-op below via isCancelled()) and either retry
+        // once or surface the failure state.
+        id = ++renderIdRef.current;
+        if (attemptNumber < RENDER_MAX_ATTEMPTS) {
+          attempt(attemptNumber + 1);
+        } else {
+          setLoading(false);
+          setFailed(true);
+        }
+      }, RENDER_TIMEOUT_MS);
+
+      renderCritical()
+        .then((docRef) => {
+          // A newer attempt or a page/book change already superseded
+          // this one — leave its timer alone (it belongs to whatever is
+          // current now) and do nothing else.
+          if (isCancelled()) return;
+          clearRenderTimeout();
+          if (docRef && painted) {
+            preloadNeighbors(docRef.pdf, docRef.pdfjsLib).catch(() => { /* best-effort, never surfaced as a failure */ });
+          } else if (!painted) {
+            // Resolved without ever painting (e.g. a ref not yet
+            // attached) — nothing will appear on its own; treat exactly
+            // like a hang/error rather than leaving the reader stuck.
+            if (attemptNumber < RENDER_MAX_ATTEMPTS) {
+              id = ++renderIdRef.current;
+              attempt(attemptNumber + 1);
+            } else {
+              setLoading(false);
+              setFailed(true);
+            }
+          }
+        })
+        .catch((err) => {
+          if (isCancelled()) return;
+          console.error("PDF render error:", err);
+          clearRenderTimeout();
+          id = ++renderIdRef.current;
+          if (attemptNumber < RENDER_MAX_ATTEMPTS) {
+            attempt(attemptNumber + 1);
+          } else {
+            setLoading(false);
+            setFailed(true);
+          }
+        });
+    }
+
+    attempt(1);
+    return () => { cancelled = true; clearRenderTimeout(); };
+  }, [pdfPath, safePage, isSpread, total, retryToken]); // eslint-disable-line
 
   const zoomTransform = `translate(${pan.x}px, ${pan.y}px) scale(${zoom / 100})`;
 
@@ -673,7 +774,25 @@ export default function PdfBookSpread({
               navigation keeps the outgoing page on screen and shows just
               this small corner badge instead, per the "no blank frame"
               requirement. */}
-          {loading && !singleSize && !leftSize && !rightSize && (
+          {/* ── Render failure — replaces the loading UI entirely after
+              the automatic retry also fails. Never a silent/indefinite
+              spinner: this is always reachable via Retry. */}
+          {failed && (
+            <div className="absolute inset-0 z-30 flex items-center justify-center bg-[#fffaf0]/95 ndl-fade-in-scale">
+              <div className="flex max-w-[280px] flex-col items-center gap-3 px-6 text-center">
+                <div className="flex h-14 w-14 items-center justify-center rounded-full bg-red-50 text-2xl">⚠️</div>
+                <p className="text-sm font-bold text-slate-600">{t.premiumReaderPageRenderFailed}</p>
+                <button
+                  type="button"
+                  onClick={() => setRetryToken((n) => n + 1)}
+                  className="ndl-press rounded-full bg-orange-600 px-5 py-2 text-xs font-bold text-white shadow hover:bg-orange-700"
+                >
+                  🔄 {t.commonRetry}
+                </button>
+              </div>
+            </div>
+          )}
+          {!failed && loading && !singleSize && !leftSize && !rightSize && (
             <div className="absolute inset-0 z-30 flex items-center justify-center bg-[#fffaf0]/90 ndl-fade-in-scale">
               <div className="flex flex-col items-center gap-3">
                 <div className="ndl-skeleton h-[520px] w-[380px] rounded-[1.5rem] shadow-lg" />
@@ -684,7 +803,7 @@ export default function PdfBookSpread({
               </div>
             </div>
           )}
-          {loading && (singleSize || leftSize || rightSize) && (
+          {!failed && loading && (singleSize || leftSize || rightSize) && (
             <div className="absolute right-4 top-4 z-40 flex items-center gap-1.5 rounded-full bg-white/90 px-3 py-1 text-[11px] font-bold text-slate-500 shadow ndl-fade-in-scale">
               <div className="h-3 w-3 animate-spin rounded-full border-2 border-amber-200 border-t-amber-600" />
               {t.commonLoading}

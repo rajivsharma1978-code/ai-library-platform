@@ -465,6 +465,16 @@ export default function PremiumReaderPreviewContent() {
   }, []);
   const isMobileViewport = viewportWidth < 640;
 
+  // ── Phase C1: mobile toolbar "More" sheet ────────────────────────────
+  // Below 640px the top chrome collapses from 2 flex-wrap rows (5 visual
+  // rows once wrapped) into 2 fixed rows, with the less-frequently-used
+  // controls (Fit, Go-to-page, Text/Image select, Language) moved into
+  // this bottom sheet. Every control from the original strip still
+  // exists somewhere — nothing was removed, only regrouped. Desktop/
+  // tablet (isMobileViewport === false) render the original strip
+  // unchanged and never touch this state.
+  const [mobileMoreOpen, setMobileMoreOpen] = useState(false);
+
   // AI panel starts compact on ENTERING fullscreen (per spec), same
   // "force once on the false→true edge" pattern as ReaderNav's own
   // auto-collapse — the user's manual toggle keeps working normally
@@ -2306,112 +2316,247 @@ export default function PremiumReaderPreviewContent() {
             overscrollBehavior: "contain",
           }}
         >
-          {/* ── Top row: Back / title / printed-page badge. Same component
-              in both modes — fullscreen only compacts sizing/spacing via
-              the fs* tokens above, nothing is removed or hidden. ──────── */}
-          <div className={`mx-auto ${fsBarGapY} flex w-full max-w-[1340px] flex-shrink-0 items-center justify-between gap-3 px-1`}>
-              <div className="flex min-w-0 items-center gap-3">
-                <Link href="/"
-                  title={t.commonHome}
-                  aria-label={t.commonHome}
-                  className={`ndl-press inline-flex ${fsBtnH} ${fsSquareW} items-center justify-center rounded-full bg-white ${fsBtnText} font-bold text-slate-700 shadow ring-1 ring-slate-200 hover:bg-amber-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-500`}>
+          {!isMobileViewport ? (
+            <>
+              {/* ── Top row: Back / title / printed-page badge. Same component
+                  in both modes — fullscreen only compacts sizing/spacing via
+                  the fs* tokens above, nothing is removed or hidden. ──────── */}
+              <div className={`mx-auto ${fsBarGapY} flex w-full max-w-[1340px] flex-shrink-0 items-center justify-between gap-3 px-1`}>
+                  <div className="flex min-w-0 items-center gap-3">
+                    <Link href="/"
+                      title={t.commonHome}
+                      aria-label={t.commonHome}
+                      className={`ndl-press inline-flex ${fsBtnH} ${fsSquareW} items-center justify-center rounded-full bg-white ${fsBtnText} font-bold text-slate-700 shadow ring-1 ring-slate-200 hover:bg-amber-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-500`}>
+                      <span aria-hidden="true">🏠</span>
+                    </Link>
+                    <Link href="/library"
+                      className={`ndl-press inline-flex ${fsBtnH} items-center gap-1 rounded-full bg-white px-3 ${fsBtnText} font-bold text-slate-700 shadow ring-1 ring-slate-200 hover:bg-amber-50`}>
+                      ← {t.commonBack}
+                    </Link>
+                    <h1 className={`truncate font-black text-slate-900 ${isFullscreenLayout ? "text-sm" : "text-base"}`}>{book}</h1>
+                  </div>
+                  <div className="flex flex-shrink-0 items-center gap-2">
+                    {isUploadedBook && (
+                      <Link href={`/read?source=upload&id=${bookId}&page=${readerPage}`}
+                        title={t.readerReadNormally}
+                        className={`ndl-press inline-flex ${fsBtnH} items-center gap-1 rounded-full bg-white px-3 ${fsBtnText} font-bold text-slate-700 shadow ring-1 ring-slate-200 hover:bg-amber-50`}>
+                        📖 {t.readerReadNormally}
+                      </Link>
+                    )}
+                    {displayLabel && (
+                      <span className={`rounded-full bg-white px-3 ${isFullscreenLayout ? "py-1" : "py-1.5"} ${fsBtnText} font-bold text-slate-600 shadow ring-1 ring-amber-100`}>
+                        {displayLabel}
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+              {/* ── Controls strip — page-level tools, grouped into logical
+                  clusters (Read Aloud / View / Navigate / Selection / Save)
+                  separated by whitespace + a hairline divider rather than one
+                  long row of visually identical buttons. Zoom lives here ONLY
+                  — the bottom reading bar no longer duplicates it (Phase D
+                  Task 1). Same component and handlers in fullscreen — only
+                  sizing/spacing compacts via the fs* tokens (Phase D Task 4),
+                  no control is removed. ──────────────────────────────────── */}
+              <div className={`mx-auto ${fsBarGapY} flex w-full max-w-[1340px] flex-shrink-0 flex-wrap items-center ${fsGroupGap} px-1`}>
+                <div className="flex items-center gap-1.5">
+                  <button onClick={handleReadPage} disabled={speechState === "loading"}
+                    title={t.premiumReaderReadPageTitle}
+                    className={`ndl-press inline-flex ${fsBtnH} items-center gap-1.5 rounded-full bg-slate-900 px-4 ${fsBtnText} font-bold text-white shadow hover:bg-slate-800 disabled:opacity-50`}>
+                    {readLabel}
+                  </button>
+                  {(speechState === "speaking" || speechState === "paused") && (
+                    <button onClick={handleStopReadAloud}
+                      className={`ndl-press inline-flex ${fsBtnH} items-center gap-1.5 rounded-full bg-red-600 px-4 ${fsBtnText} font-bold text-white shadow hover:bg-red-700`}>⏹ {t.premiumReaderStop}</button>
+                  )}
+                </div>
+                <span className="h-5 w-px bg-amber-200/70" />
+
+                <div className="flex items-center gap-1.5">
+                  <button onClick={() => setZoom(z => Math.max(z - ZOOM_STEP, ZOOM_MIN))} disabled={zoom <= ZOOM_MIN}
+                    title={t.premiumReaderZoomOutTitle}
+                    className={`ndl-press inline-flex ${fsBtnH} ${fsSquareW} items-center justify-center rounded-full bg-amber-50/70 ${fsBtnText} font-bold text-slate-700 ring-1 ring-amber-100 hover:bg-amber-100 disabled:opacity-40`}>−</button>
+                  <span className="min-w-[40px] text-center text-xs font-bold tabular-nums text-slate-600 transition-all duration-150">{zoom}%</span>
+                  <button onClick={() => setZoom(z => Math.min(z + ZOOM_STEP, ZOOM_MAX))} disabled={zoom >= ZOOM_MAX}
+                    title={t.premiumReaderZoomInTitle}
+                    className={`ndl-press inline-flex ${fsBtnH} ${fsSquareW} items-center justify-center rounded-full bg-amber-50/70 ${fsBtnText} font-bold text-slate-700 ring-1 ring-amber-100 hover:bg-amber-100 disabled:opacity-40`}>+</button>
+                  <button onClick={fitScreen}
+                    className={`ndl-press inline-flex ${fsBtnH} items-center rounded-full bg-amber-50/70 px-4 ${fsBtnText} font-bold text-slate-700 ring-1 ring-amber-100 hover:bg-amber-100`}>{t.premiumReaderFit}</button>
+                </div>
+                <span className="h-5 w-px bg-amber-200/70" />
+
+                <form onSubmit={(e) => { e.preventDefault(); goToPage(goToInput); }} className="flex items-center gap-1.5">
+                  <input type="number" min={1}
+                    value={goToInput}
+                    onChange={(e) => setGoToInput(e.target.value)}
+                    placeholder={t.premiumReaderGoToPagePlaceholder}
+                    title={t.premiumReaderGoToPageTitle}
+                    className={`${fsBtnH} w-20 rounded-full bg-white px-3 ${fsBtnText} text-slate-800 ring-1 ring-slate-200 outline-none transition-shadow focus:ring-2 focus:ring-amber-400`} />
+                  <button type="submit"
+                    className={`ndl-press inline-flex ${fsBtnH} items-center rounded-full bg-amber-50/70 px-3 ${fsBtnText} font-bold text-slate-700 ring-1 ring-amber-100 hover:bg-amber-100`}>{t.premiumReaderGo}</button>
+                </form>
+                <span className="h-5 w-px bg-amber-200/70" />
+
+                {/* Mode buttons — ALL use switchInteractionMode via toggleMode */}
+                <div className="flex items-center gap-1.5">
+                  <button onClick={() => toggleMode("text")}
+                    className={`ndl-press inline-flex ${fsBtnH} items-center gap-1.5 rounded-full px-4 ${fsBtnText} font-bold ${
+                      textSelectMode ? "bg-orange-600 text-white shadow" : "bg-amber-50/70 text-slate-700 ring-1 ring-amber-100 hover:bg-amber-100"}`}>
+                    {textSelectMode ? `📖 ${t.premiumReaderPageTurn}` : `📝 ${t.premiumReaderTextSelect}`}
+                  </button>
+                  <button onClick={() => toggleMode("image")}
+                    className={`ndl-press inline-flex ${fsBtnH} items-center gap-1.5 rounded-full px-4 ${fsBtnText} font-bold ${
+                      imageSelectMode ? "bg-slate-900 text-white shadow" : "bg-amber-50/70 text-slate-700 ring-1 ring-amber-100 hover:bg-amber-100"}`}>
+                    {imageSelectMode ? `✕ ${t.commonCancel}` : `📐 ${t.premiumReaderImageSelect}`}
+                  </button>
+                </div>
+                <span className="h-5 w-px bg-amber-200/70" />
+
+                <div className="flex items-center gap-1.5">
+                  {/* Phase 2 — Feature 4: Bookmarks. Bookmarks the CURRENT page;
+                      tapping again while already bookmarked removes it. */}
+                  <button onClick={toggleBookmarkCurrentPage}
+                    className={`ndl-press inline-flex ${fsBtnH} items-center gap-1.5 rounded-full px-4 ${fsBtnText} font-bold ${
+                      isCurrentPageBookmarked ? "bg-amber-500 text-white shadow" : "bg-amber-50/70 text-slate-700 ring-1 ring-amber-100 hover:bg-amber-100"}`}>
+                    {isCurrentPageBookmarked ? `🔖 ${t.premiumReaderBookmarked}` : `🔖 ${t.premiumReaderBookmark}`}
+                  </button>
+                  <LanguagePopover language={language} onLanguageChange={setLanguage} availableLanguages={availableToolbarLanguages} />
+                </div>
+              </div>
+            </>
+          ) : (
+            <>
+              {/* ── Phase C1: mobile compact header — Home, Back, Title,
+                  page badge. One row instead of top row's separate
+                  Home/Back/title/badge cluster. ──────────────────────── */}
+              <div className="mx-auto mb-1.5 flex w-full max-w-[1340px] flex-shrink-0 items-center gap-2 px-1">
+                <Link href="/" title={t.commonHome} aria-label={t.commonHome}
+                  className="ndl-press inline-flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-white text-xs font-bold text-slate-700 shadow ring-1 ring-slate-200 hover:bg-amber-50">
                   <span aria-hidden="true">🏠</span>
                 </Link>
-                <Link href="/library"
-                  className={`ndl-press inline-flex ${fsBtnH} items-center gap-1 rounded-full bg-white px-3 ${fsBtnText} font-bold text-slate-700 shadow ring-1 ring-slate-200 hover:bg-amber-50`}>
-                  ← {t.commonBack}
+                <Link href="/library" title={t.commonBack} aria-label={t.commonBack}
+                  className="ndl-press inline-flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-white text-sm font-bold text-slate-700 shadow ring-1 ring-slate-200 hover:bg-amber-50">
+                  ←
                 </Link>
-                <h1 className={`truncate font-black text-slate-900 ${isFullscreenLayout ? "text-sm" : "text-base"}`}>{book}</h1>
-              </div>
-              <div className="flex flex-shrink-0 items-center gap-2">
-                {isUploadedBook && (
-                  <Link href={`/read?source=upload&id=${bookId}&page=${readerPage}`}
-                    title={t.readerReadNormally}
-                    className={`ndl-press inline-flex ${fsBtnH} items-center gap-1 rounded-full bg-white px-3 ${fsBtnText} font-bold text-slate-700 shadow ring-1 ring-slate-200 hover:bg-amber-50`}>
-                    📖 {t.readerReadNormally}
-                  </Link>
-                )}
+                <h1 className="min-w-0 flex-1 truncate text-sm font-black text-slate-900">{book}</h1>
                 {displayLabel && (
-                  <span className={`rounded-full bg-white px-3 ${isFullscreenLayout ? "py-1" : "py-1.5"} ${fsBtnText} font-bold text-slate-600 shadow ring-1 ring-amber-100`}>
+                  <span className="flex-shrink-0 rounded-full bg-white px-2.5 py-1 text-[11px] font-bold text-slate-600 shadow ring-1 ring-amber-100">
                     {displayLabel}
                   </span>
                 )}
               </div>
-            </div>
 
-          {/* ── Controls strip — page-level tools, grouped into logical
-              clusters (Read Aloud / View / Navigate / Selection / Save)
-              separated by whitespace + a hairline divider rather than one
-              long row of visually identical buttons. Zoom lives here ONLY
-              — the bottom reading bar no longer duplicates it (Phase D
-              Task 1). Same component and handlers in fullscreen — only
-              sizing/spacing compacts via the fs* tokens (Phase D Task 4),
-              no control is removed. ──────────────────────────────────── */}
-          <div className={`mx-auto ${fsBarGapY} flex w-full max-w-[1340px] flex-shrink-0 flex-wrap items-center ${fsGroupGap} px-1`}>
-            <div className="flex items-center gap-1.5">
-              <button onClick={handleReadPage} disabled={speechState === "loading"}
-                title={t.premiumReaderReadPageTitle}
-                className={`ndl-press inline-flex ${fsBtnH} items-center gap-1.5 rounded-full bg-slate-900 px-4 ${fsBtnText} font-bold text-white shadow hover:bg-slate-800 disabled:opacity-50`}>
-                {readLabel}
-              </button>
-              {(speechState === "speaking" || speechState === "paused") && (
-                <button onClick={handleStopReadAloud}
-                  className={`ndl-press inline-flex ${fsBtnH} items-center gap-1.5 rounded-full bg-red-600 px-4 ${fsBtnText} font-bold text-white shadow hover:bg-red-700`}>⏹ {t.premiumReaderStop}</button>
+              {/* ── Phase C1: mobile primary strip — the handful of
+                  controls used on almost every page turn (Read Page,
+                  Zoom, Bookmark) stay one tap away; everything else moves
+                  into the "More" sheet below. Nothing is removed — every
+                  control from the desktop strip above still exists,
+                  just regrouped so this collapses to 2 rows instead of
+                  wrapping across 4-5. ──────────────────────────────────── */}
+              <div className="mx-auto mb-1.5 flex w-full max-w-[1340px] flex-shrink-0 items-center gap-1.5 px-1">
+                <button onClick={handleReadPage} disabled={speechState === "loading"}
+                  title={t.premiumReaderReadPageTitle} aria-label={t.premiumReaderReadPageTitle}
+                  className="ndl-press inline-flex h-9 flex-shrink-0 items-center gap-1 rounded-full bg-slate-900 px-3 text-xs font-bold text-white shadow hover:bg-slate-800 disabled:opacity-50">
+                  {readLabel}
+                </button>
+                {(speechState === "speaking" || speechState === "paused") && (
+                  <button onClick={handleStopReadAloud} title={t.premiumReaderStop} aria-label={t.premiumReaderStop}
+                    className="ndl-press inline-flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-red-600 text-xs font-bold text-white shadow hover:bg-red-700">⏹</button>
+                )}
+
+                <span className="h-5 w-px flex-shrink-0 bg-amber-200/70" />
+
+                <div className="flex flex-shrink-0 items-center gap-1">
+                  <button onClick={() => setZoom(z => Math.max(z - ZOOM_STEP, ZOOM_MIN))} disabled={zoom <= ZOOM_MIN}
+                    title={t.premiumReaderZoomOutTitle} aria-label={t.premiumReaderZoomOutTitle}
+                    className="ndl-press inline-flex h-9 w-9 items-center justify-center rounded-full bg-amber-50/70 text-xs font-bold text-slate-700 ring-1 ring-amber-100 hover:bg-amber-100 disabled:opacity-40">−</button>
+                  <span className="min-w-[32px] text-center text-[11px] font-bold tabular-nums text-slate-600">{zoom}%</span>
+                  <button onClick={() => setZoom(z => Math.min(z + ZOOM_STEP, ZOOM_MAX))} disabled={zoom >= ZOOM_MAX}
+                    title={t.premiumReaderZoomInTitle} aria-label={t.premiumReaderZoomInTitle}
+                    className="ndl-press inline-flex h-9 w-9 items-center justify-center rounded-full bg-amber-50/70 text-xs font-bold text-slate-700 ring-1 ring-amber-100 hover:bg-amber-100 disabled:opacity-40">+</button>
+                </div>
+
+                <div className="flex-1" />
+
+                <button onClick={toggleBookmarkCurrentPage}
+                  title={isCurrentPageBookmarked ? t.premiumReaderBookmarked : t.premiumReaderBookmark}
+                  aria-label={isCurrentPageBookmarked ? t.premiumReaderBookmarked : t.premiumReaderBookmark}
+                  className={`ndl-press inline-flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full text-sm ${
+                    isCurrentPageBookmarked ? "bg-amber-500 text-white shadow" : "bg-amber-50/70 text-slate-700 ring-1 ring-amber-100 hover:bg-amber-100"}`}>
+                  🔖
+                </button>
+                <button onClick={() => setMobileMoreOpen(true)}
+                  title={t.premiumReaderMoreTools} aria-label={t.premiumReaderMoreTools}
+                  className="ndl-press inline-flex h-9 flex-shrink-0 items-center gap-1 rounded-full bg-amber-50/70 px-3 text-xs font-bold text-slate-700 ring-1 ring-amber-100 hover:bg-amber-100">
+                  •••
+                </button>
+              </div>
+
+              {/* ── Phase C1: "More" bottom sheet — Fit, Go to page,
+                  Text/Image select, Language, Read Normally (when
+                  applicable). Every remaining desktop-strip control
+                  lives here, unchanged in behavior. ────────────────────── */}
+              {mobileMoreOpen && (
+                <>
+                  <div className="fixed inset-0 z-[160] bg-black/40" onClick={() => setMobileMoreOpen(false)} />
+                  <div className="fixed inset-x-0 bottom-0 z-[161] max-h-[70vh] overflow-y-auto rounded-t-3xl bg-white p-4 shadow-[0_-10px_40px_rgba(0,0,0,0.25)]" style={{ paddingBottom: "max(1rem, env(safe-area-inset-bottom))" }}>
+                    <div className="mx-auto mb-3 h-1 w-10 rounded-full bg-slate-200" />
+                    <div className="mb-3 flex items-center justify-between">
+                      <h2 className="text-sm font-black text-slate-900">{t.premiumReaderMoreTools}</h2>
+                      <button onClick={() => setMobileMoreOpen(false)} aria-label={t.commonClose} title={t.commonClose}
+                        className="ndl-press flex h-8 w-8 items-center justify-center rounded-full bg-slate-100 text-slate-600 hover:bg-slate-200">✕</button>
+                    </div>
+
+                    <div className="flex flex-col gap-3">
+                      {isUploadedBook && (
+                        <Link href={`/read?source=upload&id=${bookId}&page=${readerPage}`}
+                          onClick={() => setMobileMoreOpen(false)}
+                          className="ndl-press flex h-11 items-center justify-center gap-1.5 rounded-xl bg-white text-sm font-bold text-slate-700 shadow ring-1 ring-slate-200">
+                          📖 {t.readerReadNormally}
+                        </Link>
+                      )}
+
+                      <button onClick={fitScreen}
+                        className="ndl-press flex h-11 items-center justify-center gap-1.5 rounded-xl bg-amber-50/70 text-sm font-bold text-slate-700 ring-1 ring-amber-100">
+                        🔳 {t.premiumReaderFit}
+                      </button>
+
+                      <form onSubmit={(e) => { e.preventDefault(); goToPage(goToInput); setMobileMoreOpen(false); }}
+                        className="flex items-center gap-2">
+                        <input type="number" min={1}
+                          value={goToInput}
+                          onChange={(e) => setGoToInput(e.target.value)}
+                          placeholder={t.premiumReaderGoToPagePlaceholder}
+                          title={t.premiumReaderGoToPageTitle}
+                          className="h-11 flex-1 min-w-0 rounded-xl bg-slate-50 px-3 text-sm text-slate-800 ring-1 ring-slate-200 outline-none focus:ring-2 focus:ring-amber-400" />
+                        <button type="submit"
+                          className="ndl-press flex h-11 flex-shrink-0 items-center rounded-xl bg-amber-50/70 px-4 text-sm font-bold text-slate-700 ring-1 ring-amber-100">{t.premiumReaderGo}</button>
+                      </form>
+
+                      <div className="grid grid-cols-2 gap-2">
+                        <button onClick={() => toggleMode("text")}
+                          className={`ndl-press flex h-11 items-center justify-center gap-1.5 rounded-xl text-sm font-bold ${
+                            textSelectMode ? "bg-orange-600 text-white shadow" : "bg-amber-50/70 text-slate-700 ring-1 ring-amber-100"}`}>
+                          {textSelectMode ? `📖 ${t.premiumReaderPageTurn}` : `📝 ${t.premiumReaderTextSelect}`}
+                        </button>
+                        <button onClick={() => toggleMode("image")}
+                          className={`ndl-press flex h-11 items-center justify-center gap-1.5 rounded-xl text-sm font-bold ${
+                            imageSelectMode ? "bg-slate-900 text-white shadow" : "bg-amber-50/70 text-slate-700 ring-1 ring-amber-100"}`}>
+                          {imageSelectMode ? `✕ ${t.commonCancel}` : `📐 ${t.premiumReaderImageSelect}`}
+                        </button>
+                      </div>
+
+                      <div className="flex items-center justify-between rounded-xl bg-amber-50/70 px-3 py-2 ring-1 ring-amber-100">
+                        <span className="text-sm font-bold text-slate-700">🌐 {t.navLanguages}</span>
+                        <LanguagePopover language={language} onLanguageChange={setLanguage} availableLanguages={availableToolbarLanguages} />
+                      </div>
+                    </div>
+                  </div>
+                </>
               )}
-            </div>
-            <span className="h-5 w-px bg-amber-200/70" />
-
-            <div className="flex items-center gap-1.5">
-              <button onClick={() => setZoom(z => Math.max(z - ZOOM_STEP, ZOOM_MIN))} disabled={zoom <= ZOOM_MIN}
-                title={t.premiumReaderZoomOutTitle}
-                className={`ndl-press inline-flex ${fsBtnH} ${fsSquareW} items-center justify-center rounded-full bg-amber-50/70 ${fsBtnText} font-bold text-slate-700 ring-1 ring-amber-100 hover:bg-amber-100 disabled:opacity-40`}>−</button>
-              <span className="min-w-[40px] text-center text-xs font-bold tabular-nums text-slate-600 transition-all duration-150">{zoom}%</span>
-              <button onClick={() => setZoom(z => Math.min(z + ZOOM_STEP, ZOOM_MAX))} disabled={zoom >= ZOOM_MAX}
-                title={t.premiumReaderZoomInTitle}
-                className={`ndl-press inline-flex ${fsBtnH} ${fsSquareW} items-center justify-center rounded-full bg-amber-50/70 ${fsBtnText} font-bold text-slate-700 ring-1 ring-amber-100 hover:bg-amber-100 disabled:opacity-40`}>+</button>
-              <button onClick={fitScreen}
-                className={`ndl-press inline-flex ${fsBtnH} items-center rounded-full bg-amber-50/70 px-4 ${fsBtnText} font-bold text-slate-700 ring-1 ring-amber-100 hover:bg-amber-100`}>{t.premiumReaderFit}</button>
-            </div>
-            <span className="h-5 w-px bg-amber-200/70" />
-
-            <form onSubmit={(e) => { e.preventDefault(); goToPage(goToInput); }} className="flex items-center gap-1.5">
-              <input type="number" min={1}
-                value={goToInput}
-                onChange={(e) => setGoToInput(e.target.value)}
-                placeholder={t.premiumReaderGoToPagePlaceholder}
-                title={t.premiumReaderGoToPageTitle}
-                className={`${fsBtnH} w-20 rounded-full bg-white px-3 ${fsBtnText} text-slate-800 ring-1 ring-slate-200 outline-none transition-shadow focus:ring-2 focus:ring-amber-400`} />
-              <button type="submit"
-                className={`ndl-press inline-flex ${fsBtnH} items-center rounded-full bg-amber-50/70 px-3 ${fsBtnText} font-bold text-slate-700 ring-1 ring-amber-100 hover:bg-amber-100`}>{t.premiumReaderGo}</button>
-            </form>
-            <span className="h-5 w-px bg-amber-200/70" />
-
-            {/* Mode buttons — ALL use switchInteractionMode via toggleMode */}
-            <div className="flex items-center gap-1.5">
-              <button onClick={() => toggleMode("text")}
-                className={`ndl-press inline-flex ${fsBtnH} items-center gap-1.5 rounded-full px-4 ${fsBtnText} font-bold ${
-                  textSelectMode ? "bg-orange-600 text-white shadow" : "bg-amber-50/70 text-slate-700 ring-1 ring-amber-100 hover:bg-amber-100"}`}>
-                {textSelectMode ? `📖 ${t.premiumReaderPageTurn}` : `📝 ${t.premiumReaderTextSelect}`}
-              </button>
-              <button onClick={() => toggleMode("image")}
-                className={`ndl-press inline-flex ${fsBtnH} items-center gap-1.5 rounded-full px-4 ${fsBtnText} font-bold ${
-                  imageSelectMode ? "bg-slate-900 text-white shadow" : "bg-amber-50/70 text-slate-700 ring-1 ring-amber-100 hover:bg-amber-100"}`}>
-                {imageSelectMode ? `✕ ${t.commonCancel}` : `📐 ${t.premiumReaderImageSelect}`}
-              </button>
-            </div>
-            <span className="h-5 w-px bg-amber-200/70" />
-
-            <div className="flex items-center gap-1.5">
-              {/* Phase 2 — Feature 4: Bookmarks. Bookmarks the CURRENT page;
-                  tapping again while already bookmarked removes it. */}
-              <button onClick={toggleBookmarkCurrentPage}
-                className={`ndl-press inline-flex ${fsBtnH} items-center gap-1.5 rounded-full px-4 ${fsBtnText} font-bold ${
-                  isCurrentPageBookmarked ? "bg-amber-500 text-white shadow" : "bg-amber-50/70 text-slate-700 ring-1 ring-amber-100 hover:bg-amber-100"}`}>
-                {isCurrentPageBookmarked ? `🔖 ${t.premiumReaderBookmarked}` : `🔖 ${t.premiumReaderBookmark}`}
-              </button>
-              <LanguagePopover language={language} onLanguageChange={setLanguage} availableLanguages={availableToolbarLanguages} />
-            </div>
-          </div>
+            </>
+          )}
 
           {/* ── DRAG / SELECTION VISUAL OVERLAYS ───────────────
               Purely presentational — position:fixed, screen coords,

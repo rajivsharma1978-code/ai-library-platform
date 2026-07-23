@@ -92,6 +92,23 @@ export default function AccessibilityToolbar() {
   // fully inside the viewport.
   const { triggerRef, panelRef, placement } = useAdaptivePanelPlacement(open, 320);
 
+  // ── Phase C1: mobile presentation ────────────────────────────────────
+  // Below 640px the floating popover (which can grow to nearly full
+  // viewport height via computePanelPlacement's maxHeight) is replaced
+  // with a bounded bottom sheet instead, so a meaningful strip of the
+  // page — the book, in the Premium Reader — always stays visible above
+  // it, and every toggle/slider here still applies live to that same
+  // visible page (nothing about how settings apply changed, only this
+  // panel's own container size/position). Desktop/tablet are untouched:
+  // they keep using `placement` from the adaptive-position hook above.
+  const [isMobile, setIsMobile] = useState(false);
+  useEffect(() => {
+    function onResize() { setIsMobile(window.innerWidth < 640); }
+    onResize();
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+
   // isHydrated-style gate: SSR/first render always uses English text and
   // default settings (identical to what every page already renders today),
   // so this component can never cause a hydration mismatch. Real settings
@@ -187,15 +204,22 @@ export default function AccessibilityToolbar() {
         <div
           ref={panelRef}
           data-a11y-no-invert
-          style={{
+          style={isMobile ? undefined : {
             position: "fixed",
             top: placement?.top,
             left: placement?.left,
             maxHeight: placement?.maxHeight,
             visibility: placement ? "visible" : "hidden",
           }}
-          className={`w-80 max-w-[90vw] overflow-y-auto rounded-[1.75rem] p-5 shadow-[0_20px_60px_rgba(75,45,12,0.20)] ring-1 ring-black/5 ${settings.darkMode ? "bg-slate-900 text-white" : "bg-white text-slate-900"}`}
+          className={
+            isMobile
+              ? `fixed inset-x-0 bottom-0 z-[161] max-h-[55vh] w-full overflow-y-auto rounded-t-[1.75rem] p-5 shadow-[0_-10px_50px_rgba(75,45,12,0.25)] ring-1 ring-black/5 ${settings.darkMode ? "bg-slate-900 text-white" : "bg-white text-slate-900"}`
+              : `w-80 max-w-[90vw] overflow-y-auto rounded-[1.75rem] p-5 shadow-[0_20px_60px_rgba(75,45,12,0.20)] ring-1 ring-black/5 ${settings.darkMode ? "bg-slate-900 text-white" : "bg-white text-slate-900"}`
+          }
         >
+          {isMobile && (
+            <div className={`mx-auto mb-3 h-1 w-10 rounded-full ${settings.darkMode ? "bg-white/20" : "bg-slate-200"}`} />
+          )}
           <div className="mb-4 flex items-center justify-between">
             <h2 className="text-lg font-black">{t.toolbarLabel}</h2>
             <button
@@ -308,7 +332,7 @@ export default function AccessibilityToolbar() {
         onClick={() => setOpen(o => !o)}
         aria-label={t.toolbarLabel}
         title={t.toolbarLabel}
-        className="flex h-14 w-14 items-center justify-center rounded-full bg-orange-600 text-2xl text-white shadow-lg shadow-orange-500/30 transition-transform hover:-translate-y-0.5 hover:bg-orange-700"
+        className="flex h-11 w-11 items-center justify-center rounded-full bg-orange-600 text-xl text-white shadow-lg shadow-orange-500/30 transition-transform hover:-translate-y-0.5 hover:bg-orange-700"
       >
         ♿
       </button>

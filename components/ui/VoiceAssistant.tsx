@@ -233,7 +233,7 @@ export default function VoiceAssistant({ settings, stepFontScale, setToggle }: V
         onClick={() => (listening ? stopListening() : startListening())}
         aria-label={supported ? (listening ? t.voiceStopListening : t.voiceStartListening) : t.voiceUnsupported}
         title={supported ? (listening ? t.voiceStopListening : t.voiceStartListening) : t.voiceUnsupported}
-        className={`flex h-12 w-12 items-center justify-center rounded-full text-xl text-white shadow-lg transition-transform hover:-translate-y-0.5 ${
+        className={`flex h-11 w-11 items-center justify-center rounded-full text-lg text-white shadow-lg transition-transform hover:-translate-y-0.5 ${
           listening ? "animate-pulse bg-red-600 shadow-red-500/30" : "bg-slate-800 shadow-slate-500/30 hover:bg-slate-700"
         }`}
       >
