@@ -3,32 +3,40 @@ import { SiteHeader } from "./SiteHeader";
 import { HeroSection } from "./HeroSection";
 import { FeaturedBooks } from "./FeaturedBooks";
 import { NewArrivals } from "./NewArrivals";
+import { Recommendations } from "./Recommendations";
 import { AiTutors } from "./AiTutors";
 import { WhyNdlAi } from "./WhyNdlAi";
 import { SiteFooter } from "./SiteFooter";
 import AccessibilityToolbar from "@/components/ui/AccessibilityToolbar";
 
 // The public Home page is shown to anyone opening the URL, logged in or
-// not — so it deliberately carries no user-specific state. StatsDashboard
-// (trust numbers) and Recommendations (Continue Reading + Testimonials)
-// were part of earlier iterations of this page but are not rendered here:
-// Continue Reading is personal reading progress, which has no business on
-// a page an anonymous visitor can load, and Stats read as a dashboard-style
-// tile grid that fights this page's calmer, Airbnb-style rhythm. Neither
-// component was deleted — Continue Reading belongs in My Space or a future
-// authenticated Home state, and Stats may still suit an About/Impact page.
+// not — so StatsDashboard (trust numbers, dashboard-style tile grid) still
+// has no place here; it fights this page's calmer, Airbnb-style rhythm and
+// may suit an About/Impact page instead.
 //
-// Section order is deliberate: Hero → three distinct book-discovery rails
+// Recommendations (Continue Reading + Testimonials) WAS excluded here too
+// for the same anonymous-visitor reasoning — but it already renders a
+// labeled "Demo" placeholder instead of real personal data when there's no
+// stored reading progress (see its own usingDemoProgress logic), so an
+// anonymous visitor never actually sees anyone else's data. Phase B2 (Mobile
+// Home Experience) re-introduces it as a mobile-only section — Continue
+// Reading is the single most personally relevant thing Home can lead with
+// on a phone — while leaving desktop exactly as it was (`lg:hidden`).
+//
+// Section order (desktop, unchanged): Hero → three book-discovery rails
 // (Director Collection, the flagship; Featured Books; New Arrivals) →
-// AI-Powered Features → Why NDL AI as the closing, confident statement →
-// Footer. Every section is full-width and stacked — nothing sits side by
-// side with anything else.
+// AI-Powered Features → Why NDL AI → Footer. Recommendations only ever
+// renders in the mobile layout, positioned right after Hero to lead with
+// it, per its own internal comment ("Continue Reading... so it leads").
 export function HomePage() {
   return (
     <>
       <SiteHeader />
       <main>
         <HeroSection />
+        <div className="lg:hidden">
+          <Recommendations />
+        </div>
         <DirectorCollection />
         <FeaturedBooks />
         <NewArrivals />
