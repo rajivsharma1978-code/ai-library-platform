@@ -179,8 +179,19 @@ export default function VoiceAssistant({ settings, stepFontScale, setToggle }: V
   // components/ui/AccessibilityToolbar.tsx), so the mic button and the
   // ♿ button move together as one draggable stack instead of being two
   // separately-positioned floating elements.
+  //
+  // Phase C1C fix: this used to wrap its own button in a SECOND
+  // `flex flex-col gap-3` div nested inside FloatingControlsDock's own
+  // identical wrapper. On any browser that doesn't support flexbox `gap`
+  // (Safari < 14.1 — plausible on an older iPhone still in the field),
+  // BOTH nested gaps silently collapse to 0, leaving the ♿ and 🎙️
+  // buttons flush against each other with no spacing. Returning a plain
+  // fragment lets the buttons sit as flat siblings in the dock's own
+  // single flex column instead, so there's only one gap mechanism to get
+  // right (fixed below, in FloatingControlsDock.tsx, with a margin-based
+  // fallback that doesn't depend on `gap` support at all).
   return (
-    <div className="flex flex-col items-end gap-3">
+    <>
       {open && (
         <div
           ref={panelRef}
@@ -239,6 +250,6 @@ export default function VoiceAssistant({ settings, stepFontScale, setToggle }: V
       >
         🎙️
       </button>
-    </div>
+    </>
   );
 }

@@ -263,7 +263,14 @@ export default function FloatingControlsDock({ children }: { children: React.Rea
         zIndex: 9999,
         transition: animate ? "left 260ms cubic-bezier(0.22,1,0.36,1), top 260ms cubic-bezier(0.22,1,0.36,1)" : "none",
       }}
-      className="flex flex-col items-end gap-3"
+      // Phase C1C: margin-based spacing instead of flexbox `gap` — `gap`
+      // on a flex container isn't supported in Safari < 14.1 (an older
+      // iPhone can easily still be on that), where it silently collapses
+      // to 0 instead of degrading gracefully, leaving the ♿ and 🎙️
+      // triggers flush/overlapping. `[&>*+*]:mt-3` (margin-top on every
+      // child after the first) gives the same 12px stacking gap through
+      // plain margins, which every browser supports.
+      className="flex flex-col items-end [&>*+*]:mt-3"
     >
       {children}
     </div>,

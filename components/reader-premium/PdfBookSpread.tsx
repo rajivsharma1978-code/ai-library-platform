@@ -79,6 +79,64 @@ const PAGE_MAX_H = 700;
 const RENDER_TIMEOUT_MS = 12000;
 const RENDER_MAX_ATTEMPTS = 2;
 
+// ── Phase C1C: iOS/WebKit worker compatibility ───────────────────────
+// Real-device evidence (iPhone 11 Safari, production): the reader fails
+// almost immediately — not after the 12s timeout — meaning pdf.js's
+// Worker setup itself is throwing/rejecting fast on that platform, not
+// hanging. pdf.js's module Worker has a long-documented history of
+// misbehaving specifically on iOS/iPadOS WebKit — desktop Chrome/Edge/
+// Firefox and Android Chrome are unaffected.
+//
+// Verified against the installed pdfjs-dist@5.7.284 source directly
+// (node_modules/pdfjs-dist/build/pdf.mjs, class PDFWorker): there is no
+// public `disableWorker` option on getDocument()/DocumentInitParameters
+// in this version — that was a real option in older pdf.js majors but
+// was removed. What this version DOES have is a built-in, automatic
+// fallback: PDFWorker#initialize() already falls back to its internal
+// fake/main-thread worker on its own whenever the real
+// `new Worker(workerSrc, { type: "module" })` throws, errors, or fails
+// its "test"/"ready" handshake — see #setupFakeWorker() in that file.
+// That fallback is controlled by a genuine JS private class field
+// (#isWorkerDisabled) with no public setter anywhere in the package, so
+// there is no supported way to force it proactively from application
+// code in this version — this platform check is kept only for the
+// canvas-size cap below (MAX_OFFSCREEN_DIM_MOBILE_WEBKIT), which uses
+// the ordinary public getViewport() API and needs no worker involvement
+// at all.
+function isWebKitMobilePlatform(): boolean {
+  if (typeof navigator === "undefined") return false;
+  const ua = navigator.userAgent || "";
+  const isIOSDevice = /iPad|iPhone|iPod/.test(ua);
+  // iPadOS 13+ reports as "Macintosh" in the UA string but is still
+  // WebKit-only and touch-driven — maxTouchPoints distinguishes it from
+  // an actual Mac, which reports 0.
+  const isIPadOSDesktopMode = /Macintosh/.test(ua) && typeof navigator.maxTouchPoints === "number" && navigator.maxTouchPoints > 1;
+  return isIOSDevice || isIPadOSDesktopMode;
+}
+
+// Defensive-only cap on the offscreen render canvas's larger dimension,
+// applied ONLY on the WebKit-mobile platform above — iOS Safari has a
+// documented history of tighter per-canvas memory/size limits than
+// desktop browsers. Not confirmed as a cause of the observed failure
+// (unverified without real-device access), but cheap and safe to apply
+// alongside the worker fix. PAGE_MAX_H is 700 CSS px, so 2200px offscreen
+// still renders at well over 3x that for on-screen sharpness.
+const MAX_OFFSCREEN_DIM_MOBILE_WEBKIT = 2200;
+
+// Tags which pipeline stage threw, so the failure UI (and console) can
+// tell a genuine timeout apart from an immediate Worker/document/page
+// error instead of always saying "taking too long" — see attempt()'s
+// catch handler below.
+type RenderFailureStage = "worker-init" | "document-load" | "page-render";
+class StagedRenderError extends Error {
+  stage: RenderFailureStage;
+  constructor(stage: RenderFailureStage, cause: unknown) {
+    super(cause instanceof Error ? cause.message : String(cause));
+    this.name = "StagedRenderError";
+    this.stage = stage;
+  }
+}
+
 // ── Whitespace crop ─────────────────────────────────────────────────
 const SAMPLE_STEP = 2, WHITE_THRESHOLD = 245, SAFE_PADDING = 6, MIN_CROP_FRAC = 0.04;
 interface CropBox { x: number; y: number; w: number; h: number }
@@ -112,9 +170,18 @@ async function renderPdfPage(params: {
   const page = await pdf.getPage(pageNo);
   if (cancelled()) return null;
 
-  // Offscreen render at 2× for quality
+  // Offscreen render at 2× for quality — capped on WebKit-mobile only
+  // (see MAX_OFFSCREEN_DIM_MOBILE_WEBKIT above); every other browser,
+  // including desktop Chrome, keeps the exact same fixed 2× behavior it
+  // always had.
   const OS = 2;
-  const osVP = page.getViewport({ scale: OS });
+  let osVP = page.getViewport({ scale: OS });
+  if (isWebKitMobilePlatform()) {
+    const largerDim = Math.max(osVP.width, osVP.height);
+    if (largerDim > MAX_OFFSCREEN_DIM_MOBILE_WEBKIT) {
+      osVP = page.getViewport({ scale: OS * (MAX_OFFSCREEN_DIM_MOBILE_WEBKIT / largerDim) });
+    }
+  }
   const os = document.createElement("canvas");
   os.width = Math.ceil(osVP.width); os.height = Math.ceil(osVP.height);
   const osCtx = os.getContext("2d", { willReadFrequently: true })!;
@@ -454,6 +521,12 @@ export default function PdfBookSpread({
   // exact same page/book (it's otherwise a no-op dependency).
   const [failed, setFailed] = useState(false);
   const [retryToken, setRetryToken] = useState(0);
+  // Which stage the final failure came from — lets the UI say "taking
+  // too long" only for a genuine timeout, and a different message for an
+  // immediate Worker/document/page error (Phase C1C: iPhone Safari was
+  // reaching the failure state almost instantly, not after 12s, and it
+  // was still showing the timeout copy).
+  const [failureKind, setFailureKind] = useState<RenderFailureStage | "timeout" | null>(null);
 
   const safePage = Math.max(1, Number(pageNumber) || 1);
   const total    = Math.max(1, Number(totalPages)  || 1);
@@ -510,6 +583,7 @@ export default function PdfBookSpread({
 
     renderedCallbackFired.current = false;
     setFailed(false);
+    setFailureKind(null);
     // Deliberately NOT clearing singleSize/leftSize/rightSize here — the
     // canvas keeps showing the outgoing page's pixels until the new page
     // is actually ready to paint over it, so there is never a blank frame.
@@ -532,8 +606,14 @@ export default function PdfBookSpread({
     // never block or fail the visible page.
     async function renderCritical(): Promise<{ pdf: any; pdfjsLib: any } | null> {
       const cache = pageCacheRef.current;
-      const pdfjsLib = await import("pdfjs-dist");
-      pdfjsLib.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
+
+      let pdfjsLib: any;
+      try {
+        pdfjsLib = await import("pdfjs-dist");
+        pdfjsLib.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
+      } catch (err) {
+        throw new StagedRenderError("worker-init", err);
+      }
       if (isCancelled()) return null;
 
       // standardFontDataUrl is required whenever a page references a
@@ -541,61 +621,82 @@ export default function PdfBookSpread({
       // fail, it hangs indefinitely on that page (same root cause
       // documented in lib/coverManager.ts for chandrayaan-3.pdf's
       // cover). A no-op for pages that don't need it.
-      const pdf = await pdfjsLib.getDocument({ url: pdfPath, standardFontDataUrl: "/standard_fonts/" }).promise;
+      //
+      // No `disableWorker` here (Phase C1C) — confirmed against the
+      // installed pdfjs-dist@5.7.284 source that this option doesn't
+      // exist in this version's public API (see the long comment on
+      // isWebKitMobilePlatform() above). This installed version already
+      // falls back from a failing real Worker to its own internal fake
+      // worker automatically, with no flag needed — every browser,
+      // including iOS/WebKit-mobile, goes through the exact same call
+      // here.
+      let pdf: any;
+      try {
+        pdf = await pdfjsLib.getDocument({
+          url: pdfPath,
+          standardFontDataUrl: "/standard_fonts/",
+        }).promise;
+      } catch (err) {
+        throw new StagedRenderError("document-load", err);
+      }
       if (isCancelled()) return null;
 
       const extractedTexts: Record<number, string> = {};
 
-      if (!isSpread) {
-        if (!canvasRef.current) return { pdf, pdfjsLib };
-        const key = `${pdfPath}::${safePage}::s`;
-        const cached = cache.get(key);
-        if (!cached) setLoading(true);
-        const entry = cached ?? await getOrRenderPage(cache, key, pdf, safePage, pdfjsLib, PAGE_MAX_W, PAGE_MAX_H, isCancelled);
-        if (isCancelled()) return null;
-        setLoading(false);
-        if (entry) {
-          paintEntry(entry, canvasRef.current, textRef.current);
-          setSingleSize({ w: entry.cssW, h: entry.cssH });
-          painted = true;
-          extractedTexts[safePage] = entry.text;
-          pulseEnter(direction, isCancelled);
-          if (!renderedCallbackFired.current) {
-            renderedCallbackFired.current = true;
-            requestAnimationFrame(() => {
-              const card = bookCardRef.current;
-              onPageRendered?.(entry.cssW, entry.cssH, card?.clientWidth || 0, card?.clientHeight || 0);
-            });
+      try {
+        if (!isSpread) {
+          if (!canvasRef.current) return { pdf, pdfjsLib };
+          const key = `${pdfPath}::${safePage}::s`;
+          const cached = cache.get(key);
+          if (!cached) setLoading(true);
+          const entry = cached ?? await getOrRenderPage(cache, key, pdf, safePage, pdfjsLib, PAGE_MAX_W, PAGE_MAX_H, isCancelled);
+          if (isCancelled()) return null;
+          setLoading(false);
+          if (entry) {
+            paintEntry(entry, canvasRef.current, textRef.current);
+            setSingleSize({ w: entry.cssW, h: entry.cssH });
+            painted = true;
+            extractedTexts[safePage] = entry.text;
+            pulseEnter(direction, isCancelled);
+            if (!renderedCallbackFired.current) {
+              renderedCallbackFired.current = true;
+              requestAnimationFrame(() => {
+                const card = bookCardRef.current;
+                onPageRendered?.(entry.cssW, entry.cssH, card?.clientWidth || 0, card?.clientHeight || 0);
+              });
+            }
+          }
+        } else {
+          const halfW = Math.floor(PAGE_MAX_W * 0.50);
+          const lKey = `${pdfPath}::${safePage}::l`;
+          const rKey = `${pdfPath}::${rightPage}::r`;
+          const lCached = cache.get(lKey);
+          const rCached = rightPage <= total ? cache.get(rKey) : null;
+          if (!lCached || (rightPage <= total && !rCached)) setLoading(true);
+          const [lResult, rResult] = await Promise.all([
+            lCached ?? (leftCanvasRef.current ? getOrRenderPage(cache, lKey, pdf, safePage, pdfjsLib, halfW, PAGE_MAX_H, isCancelled) : Promise.resolve(null)),
+            rCached ?? (rightPage <= total && rightCanvasRef.current ? getOrRenderPage(cache, rKey, pdf, rightPage, pdfjsLib, halfW, PAGE_MAX_H, isCancelled) : Promise.resolve(null)),
+          ]);
+          if (isCancelled()) return null;
+          setLoading(false);
+          if (lResult && leftCanvasRef.current) { paintEntry(lResult, leftCanvasRef.current, leftTextRef.current); setLeftSize({ w: lResult.cssW, h: lResult.cssH }); extractedTexts[safePage] = lResult.text; }
+          if (rResult && rightCanvasRef.current) { paintEntry(rResult, rightCanvasRef.current, rightTextRef.current); setRightSize({ w: rResult.cssW, h: rResult.cssH }); extractedTexts[rightPage] = rResult.text; }
+          if (lResult || rResult) {
+            painted = true;
+            pulseEnter(direction, isCancelled);
+            if (!renderedCallbackFired.current) {
+              renderedCallbackFired.current = true;
+              const totalW = (lResult?.cssW || 0) + (rResult?.cssW || 0) + 4;
+              const maxH   = Math.max(lResult?.cssH || 0, rResult?.cssH || 0);
+              requestAnimationFrame(() => {
+                const card = bookCardRef.current;
+                onPageRendered?.(totalW, maxH, card?.clientWidth || 0, card?.clientHeight || 0);
+              });
+            }
           }
         }
-      } else {
-        const halfW = Math.floor(PAGE_MAX_W * 0.50);
-        const lKey = `${pdfPath}::${safePage}::l`;
-        const rKey = `${pdfPath}::${rightPage}::r`;
-        const lCached = cache.get(lKey);
-        const rCached = rightPage <= total ? cache.get(rKey) : null;
-        if (!lCached || (rightPage <= total && !rCached)) setLoading(true);
-        const [lResult, rResult] = await Promise.all([
-          lCached ?? (leftCanvasRef.current ? getOrRenderPage(cache, lKey, pdf, safePage, pdfjsLib, halfW, PAGE_MAX_H, isCancelled) : Promise.resolve(null)),
-          rCached ?? (rightPage <= total && rightCanvasRef.current ? getOrRenderPage(cache, rKey, pdf, rightPage, pdfjsLib, halfW, PAGE_MAX_H, isCancelled) : Promise.resolve(null)),
-        ]);
-        if (isCancelled()) return null;
-        setLoading(false);
-        if (lResult && leftCanvasRef.current) { paintEntry(lResult, leftCanvasRef.current, leftTextRef.current); setLeftSize({ w: lResult.cssW, h: lResult.cssH }); extractedTexts[safePage] = lResult.text; }
-        if (rResult && rightCanvasRef.current) { paintEntry(rResult, rightCanvasRef.current, rightTextRef.current); setRightSize({ w: rResult.cssW, h: rResult.cssH }); extractedTexts[rightPage] = rResult.text; }
-        if (lResult || rResult) {
-          painted = true;
-          pulseEnter(direction, isCancelled);
-          if (!renderedCallbackFired.current) {
-            renderedCallbackFired.current = true;
-            const totalW = (lResult?.cssW || 0) + (rResult?.cssW || 0) + 4;
-            const maxH   = Math.max(lResult?.cssH || 0, rResult?.cssH || 0);
-            requestAnimationFrame(() => {
-              const card = bookCardRef.current;
-              onPageRendered?.(totalW, maxH, card?.clientWidth || 0, card?.clientHeight || 0);
-            });
-          }
-        }
+      } catch (err) {
+        throw new StagedRenderError("page-render", err);
       }
 
       if (!isCancelled() && Object.keys(extractedTexts).length > 0) {
@@ -643,6 +744,17 @@ export default function PdfBookSpread({
     // retry after a hang or thrown error. Once attemptNumber reaches
     // RENDER_MAX_ATTEMPTS and still fails, `failed` is set — never a
     // further automatic retry (that's the manual Retry button's job).
+    // Schedules the next attempt on a fresh microtask instead of calling
+    // attempt() directly inline — Phase C1C: iPhone Safari was reaching
+    // the failure state almost instantly, consistent with BOTH attempts
+    // running back-to-back synchronously within the same catch/timeout
+    // callback when the underlying error is immediate rather than a real
+    // 12s hang. Deferring keeps each retry a genuinely separate task and
+    // guarantees this never recurses in the same call stack.
+    function scheduleRetry(attemptNumber: number) {
+      Promise.resolve().then(() => attempt(attemptNumber));
+    }
+
     function attempt(attemptNumber: number) {
       painted = false;
       clearRenderTimeout();
@@ -654,10 +766,11 @@ export default function PdfBookSpread({
         // once or surface the failure state.
         id = ++renderIdRef.current;
         if (attemptNumber < RENDER_MAX_ATTEMPTS) {
-          attempt(attemptNumber + 1);
+          scheduleRetry(attemptNumber + 1);
         } else {
           setLoading(false);
           setFailed(true);
+          setFailureKind("timeout");
         }
       }, RENDER_TIMEOUT_MS);
 
@@ -676,10 +789,11 @@ export default function PdfBookSpread({
             // like a hang/error rather than leaving the reader stuck.
             if (attemptNumber < RENDER_MAX_ATTEMPTS) {
               id = ++renderIdRef.current;
-              attempt(attemptNumber + 1);
+              scheduleRetry(attemptNumber + 1);
             } else {
               setLoading(false);
               setFailed(true);
+              setFailureKind("page-render");
             }
           }
         })
@@ -688,11 +802,17 @@ export default function PdfBookSpread({
           console.error("PDF render error:", err);
           clearRenderTimeout();
           id = ++renderIdRef.current;
+          // A StagedRenderError tells us which pipeline stage actually
+          // threw (worker-init / document-load / page-render) — an
+          // untagged error (shouldn't normally happen, since every stage
+          // above is wrapped) falls back to the most common real cause.
+          const stage: RenderFailureStage = err instanceof StagedRenderError ? err.stage : "page-render";
           if (attemptNumber < RENDER_MAX_ATTEMPTS) {
-            attempt(attemptNumber + 1);
+            scheduleRetry(attemptNumber + 1);
           } else {
             setLoading(false);
             setFailed(true);
+            setFailureKind(stage);
           }
         });
     }
@@ -781,7 +901,9 @@ export default function PdfBookSpread({
             <div className="absolute inset-0 z-30 flex items-center justify-center bg-[#fffaf0]/95 ndl-fade-in-scale">
               <div className="flex max-w-[280px] flex-col items-center gap-3 px-6 text-center">
                 <div className="flex h-14 w-14 items-center justify-center rounded-full bg-red-50 text-2xl">⚠️</div>
-                <p className="text-sm font-bold text-slate-600">{t.premiumReaderPageRenderFailed}</p>
+                <p className="text-sm font-bold text-slate-600">
+                  {failureKind === "timeout" ? t.premiumReaderPageRenderFailed : t.premiumReaderPageLoadError}
+                </p>
                 <button
                   type="button"
                   onClick={() => setRetryToken((n) => n + 1)}
