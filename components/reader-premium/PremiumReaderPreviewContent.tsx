@@ -2845,7 +2845,6 @@ export default function PremiumReaderPreviewContent() {
               onPageRendered={handlePageRendered}
               onTextExtracted={handleTextExtracted}
               isPanning={isPanning}
-              isMobileViewport={isMobileViewport}
             />
           </div>
 

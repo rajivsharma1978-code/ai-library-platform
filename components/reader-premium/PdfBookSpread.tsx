@@ -59,15 +59,6 @@ export type PdfBookSpreadProps = {
    *  CSS transition so panning tracks the cursor instantly instead of
    *  lagging behind a smoothed transform. */
   isPanning?: boolean;
-  /** Phase C1D — from the parent's own viewport-width check (the same
-   *  `viewportWidth < 640` used for the rest of the reader's mobile
-   *  layout), NOT a user-agent sniff. Real-device evidence showed the
-   *  render failure on BOTH iPhone Safari and a Samsung Android mobile
-   *  browser, so it's the narrow viewport itself driving this — not one
-   *  engine — and a viewport check is also the only version of this that
-   *  Chromium's mobile-emulation testing can actually exercise. See the
-   *  "Mobile render path" comments below for what this changes. */
-  isMobileViewport?: boolean;
 };
 
 // ── Render size: conservative so canvas fits on typical laptops ─────
@@ -88,39 +79,49 @@ const PAGE_MAX_H = 700;
 const RENDER_TIMEOUT_MS = 12000;
 const RENDER_MAX_ATTEMPTS = 2;
 
-// ── Phase C1D: mobile render path ─────────────────────────────────────
-// Phase C1C treated this as an iOS/WebKit-only issue (UA-sniffed). New
-// real-device evidence overturned that: the SAME failure reproduces on
-// a Samsung Android mobile browser too, on the same two books, with the
-// same message — a different rendering engine entirely. The one thing
-// both devices share with each other and NOT with the working desktop
-// Chrome case is the narrow viewport, so the fix is now keyed off
-// `isMobileViewport` (passed down from the parent's own
-// `viewportWidth < 640` check — the same signal every other mobile-only
-// branch in this reader already uses), not a UA string.
+// ── Phase C1C: iOS/WebKit worker compatibility ───────────────────────
+// Real-device evidence (iPhone 11 Safari, production): the reader fails
+// almost immediately — not after the 12s timeout — meaning pdf.js's
+// Worker setup itself is throwing/rejecting fast on that platform, not
+// hanging. pdf.js's module Worker has a long-documented history of
+// misbehaving specifically on iOS/iPadOS WebKit — desktop Chrome/Edge/
+// Firefox and Android Chrome are unaffected.
 //
-// What actually changes on mobile, and why:
-//  1. `layoutMode="spread"` (artificial-intelligence-technology) is
-//     forced to single-page — see `isSpread` below. Two independent
-//     PDF pages were being rasterized, whitespace-cropped, and
-//     text-layered in parallel for every spread page past page 1; on a
-//     390px-wide screen the user can only ever see one page-width of it
-//     anyway. (Page 1 of that book, and nalanda's "single" layout, were
-//     already single-canvas even before this change — this specifically
-//     helps every OTHER page of the spread book, and removes spread
-//     rendering as a variable across all mobile testing.)
-//  2. The offscreen rasterization scale drops from a fixed 2× to
-//     MOBILE_OFFSCREEN_SCALE (1.5×) on mobile — quadratic in pixel
-//     count, so this alone cuts the raster/whitespace-scan/composite
-//     work roughly in half. Desktop keeps the exact fixed 2× it always
-//     had.
-//  3. MAX_OFFSCREEN_DIM_MOBILE caps the larger offscreen dimension as a
-//     hard backstop for unusually large native PDF pages (nalanda's
-//     source scans are physically large two-page spreads baked into a
-//     single "single"-layout PDF page) — same purpose as Phase C1C's
-//     WebKit-only cap, now applied by viewport instead of engine.
-const MOBILE_OFFSCREEN_SCALE = 1.5;
-const MAX_OFFSCREEN_DIM_MOBILE = 2200;
+// Verified against the installed pdfjs-dist@5.7.284 source directly
+// (node_modules/pdfjs-dist/build/pdf.mjs, class PDFWorker): there is no
+// public `disableWorker` option on getDocument()/DocumentInitParameters
+// in this version — that was a real option in older pdf.js majors but
+// was removed. What this version DOES have is a built-in, automatic
+// fallback: PDFWorker#initialize() already falls back to its internal
+// fake/main-thread worker on its own whenever the real
+// `new Worker(workerSrc, { type: "module" })` throws, errors, or fails
+// its "test"/"ready" handshake — see #setupFakeWorker() in that file.
+// That fallback is controlled by a genuine JS private class field
+// (#isWorkerDisabled) with no public setter anywhere in the package, so
+// there is no supported way to force it proactively from application
+// code in this version — this platform check is kept only for the
+// canvas-size cap below (MAX_OFFSCREEN_DIM_MOBILE_WEBKIT), which uses
+// the ordinary public getViewport() API and needs no worker involvement
+// at all.
+function isWebKitMobilePlatform(): boolean {
+  if (typeof navigator === "undefined") return false;
+  const ua = navigator.userAgent || "";
+  const isIOSDevice = /iPad|iPhone|iPod/.test(ua);
+  // iPadOS 13+ reports as "Macintosh" in the UA string but is still
+  // WebKit-only and touch-driven — maxTouchPoints distinguishes it from
+  // an actual Mac, which reports 0.
+  const isIPadOSDesktopMode = /Macintosh/.test(ua) && typeof navigator.maxTouchPoints === "number" && navigator.maxTouchPoints > 1;
+  return isIOSDevice || isIPadOSDesktopMode;
+}
+
+// Defensive-only cap on the offscreen render canvas's larger dimension,
+// applied ONLY on the WebKit-mobile platform above — iOS Safari has a
+// documented history of tighter per-canvas memory/size limits than
+// desktop browsers. Not confirmed as a cause of the observed failure
+// (unverified without real-device access), but cheap and safe to apply
+// alongside the worker fix. PAGE_MAX_H is 700 CSS px, so 2200px offscreen
+// still renders at well over 3x that for on-screen sharpness.
+const MAX_OFFSCREEN_DIM_MOBILE_WEBKIT = 2200;
 
 // Tags which pipeline stage threw, so the failure UI (and console) can
 // tell a genuine timeout apart from an immediate Worker/document/page
@@ -162,24 +163,23 @@ async function renderPdfPage(params: {
   pdf: any; pageNo: number; canvas: HTMLCanvasElement;
   textLayer: HTMLDivElement | null; pdfjsLib: any;
   maxW: number; maxH: number; cancelled: () => boolean;
-  isMobile: boolean;
 }): Promise<{ cssW: number; cssH: number; text: string } | null> {
-  const { pdf, pageNo, canvas, textLayer, pdfjsLib, maxW, maxH, cancelled, isMobile } = params;
+  const { pdf, pageNo, canvas, textLayer, pdfjsLib, maxW, maxH, cancelled } = params;
   if (pageNo < 1 || pageNo > pdf.numPages) return null;
 
   const page = await pdf.getPage(pageNo);
   if (cancelled()) return null;
 
-  // Offscreen render — 2× on desktop (unchanged), MOBILE_OFFSCREEN_SCALE
-  // (1.5×) on mobile, then hard-capped at MAX_OFFSCREEN_DIM_MOBILE on
-  // mobile as a backstop for unusually large native pages. See the
-  // "Phase C1D: mobile render path" comment near the top of this file.
-  const OS = isMobile ? MOBILE_OFFSCREEN_SCALE : 2;
+  // Offscreen render at 2× for quality — capped on WebKit-mobile only
+  // (see MAX_OFFSCREEN_DIM_MOBILE_WEBKIT above); every other browser,
+  // including desktop Chrome, keeps the exact same fixed 2× behavior it
+  // always had.
+  const OS = 2;
   let osVP = page.getViewport({ scale: OS });
-  if (isMobile) {
+  if (isWebKitMobilePlatform()) {
     const largerDim = Math.max(osVP.width, osVP.height);
-    if (largerDim > MAX_OFFSCREEN_DIM_MOBILE) {
-      osVP = page.getViewport({ scale: OS * (MAX_OFFSCREEN_DIM_MOBILE / largerDim) });
+    if (largerDim > MAX_OFFSCREEN_DIM_MOBILE_WEBKIT) {
+      osVP = page.getViewport({ scale: OS * (MAX_OFFSCREEN_DIM_MOBILE_WEBKIT / largerDim) });
     }
   }
   const os = document.createElement("canvas");
@@ -309,13 +309,13 @@ type CachedPageEntry = { canvas: HTMLCanvasElement; cssW: number; cssH: number; 
 async function getOrRenderPage(
   cache: Map<string, CachedPageEntry>, cacheKey: string,
   pdf: any, pageNo: number, pdfjsLib: any, maxW: number, maxH: number,
-  cancelled: () => boolean, isMobile: boolean
+  cancelled: () => boolean
 ): Promise<CachedPageEntry | null> {
   const hit = cache.get(cacheKey);
   if (hit) return hit;
   const offCanvas = document.createElement("canvas");
   const offText = document.createElement("div");
-  const result = await renderPdfPage({ pdf, pageNo, canvas: offCanvas, textLayer: offText, pdfjsLib, maxW, maxH, cancelled, isMobile });
+  const result = await renderPdfPage({ pdf, pageNo, canvas: offCanvas, textLayer: offText, pdfjsLib, maxW, maxH, cancelled });
   if (!result || cancelled()) return null;
   const entry: CachedPageEntry = { canvas: offCanvas, cssW: result.cssW, cssH: result.cssH, text: result.text, textHTML: offText.innerHTML };
   cache.set(cacheKey, entry);
@@ -491,7 +491,6 @@ export default function PdfBookSpread({
   onTextExtracted,
   layoutMode = "single",
   isPanning = false,
-  isMobileViewport = false,
 }: PdfBookSpreadProps) {
   const canvasRef  = useRef<HTMLCanvasElement | null>(null);
   const textRef    = useRef<HTMLDivElement | null>(null);
@@ -531,10 +530,7 @@ export default function PdfBookSpread({
 
   const safePage = Math.max(1, Number(pageNumber) || 1);
   const total    = Math.max(1, Number(totalPages)  || 1);
-  // Phase C1D: mobile never does side-by-side spread rendering, even for
-  // a book whose layout metadata says "spread" — see the file-top
-  // comment. Desktop/tablet keep the exact prior behavior.
-  const isSpread = layoutMode === "spread" && safePage > 1 && !isMobileViewport;
+  const isSpread = layoutMode === "spread" && safePage > 1;
   const rightPage = safePage + 1;
 
   const [reduceMotion, setReduceMotion] = useState(false);
@@ -628,10 +624,12 @@ export default function PdfBookSpread({
       //
       // No `disableWorker` here (Phase C1C) — confirmed against the
       // installed pdfjs-dist@5.7.284 source that this option doesn't
-      // exist in this version's public API. This installed version
-      // already falls back from a failing real Worker to its own
-      // internal fake worker automatically, with no flag needed — every
-      // browser goes through the exact same call here.
+      // exist in this version's public API (see the long comment on
+      // isWebKitMobilePlatform() above). This installed version already
+      // falls back from a failing real Worker to its own internal fake
+      // worker automatically, with no flag needed — every browser,
+      // including iOS/WebKit-mobile, goes through the exact same call
+      // here.
       let pdf: any;
       try {
         pdf = await pdfjsLib.getDocument({
@@ -651,7 +649,7 @@ export default function PdfBookSpread({
           const key = `${pdfPath}::${safePage}::s`;
           const cached = cache.get(key);
           if (!cached) setLoading(true);
-          const entry = cached ?? await getOrRenderPage(cache, key, pdf, safePage, pdfjsLib, PAGE_MAX_W, PAGE_MAX_H, isCancelled, isMobileViewport);
+          const entry = cached ?? await getOrRenderPage(cache, key, pdf, safePage, pdfjsLib, PAGE_MAX_W, PAGE_MAX_H, isCancelled);
           if (isCancelled()) return null;
           setLoading(false);
           if (entry) {
@@ -676,8 +674,8 @@ export default function PdfBookSpread({
           const rCached = rightPage <= total ? cache.get(rKey) : null;
           if (!lCached || (rightPage <= total && !rCached)) setLoading(true);
           const [lResult, rResult] = await Promise.all([
-            lCached ?? (leftCanvasRef.current ? getOrRenderPage(cache, lKey, pdf, safePage, pdfjsLib, halfW, PAGE_MAX_H, isCancelled, isMobileViewport) : Promise.resolve(null)),
-            rCached ?? (rightPage <= total && rightCanvasRef.current ? getOrRenderPage(cache, rKey, pdf, rightPage, pdfjsLib, halfW, PAGE_MAX_H, isCancelled, isMobileViewport) : Promise.resolve(null)),
+            lCached ?? (leftCanvasRef.current ? getOrRenderPage(cache, lKey, pdf, safePage, pdfjsLib, halfW, PAGE_MAX_H, isCancelled) : Promise.resolve(null)),
+            rCached ?? (rightPage <= total && rightCanvasRef.current ? getOrRenderPage(cache, rKey, pdf, rightPage, pdfjsLib, halfW, PAGE_MAX_H, isCancelled) : Promise.resolve(null)),
           ]);
           if (isCancelled()) return null;
           setLoading(false);
@@ -737,7 +735,7 @@ export default function PdfBookSpread({
       for (const n of neighbors) {
         if (isCancelled()) break;
         if (cache.has(n.key)) continue;
-        await getOrRenderPage(cache, n.key, pdf, n.pageNo, pdfjsLib, n.maxW, n.maxH, isCancelled, isMobileViewport);
+        await getOrRenderPage(cache, n.key, pdf, n.pageNo, pdfjsLib, n.maxW, n.maxH, isCancelled);
       }
     }
 
