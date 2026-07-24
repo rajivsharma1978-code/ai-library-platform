@@ -52,12 +52,24 @@ export function Recommendations() {
           const book = books.find(b => b.id === p.bookId);
           if (!book) return null;
           const total = p.totalPages || bookTotalPages(book);
-          return { book, pct: Math.min(100, Math.round((p.currentPage / Math.max(1, total)) * 100)) };
+          // Phase C1F: validated resume page for this exact book's own
+          // entry — never NaN/zero/negative, clamped to its own total so
+          // a stale/malformed value can never send the reader past the
+          // last page. null means "no valid resume position," which
+          // falls back to the normal cover-opening link below.
+          const rawPage = Number(p.currentPage);
+          const resumePage = Number.isFinite(rawPage) && rawPage >= 1
+            ? Math.min(Math.floor(rawPage), Math.max(1, Math.floor(total)))
+            : null;
+          // Same validated page drives the displayed percentage — a
+          // malformed stored value shows 0% instead of NaN%.
+          const pct = resumePage ? Math.min(100, Math.round((resumePage / Math.max(1, total)) * 100)) : 0;
+          return { book, pct, resumePage };
         })
-        .filter((x): x is { book: DirectorBook; pct: number } => !!x);
+        .filter((x): x is { book: DirectorBook; pct: number; resumePage: number | null } => !!x);
     }
     const demoPercents = [72, 45, 88];
-    return books.slice(0, 3).map((book, i) => ({ book, pct: demoPercents[i] ?? 50 }));
+    return books.slice(0, 3).map((book, i) => ({ book, pct: demoPercents[i] ?? 50, resumePage: null as number | null }));
   })();
   const usingDemoProgress = mounted && progress.length === 0;
 
@@ -80,7 +92,7 @@ export function Recommendations() {
             <Link href="/my-library" className="text-[13px] font-semibold text-orange-500 hover:text-orange-600">{t.viewAll} →</Link>
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            {continueReading.map(({ book, pct }, i) => (
+            {continueReading.map(({ book, pct, resumePage }, i) => (
               <motion.div key={book.id}
                 initial={{opacity:0,y:10}} whileInView={{opacity:1,y:0}} viewport={{once:true}}
                 transition={{delay:i*0.07}}
@@ -108,7 +120,12 @@ export function Recommendations() {
                     className="flex min-h-[40px] flex-1 items-center justify-center rounded-lg bg-slate-100 px-2 text-center text-[11px] font-bold text-slate-700 transition active:scale-[0.97] hover:bg-slate-200">
                     📖 {t.bookActionReadNormally}
                   </Link>
-                  <Link href={`/reader-premium?book=${book.id}`}
+                  {/* Phase C1F: Continue Reading resumes at the last saved
+                      page (bypassing the cover) whenever a valid one
+                      exists for this book — plain "?book=" links
+                      elsewhere in the app are untouched and still open
+                      at the cover as before. */}
+                  <Link href={resumePage ? `/reader-premium?book=${book.id}&page=${resumePage}` : `/reader-premium?book=${book.id}`}
                     className="flex min-h-[40px] flex-1 items-center justify-center rounded-lg bg-purple-600 px-2 text-center text-[11px] font-bold text-white transition active:scale-[0.97] hover:bg-purple-700">
                     🤖 {t.navAiTutor}
                   </Link>

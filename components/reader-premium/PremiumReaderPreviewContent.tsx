@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { useSearchParams, usePathname, useRouter } from "next/navigation";
 import Link from "next/link";
 import dynamic from "next/dynamic";
 import AICompanion from "@/components/reader-premium/AICompanion";
@@ -14,6 +14,7 @@ import PremiumReaderLayout, { type PremiumReaderLayoutHandle } from "@/component
 import LanguagePopover from "@/components/reader-premium/LanguagePopover";
 import AccessibilityToolbar from "@/components/ui/AccessibilityToolbar";
 import { saveCurrentBook } from "@/lib/currentBook";
+import { saveReadingProgress } from "@/components/my-space/mySpaceData";
 // ── Phase 2: AI Notes, Highlights, Bookmarks, Study Workspace ─────────
 // Additive only — nothing below touches page turning, zoom, fullscreen,
 // or the text/image selection engine above.
@@ -223,6 +224,8 @@ const MIN_DRAG_PX = 6;
 export default function PremiumReaderPreviewContent() {
   // ── Book ──────────────────────────────────────────────────────────
   const searchParams = useSearchParams();
+  const pathname = usePathname();
+  const router = useRouter();
 
   // ── Hydration gate ───────────────────────────────────────────────────
   // isHydrated is false during SSR and during the client's FIRST render
@@ -391,6 +394,19 @@ export default function PremiumReaderPreviewContent() {
   const [readerPage, setReaderPage] = useState(() => {
     const urlPage = Number(searchParams.get("page"));
     if (!Number.isFinite(urlPage) || urlPage < 1) return 1;
+    // Phase C1F (corrected): `?page=N` always means exactly page N,
+    // for every caller — Continue Reading (which builds its link FROM
+    // saved progress, so this is already the resume target), the
+    // Normal Reader's "Open in AI Tutor at this page" button
+    // (app/read/page.tsx), a Bookmark/Note/AI "open page" link, or a
+    // hand-typed URL. An earlier version of this code preferred saved
+    // progress over the URL's own number whenever any `?page=` was
+    // present, which silently sent an explicit page request to a
+    // different (saved) page instead — fixed. "Refresh preserves the
+    // current page" is instead handled by the URL-sync effect below,
+    // which keeps `?page=` itself up to date as the user navigates, so
+    // by the time a refresh happens this exact rule already reproduces
+    // the right page from the URL alone.
     const clamped = Math.min(Math.max(1, Math.floor(urlPage)), totalPages || urlPage);
     return snapSpreadCursor(clamped, currentBook.layout);
   });
@@ -413,6 +429,49 @@ export default function PremiumReaderPreviewContent() {
       source: isUploadedBook ? "upload" : undefined,
     });
   }, [bookId, readerPage, currentBook.title, totalPages, isUploadedBook]);
+
+  // ── Phase C1F: per-book reading-progress persistence (Continue Reading)
+  // One centralized effect tied to the confirmed current page, rather
+  // than a storage write in every navigation handler — Previous/Next,
+  // the page input/slider, Go to Page, and jump-to-page from Notes/
+  // Bookmarks/Study Workspace all already funnel through setReaderPage
+  // (see navigateToPdfPage/goToPage/studyJumpToPage), so watching
+  // `readerPage` here alone captures every one of them for free.
+  //
+  // Gated on `bookOpened`: the cover screen, a book still being resolved,
+  // or the PDF still loading all leave `readerPage` at its initial value
+  // (often 1) without the user having genuinely opened the book yet —
+  // `bookOpened` only becomes true once they actually have (a real click,
+  // or a valid `?page=` deep link), so a page-1 default can never
+  // overwrite real prior progress just because the reader mounted.
+  useEffect(() => {
+    if (!bookOpened || !bookId || !totalPages) return;
+    saveReadingProgress(bookId, readerPage, totalPages);
+  }, [bookOpened, bookId, readerPage, totalPages]);
+
+  // ── Phase C1F fix: keep the URL's own `page` in sync with `readerPage`
+  // while the book is open. This is what makes "an explicit ?page= link
+  // always wins" (restored above) compatible with "refresh preserves the
+  // current page": the URL is updated live as the user turns pages, via
+  // `router.replace` (shallow — no new history entry per page turn, no
+  // server round-trip for this client page), so by the time a refresh
+  // happens the address bar already says the page the user is actually
+  // on, and the plain "honor ?page= exactly" rule above reproduces it
+  // correctly with no separate saved-progress lookup needed here.
+  //
+  // Reads `window.location` directly (not the reactive `searchParams`
+  // hook) purely to decide whether a replace is even needed — this
+  // effect's own deps never include `searchParams`, so the URL update it
+  // triggers can't cause it to re-fire itself.
+  useEffect(() => {
+    if (!bookOpened || !bookId) return;
+    const params = isUploadedBook
+      ? new URLSearchParams({ source: "upload", id: bookId, page: String(readerPage) })
+      : new URLSearchParams({ book: bookId, page: String(readerPage) });
+    const next = `${pathname}?${params.toString()}`;
+    if (typeof window !== "undefined" && window.location.pathname + window.location.search === next) return;
+    router.replace(next, { scroll: false });
+  }, [bookOpened, bookId, readerPage, isUploadedBook, pathname, router]);
 
   // ── Zoom / pan ────────────────────────────────────────────────────
   const [zoom, setZoom] = useState(100);
@@ -843,6 +902,8 @@ export default function PremiumReaderPreviewContent() {
     const urlPage = Number(searchParams.get("page"));
     let resolvedPage = 1;
     if (Number.isFinite(urlPage) && urlPage >= 1) {
+      // Phase C1F (corrected): honor the URL's exact page — see the
+      // initial readerPage state above for why.
       const clamped = Math.min(Math.max(1, Math.floor(urlPage)), totalPages || urlPage);
       resolvedPage = isSpreadBook && clamped > 1 ? (clamped % 2 === 0 ? clamped : clamped - 1) : clamped;
       setReaderPage(resolvedPage);

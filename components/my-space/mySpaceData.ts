@@ -130,6 +130,60 @@ export type DirectorBook = {
   export function loadBookmarks(): StoredBookmarkLite[] { return readArray(KEYS.bookmarks); }
   export function loadMyLibrary(): LibraryEntry[] { return readArray(KEYS.myLibrary); }
   export function loadReadingProgress(): ReadingProgressEntry[] { return readArray(KEYS.readingProgress); }
+
+  // ── Phase C1F: reading-progress writer ──────────────────────────────
+  // ndl_reading_progress previously had readers everywhere (Continue
+  // Reading, My Library, My Books, Analytics) but no writer anywhere in
+  // the app — see the file header. This is that writer, upserting by
+  // bookId so each book keeps its own independent position. Validates
+  // before writing so a bad call can never store an invalid page or
+  // corrupt another book's entry; silently no-ops on invalid input
+  // rather than throwing, matching every other helper in this file.
+  export function saveReadingProgress(bookId: string, currentPage: number, totalPages?: number, chapter?: string): void {
+    if (typeof window === "undefined") return;
+    if (!bookId) return;
+    const page = Math.floor(currentPage);
+    if (!Number.isFinite(page) || page < 1) return;
+    const safeTotal = totalPages !== undefined && Number.isFinite(totalPages) && totalPages > 0
+      ? Math.floor(totalPages)
+      : undefined;
+    const clampedPage = safeTotal ? Math.min(page, safeTotal) : page;
+    try {
+      const existing = loadReadingProgress().filter(
+        (e): e is ReadingProgressEntry => !!e && typeof e.bookId === "string" && e.bookId.length > 0
+      );
+      const idx = existing.findIndex(e => e.bookId === bookId);
+      const priorTotal = idx >= 0 && Number.isFinite(existing[idx].totalPages) ? existing[idx].totalPages : undefined;
+      const priorChapter = idx >= 0 ? existing[idx].chapter : undefined;
+      const entry: ReadingProgressEntry = {
+        bookId,
+        currentPage: clampedPage,
+        totalPages: safeTotal ?? priorTotal ?? clampedPage,
+        lastReadAt: Date.now(),
+        ...((chapter ?? priorChapter) ? { chapter: chapter ?? priorChapter } : {}),
+      };
+      if (idx >= 0) existing[idx] = entry; else existing.push(entry);
+      window.localStorage.setItem(KEYS.readingProgress, JSON.stringify(existing));
+    } catch {
+      // ignore quota/serialization errors — this is best-effort state only
+    }
+  }
+
+  /** Validated resume page for `bookId`, or null if there's no entry, the
+   *  entry is malformed (NaN/zero/negative/non-numeric), or it belongs to
+   *  a different book — never applies one book's position to another.
+   *  Clamps to `totalPages` when known so a stale entry can never resolve
+   *  past the book's real last page. */
+  export function getValidatedReadingProgress(bookId: string, totalPages?: number): number | null {
+    if (!bookId) return null;
+    const entry = loadReadingProgress().find(e => e && e.bookId === bookId);
+    if (!entry) return null;
+    const raw = Number(entry.currentPage);
+    if (!Number.isFinite(raw) || raw < 1) return null;
+    const page = Math.floor(raw);
+    const safeTotal = Number.isFinite(totalPages) && (totalPages as number) > 0 ? Math.floor(totalPages as number) : undefined;
+    return safeTotal ? Math.min(page, safeTotal) : page;
+  }
   export function loadLearningActivity(): LearningActivityEntry[] { return readArray(KEYS.learningActivity); }
   export function loadAIUsageStats(): AIUsageStats {
     return readObject<AIUsageStats>(KEYS.aiUsageStats) ?? { questionsAsked: 0 };
