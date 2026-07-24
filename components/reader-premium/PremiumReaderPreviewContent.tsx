@@ -416,6 +416,24 @@ export default function PremiumReaderPreviewContent() {
   });
   const [bookOpening, setBookOpening] = useState(false);
 
+  // ── Reading-progress persistence readiness ───────────────────────────
+  // Sticky "safe to persist" latch for the reading-progress effect below.
+  // Mirrors `bookOpened`'s own initial value, since both are resolved from
+  // the identical `?page=` check: true immediately for a deep-link open
+  // (Continue Reading, a bookmark/note/AI "open page" link, or a
+  // hand-typed URL) — that position is already genuine, and persisting it
+  // right away is required so Continue Reading's own resume page stays
+  // reinforced rather than silently dropped. False for a plain cover
+  // click, which always lands on page 1 by definition (see
+  // openBookWithAnimation below) — NOT yet real progress, so it must not
+  // be saved merely because the book was opened. It flips true the first
+  // time the persistence effect actually runs for a false start — i.e. on
+  // the very next `readerPage` change from real navigation — so mounting
+  // or opening the cover can never itself write anything, but every
+  // genuine page turn after that (including one that lands back on page
+  // 1) persists normally.
+  const hasEngagedRef = useRef(bookOpened);
+
   // ── Shared "current book" pointer for Return to Book (Phase G-2B) ───
   // Additive only — does not touch zoom, fullscreen, selection, AI
   // Companion, or Study Workspace persistence below.
@@ -442,10 +460,27 @@ export default function PremiumReaderPreviewContent() {
   // or the PDF still loading all leave `readerPage` at its initial value
   // (often 1) without the user having genuinely opened the book yet —
   // `bookOpened` only becomes true once they actually have (a real click,
-  // or a valid `?page=` deep link), so a page-1 default can never
-  // overwrite real prior progress just because the reader mounted.
+  // or a valid `?page=` deep link).
+  //
+  // That alone isn't enough, though: a PLAIN cover click also flips
+  // `bookOpened` true while `readerPage` is still sitting at its untouched
+  // default (1) — confirmed live to otherwise fire this effect on that
+  // exact commit and silently overwrite real saved progress with page 1
+  // the instant the user merely opens the book. `hasEngagedRef` guards
+  // against exactly that: for a plain cover open it's false, so the first
+  // run here is skipped (and the latch flips true) rather than persisted;
+  // the next `readerPage` change — an actual page turn — persists
+  // normally, same as always. For a deep-link open (Continue Reading, a
+  // bookmark/note/AI "open page" link) `hasEngagedRef` already starts
+  // true, since that position is genuine from the moment it renders, so
+  // it persists immediately with no skip — required so Continue Reading's
+  // own resume page stays reinforced rather than silently dropped.
   useEffect(() => {
     if (!bookOpened || !bookId || !totalPages) return;
+    if (!hasEngagedRef.current) {
+      hasEngagedRef.current = true;
+      return;
+    }
     saveReadingProgress(bookId, readerPage, totalPages);
   }, [bookOpened, bookId, readerPage, totalPages]);
 
@@ -908,9 +943,14 @@ export default function PremiumReaderPreviewContent() {
       resolvedPage = isSpreadBook && clamped > 1 ? (clamped % 2 === 0 ? clamped : clamped - 1) : clamped;
       setReaderPage(resolvedPage);
       setBookOpened(true);
+      // A resolved deep-link page for the (possibly new) book — same
+      // "already genuine, persist immediately" reasoning as the initial
+      // hasEngagedRef state above.
+      hasEngagedRef.current = true;
     } else {
       setReaderPage(1);
       setBookOpened(false);
+      hasEngagedRef.current = false;
     }
 
     if (bookId && totalPages) {
@@ -2276,6 +2316,12 @@ export default function PremiumReaderPreviewContent() {
 
   // ── Open book ─────────────────────────────────────────────────────────
   function openBookWithAnimation() {
+    // This only ever runs from the cover's own click handler (BookCover is
+    // only rendered while `!bookOpened`, i.e. no valid `?page=` resolved) —
+    // so by definition `readerPage` is still page 1 and this is NOT a
+    // deep-link open. Explicit here (already false from the resolvers
+    // above) so a plain cover-open can never be mistaken for one.
+    hasEngagedRef.current = false;
     setBookOpening(true);
     setTimeout(() => { setBookOpened(true); setBookOpening(false); }, 900);
   }
