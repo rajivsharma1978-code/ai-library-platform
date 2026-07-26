@@ -19,12 +19,25 @@
 // Every step that plausibly caused the original failure (large synchronous
 // pixel reads, double-canvas compositing, extra concurrent work per page)
 // is absent by construction rather than reduced in magnitude.
+//
+// ── TEMPORARY: real-device stage diagnostics ─────────────────────────────
+// Real-device testing (iPhone Safari, iPhone Chrome) still shows the Retry
+// failure with no way to see WHERE in the pipeline it's failing, since the
+// dev-tools/console isn't available on-device. Everything under
+// "DIAGNOSTICS STATE" below renders a visible, on-screen diagnostic card
+// instead — same information a console.log would have carried, just shown
+// in the UI so it can be read or screenshotted directly off the phone. This
+// is intentionally temporary: it changes nothing about the render pipeline,
+// timeout duration, or retry behavior — it only observes and displays.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { UI_TEXT } from "@/lib/i18n";
 import { useLanguage } from "@/lib/useLanguage";
 
 export type MobilePdfPageProps = {
   pdfPath: string;
+  /** Diagnostics-only — identifies which book this render belongs to in
+   *  the on-screen diagnostic card. Not used by the render pipeline itself. */
+  bookId?: string;
   pageNumber: number;
   totalPages: number;
   zoom?: number;
@@ -76,8 +89,80 @@ function isCancelledError(err: unknown): boolean {
   return !!err && typeof err === "object" && (err as any).name === "RenderingCancelledException";
 }
 
+// ── DIAGNOSTICS STATE (temporary) ────────────────────────────────────────
+type Stage =
+  | "component-mounted"
+  | "measuring-container"
+  | "loading-document"
+  | "document-loaded"
+  | "loading-page"
+  | "page-loaded"
+  | "canvas-ready"
+  | "render-started"
+  | "render-completed"
+  | "visible"
+  | "failed"
+  | "timed-out";
+
+interface Diagnostics {
+  stage: Stage;
+  containerWidth: number | null;
+  dpr: number | null;
+  docLoadStartedAt: number | null;
+  docLoadCompletedAt: number | null;
+  pageLoadStartedAt: number | null;
+  pageLoadCompletedAt: number | null;
+  nativeVpW: number | null;
+  nativeVpH: number | null;
+  displayScale: number | null;
+  renderScale: number | null;
+  canvasW: number | null;
+  canvasH: number | null;
+  canvasMounted: boolean | null;
+  renderStartedAt: number | null;
+  renderCompletedAt: number | null;
+  timeoutFired: boolean;
+  errorName: string | null;
+  errorMessage: string | null;
+  attemptNumber: number;
+}
+
+function initialDiagnostics(stage: Stage): Diagnostics {
+  return {
+    stage,
+    containerWidth: null,
+    dpr: null,
+    docLoadStartedAt: null,
+    docLoadCompletedAt: null,
+    pageLoadStartedAt: null,
+    pageLoadCompletedAt: null,
+    nativeVpW: null,
+    nativeVpH: null,
+    displayScale: null,
+    renderScale: null,
+    canvasW: null,
+    canvasH: null,
+    canvasMounted: null,
+    renderStartedAt: null,
+    renderCompletedAt: null,
+    timeoutFired: false,
+    errorName: null,
+    errorMessage: null,
+    attemptNumber: 1,
+  };
+}
+
+function DiagnosticRow({ label, value }: { label: string; value: React.ReactNode }) {
+  return (
+    <div className="flex justify-between gap-3 border-b border-white/10 py-0.5 last:border-b-0">
+      <span className="text-amber-300/80">{label}</span>
+      <span className="text-right text-white break-all">{value ?? "—"}</span>
+    </div>
+  );
+}
+
 export default function MobilePdfPage({
-  pdfPath, pageNumber, totalPages, zoom = 100, pan = { x: 0, y: 0 }, isPanning = false,
+  pdfPath, bookId, pageNumber, totalPages, zoom = 100, pan = { x: 0, y: 0 }, isPanning = false,
   getPdfDocument, onTextExtracted,
 }: MobilePdfPageProps) {
   const { language } = useLanguage();
@@ -87,13 +172,29 @@ export default function MobilePdfPage({
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const renderTaskRef = useRef<any>(null);
   const renderIdRef = useRef(0);
+  const mountedAtRef = useRef<number>(typeof performance !== "undefined" ? performance.now() : Date.now());
 
   const [containerWidth, setContainerWidth] = useState<number | null>(null);
   const [visible, setVisible] = useState(false);
   const [failed, setFailed] = useState(false);
   const [retryToken, setRetryToken] = useState(0);
+  const [diag, setDiag] = useState<Diagnostics>(() => initialDiagnostics("component-mounted"));
+  const [, forceTick] = useState(0);
 
   const safePage = Math.max(1, Math.min(Math.floor(pageNumber) || 1, Math.max(1, Math.floor(totalPages) || 1)));
+
+  const patchDiag = useCallback((patch: Partial<Diagnostics>) => {
+    setDiag((prev) => ({ ...prev, ...patch }));
+  }, []);
+
+  // Live-updating elapsed-ms ticker while still in flight — purely visual,
+  // so a phone screen shows the counter moving instead of a frozen number
+  // while waiting on a slow/stuck stage.
+  useEffect(() => {
+    if (diag.stage === "visible" || diag.stage === "failed") return;
+    const id = setInterval(() => forceTick((n) => n + 1), 500);
+    return () => clearInterval(id);
+  }, [diag.stage]);
 
   // ── Measure the card's available content width ──────────────────────
   // Two independent sources feed the same measure() call: ResizeObserver
@@ -105,6 +206,7 @@ export default function MobilePdfPage({
   // few consecutive readings, so it's a one-time startup safety net, not
   // an ongoing timer.
   useEffect(() => {
+    patchDiag({ stage: "measuring-container", dpr: typeof window !== "undefined" ? window.devicePixelRatio || 1 : null });
     const cardEl = cardRef.current;
     if (!cardEl) return;
     const card = cardEl;
@@ -115,6 +217,7 @@ export default function MobilePdfPage({
       if (Math.abs(next - last) < WIDTH_CHANGE_THRESHOLD_PX) return;
       last = next;
       setContainerWidth(next);
+      patchDiag({ containerWidth: next });
     }
     measure(card.clientWidth);
     const ro = new ResizeObserver((entries) => {
@@ -131,7 +234,7 @@ export default function MobilePdfPage({
     }
     setTimeout(poll, 200);
     return () => { cancelled = true; ro.disconnect(); };
-  }, []);
+  }, [patchDiag]);
 
   // ── Render the current page directly onto the one visible canvas ────
   useEffect(() => {
@@ -148,6 +251,16 @@ export default function MobilePdfPage({
     // a page's pixels under the wrong page number.
     setVisible(false);
     setFailed(false);
+    // Reset the diagnostic timeline for this new page/book/retry run —
+    // per-stage timestamps and any prior error are stale once a new run
+    // starts. containerWidth/dpr are carried over since they're still
+    // accurate. Elapsed-since-mount is NOT reset (mountedAtRef is fixed
+    // at true component mount, on purpose).
+    setDiag((prev) => ({
+      ...initialDiagnostics("measuring-container"),
+      containerWidth: prev.containerWidth,
+      dpr: prev.dpr,
+    }));
 
     let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
     const clearRenderTimeout = () => {
@@ -155,29 +268,40 @@ export default function MobilePdfPage({
     };
 
     function attempt(attemptNumber: number) {
+      patchDiag({ attemptNumber });
       timeoutHandle = setTimeout(() => {
         timeoutHandle = null;
         if (isCancelled()) return;
+        patchDiag({ stage: "timed-out", timeoutFired: true });
         if (attemptNumber < RENDER_MAX_ATTEMPTS) {
           id === renderIdRef.current && attempt(attemptNumber + 1);
         } else {
           setFailed(true);
+          patchDiag({ stage: "failed" });
         }
       }, RENDER_TIMEOUT_MS);
 
       (async () => {
+        patchDiag({ stage: "loading-document", docLoadStartedAt: performance.now() });
         const pdf = await getPdfDocument();
         if (isCancelled()) return;
+        patchDiag({ stage: "document-loaded", docLoadCompletedAt: performance.now() });
         if (safePage > (pdf.numPages || safePage)) return;
 
+        patchDiag({ stage: "loading-page", pageLoadStartedAt: performance.now() });
         const page = await pdf.getPage(safePage);
         if (isCancelled()) return;
+        patchDiag({ stage: "page-loaded", pageLoadCompletedAt: performance.now() });
 
         const nativeVp = page.getViewport({ scale: 1 });
         const displayScale = Math.max(0.1, Math.min(width / nativeVp.width, 4));
         const dpr = Math.min(typeof window !== "undefined" ? (window.devicePixelRatio || 1) : 1, DPR_CAP);
         const renderScale = Math.min(displayScale * dpr, MAX_RENDER_SCALE);
         const renderVp = page.getViewport({ scale: renderScale });
+        patchDiag({
+          nativeVpW: Math.round(nativeVp.width), nativeVpH: Math.round(nativeVp.height),
+          displayScale: Number(displayScale.toFixed(3)), renderScale: Number(renderScale.toFixed(3)),
+        });
 
         // canvasRef is normally already attached by the time this runs —
         // the <canvas> is unconditionally in the tree whenever `!failed`,
@@ -195,7 +319,11 @@ export default function MobilePdfPage({
           canvas = canvasRef.current;
         }
         if (isCancelled()) return;
-        if (!canvas) return; // still not there — let the outer timeout's retry/failure path handle it, same as an ordinary stall
+        if (!canvas) {
+          patchDiag({ canvasMounted: false });
+          return; // still not there — let the outer timeout's retry/failure path handle it, same as an ordinary stall
+        }
+        patchDiag({ stage: "canvas-ready", canvasMounted: true });
         const ctx = canvas.getContext("2d");
         if (!ctx) throw new Error("mobile-pdf-no-2d-context");
 
@@ -214,15 +342,19 @@ export default function MobilePdfPage({
         canvas.height = Math.max(1, Math.floor(renderVp.height));
         canvas.style.width = Math.floor(displayScale * nativeVp.width) + "px";
         canvas.style.height = Math.floor(displayScale * nativeVp.height) + "px";
+        patchDiag({ canvasW: canvas.width, canvasH: canvas.height });
 
+        patchDiag({ stage: "render-started", renderStartedAt: performance.now() });
         const task = page.render({ canvasContext: ctx, viewport: renderVp });
         renderTaskRef.current = task;
         await task.promise;
         if (renderTaskRef.current === task) renderTaskRef.current = null;
         if (isCancelled()) return;
+        patchDiag({ stage: "render-completed", renderCompletedAt: performance.now() });
 
         clearRenderTimeout();
         setVisible(true);
+        patchDiag({ stage: "visible" });
 
         // Best-effort, non-blocking — never delays the canvas becoming
         // visible above, and a failure here never surfaces as a render
@@ -242,10 +374,17 @@ export default function MobilePdfPage({
         if (isCancelled() || isCancelledError(err)) return;
         clearRenderTimeout();
         console.error("Mobile PDF render error:", err);
+        // Never swallowed — the exact name/message always land in the
+        // on-screen diagnostic card, not just the console.
+        patchDiag({
+          errorName: err instanceof Error ? err.name : Object.prototype.toString.call(err),
+          errorMessage: err instanceof Error ? err.message : String(err),
+        });
         if (attemptNumber < RENDER_MAX_ATTEMPTS) {
           id === renderIdRef.current && attempt(attemptNumber + 1);
         } else {
           setFailed(true);
+          patchDiag({ stage: "failed" });
         }
       });
     }
@@ -260,11 +399,13 @@ export default function MobilePdfPage({
         renderTaskRef.current = null;
       }
     };
-  }, [pdfPath, safePage, containerWidth, retryToken, getPdfDocument, onTextExtracted]);
+  }, [pdfPath, safePage, containerWidth, retryToken, getPdfDocument, onTextExtracted, patchDiag]);
 
   const retry = useCallback(() => setRetryToken((n) => n + 1), []);
 
   const zoomTransform = `translate(${pan.x}px, ${pan.y}px) scale(${zoom / 100})`;
+
+  const elapsedMs = Math.round((typeof performance !== "undefined" ? performance.now() : Date.now()) - mountedAtRef.current);
 
   return (
     <section className="flex h-full flex-col bg-[radial-gradient(circle_at_center,#fff8e8_0%,#ead2a6_50%,#c18a3f_100%)] px-3 py-3">
@@ -308,6 +449,48 @@ export default function MobilePdfPage({
           )}
         </div>
       </main>
+
+      {/* ── TEMPORARY: on-screen diagnostic card ─────────────────────────
+          Only ever mounted below 640px (this whole component only renders
+          there), so this never appears for desktop/tablet users. Selectable
+          text so it can be copied, plus it's screenshot-friendly. */}
+      <div className="mx-auto mt-2 w-full max-w-[720px] flex-shrink-0 select-text rounded-2xl bg-slate-950/95 px-3 py-2 text-[10px] leading-snug text-white shadow-lg">
+        <p className="mb-1 text-[11px] font-black text-amber-300">Mobile PDF Diagnostic — temporary test build</p>
+        <DiagnosticRow label="stage" value={diag.stage} />
+        <DiagnosticRow label="bookId" value={bookId} />
+        <DiagnosticRow label="requested page" value={pageNumber} />
+        <DiagnosticRow label="attempt" value={`${diag.attemptNumber} / ${RENDER_MAX_ATTEMPTS}`} />
+        <DiagnosticRow label="elapsed ms (since mount)" value={elapsedMs} />
+        <DiagnosticRow label="container width" value={diag.containerWidth} />
+        <DiagnosticRow label="devicePixelRatio" value={diag.dpr} />
+        <DiagnosticRow label="pdf url" value={pdfPath} />
+        <DiagnosticRow
+          label="document load"
+          value={
+            diag.docLoadCompletedAt != null ? `done (${Math.round(diag.docLoadCompletedAt - (diag.docLoadStartedAt ?? diag.docLoadCompletedAt))}ms)`
+            : diag.docLoadStartedAt != null ? "started…"
+            : "not started"
+          }
+        />
+        <DiagnosticRow
+          label="page load"
+          value={
+            diag.pageLoadCompletedAt != null ? `done (${Math.round(diag.pageLoadCompletedAt - (diag.pageLoadStartedAt ?? diag.pageLoadCompletedAt))}ms)`
+            : diag.pageLoadStartedAt != null ? "started…"
+            : "not started"
+          }
+        />
+        <DiagnosticRow label="native viewport" value={diag.nativeVpW != null ? `${diag.nativeVpW} × ${diag.nativeVpH}` : null} />
+        <DiagnosticRow label="display scale" value={diag.displayScale} />
+        <DiagnosticRow label="render scale" value={diag.renderScale} />
+        <DiagnosticRow label="canvas backing dims" value={diag.canvasW != null ? `${diag.canvasW} × ${diag.canvasH}` : null} />
+        <DiagnosticRow label="canvas mounted" value={diag.canvasMounted == null ? null : diag.canvasMounted ? "yes" : "no"} />
+        <DiagnosticRow label="render started" value={diag.renderStartedAt != null ? "yes" : "no"} />
+        <DiagnosticRow label="render completed" value={diag.renderCompletedAt != null ? "yes" : "no"} />
+        <DiagnosticRow label="timeout fired" value={diag.timeoutFired ? "yes" : "no"} />
+        <DiagnosticRow label="error name" value={diag.errorName} />
+        <DiagnosticRow label="error message" value={diag.errorMessage} />
+      </div>
     </section>
   );
 }

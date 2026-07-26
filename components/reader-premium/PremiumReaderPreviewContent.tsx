@@ -2953,6 +2953,7 @@ export default function PremiumReaderPreviewContent() {
             {isMobileViewport ? (
               <MobilePdfPage
                 pdfPath={currentBook.pdf}
+                bookId={bookId}
                 pageNumber={readerPage}
                 totalPages={totalPages}
                 zoom={zoom} pan={pan}
