@@ -44,6 +44,15 @@ const PdfBookSpread = dynamic(
   { ssr: false }
 );
 
+// P0: dedicated mobile PDF renderer — mounted instead of PdfBookSpread
+// only below the 640px viewport threshold (isMobileViewport). Code-split
+// the same way as PdfBookSpread so neither renderer's code ships to the
+// platform that doesn't use it.
+const MobilePdfPage = dynamic(
+  () => import("@/components/reader-premium/MobilePdfPage"),
+  { ssr: false }
+);
+
 // ── Languages ────────────────────────────────────────────────────────
 const LANGUAGES = ["English","Hindi","Tamil","Bengali","Marathi","Telugu"] as const;
 type Lang = typeof LANGUAGES[number];
@@ -675,9 +684,12 @@ export default function PremiumReaderPreviewContent() {
   // Shared lazily-opened pdf.js document (independent of PdfBookSpread's
   // own rendering pipeline), keyed by book — reused by BOTH entire-book
   // extraction and chapter-scope's bounded page-range extraction below,
-  // so switching scopes never opens a second document unnecessarily.
+  // AND (P0) MobilePdfPage's page rendering on mobile, so switching
+  // scopes or turning a mobile page never opens a second document
+  // unnecessarily. Wrapped in useCallback (stable per bookId/pdf) since
+  // it's now also passed as a prop into MobilePdfPage's render effect.
   const pdfDocCacheRef = useRef<Record<string, Promise<any>>>({});
-  function getSharedPdfDocument(): Promise<any> {
+  const getSharedPdfDocument = useCallback((): Promise<any> => {
     const existing = pdfDocCacheRef.current[bookId];
     if (existing) return existing;
     const promise = (async () => {
@@ -687,7 +699,7 @@ export default function PremiumReaderPreviewContent() {
     })();
     pdfDocCacheRef.current[bookId] = promise;
     return promise;
-  }
+  }, [bookId, currentBook.pdf]);
 
   // Dev-only visibility into what each AI scope actually sent — never
   // shown in the UI, gated on NODE_ENV so it's a no-op in production.
@@ -2641,18 +2653,13 @@ export default function PremiumReaderPreviewContent() {
                           className="ndl-press flex h-11 flex-shrink-0 items-center rounded-xl bg-amber-50/70 px-4 text-sm font-bold text-slate-700 ring-1 ring-amber-100">{t.premiumReaderGo}</button>
                       </form>
 
-                      <div className="grid grid-cols-2 gap-2">
-                        <button onClick={() => toggleMode("text")}
-                          className={`ndl-press flex h-11 items-center justify-center gap-1.5 rounded-xl text-sm font-bold ${
-                            textSelectMode ? "bg-orange-600 text-white shadow" : "bg-amber-50/70 text-slate-700 ring-1 ring-amber-100"}`}>
-                          {textSelectMode ? `📖 ${t.premiumReaderPageTurn}` : `📝 ${t.premiumReaderTextSelect}`}
-                        </button>
-                        <button onClick={() => toggleMode("image")}
-                          className={`ndl-press flex h-11 items-center justify-center gap-1.5 rounded-xl text-sm font-bold ${
-                            imageSelectMode ? "bg-slate-900 text-white shadow" : "bg-amber-50/70 text-slate-700 ring-1 ring-amber-100"}`}>
-                          {imageSelectMode ? `✕ ${t.commonCancel}` : `📐 ${t.premiumReaderImageSelect}`}
-                        </button>
-                      </div>
+                      {/* P0: Text Select / Image Select removed from the
+                          mobile sheet for now — both depend on
+                          PdfBookSpread's text layer / crop-select target,
+                          which MobilePdfPage doesn't render yet (see that
+                          component's file-top comment). Untouched on
+                          desktop/tablet, where PdfBookSpread still owns
+                          both modes exactly as before. */}
 
                       <div className="flex items-center justify-between rounded-xl bg-amber-50/70 px-3 py-2 ring-1 ring-amber-100">
                         <span className="text-sm font-bold text-slate-700">🌐 {t.navLanguages}</span>
@@ -2938,21 +2945,38 @@ export default function PremiumReaderPreviewContent() {
             >
               ›
             </button>
-            <PdfBookSpread
-              pdfPath={currentBook.pdf}
-              pageNumber={readerPage}
-              totalPages={String(totalPages)}
-              layoutMode={isSpreadBook ? "spread" : "single"}
-              zoom={zoom} pan={pan}
-              textSelectMode={textSelectMode}
-              imageSelectMode={imageSelectMode}
-              pageHighlights={pageHighlightsForSpread}
-              pageNotes={pageNotesForSpread}
-              bookId={bookId}
-              onPageRendered={handlePageRendered}
-              onTextExtracted={handleTextExtracted}
-              isPanning={isPanning}
-            />
+            {/* P0: below 640px, MobilePdfPage replaces PdfBookSpread
+                entirely — a deliberately minimal single-page renderer (no
+                spread, no crop-detection, no text/image-selection layer,
+                no preloading). Desktop/tablet render exactly the same
+                PdfBookSpread call as before, byte-for-byte unchanged. */}
+            {isMobileViewport ? (
+              <MobilePdfPage
+                pdfPath={currentBook.pdf}
+                pageNumber={readerPage}
+                totalPages={totalPages}
+                zoom={zoom} pan={pan}
+                isPanning={isPanning}
+                getPdfDocument={getSharedPdfDocument}
+                onTextExtracted={handleTextExtracted}
+              />
+            ) : (
+              <PdfBookSpread
+                pdfPath={currentBook.pdf}
+                pageNumber={readerPage}
+                totalPages={String(totalPages)}
+                layoutMode={isSpreadBook ? "spread" : "single"}
+                zoom={zoom} pan={pan}
+                textSelectMode={textSelectMode}
+                imageSelectMode={imageSelectMode}
+                pageHighlights={pageHighlightsForSpread}
+                pageNotes={pageNotesForSpread}
+                bookId={bookId}
+                onPageRendered={handlePageRendered}
+                onTextExtracted={handleTextExtracted}
+                isPanning={isPanning}
+              />
+            )}
           </div>
 
           {/* ── Mobile: floating trigger to reopen the AI Companion
