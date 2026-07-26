@@ -14,6 +14,15 @@ export interface PageHeaderProps {
    * pages, which have AdminSidebar). Defaults to true everywhere else, so
    * every existing call site is unaffected. */
   showHomeLink?: boolean;
+  /** Optional second nav-out link, rendered as a plain (no-arrow) button
+   * to the left of the primary Home/Back link. Only the AI Tutor workspace
+   * pages pass this — they need two distinct destinations ("back to the AI
+   * Tutor dashboard", the primary homeHref/homeLabel above, vs. "back to
+   * the platform landing page", this one) now that /ai-tutor is its own
+   * workspace rather than reusing "Home" for both. Omitted (undefined) on
+   * every other call site, so nothing else renders a second button. */
+  secondaryHomeHref?: string;
+  secondaryHomeLabel?: string;
 }
 
 /** Standard page header used across app pages (My Space, My Library, My
@@ -21,7 +30,10 @@ export interface PageHeaderProps {
  * on the left, a Home/Back link (and optional extra content) on the
  * right. Kept deliberately simple so every page's header reads the same
  * way at a glance. */
-export default function PageHeader({ title, subtitle, homeLabel, homeHref = "/", badge, right, showHomeLink = true }: PageHeaderProps) {
+export default function PageHeader({
+  title, subtitle, homeLabel, homeHref = "/", badge, right, showHomeLink = true,
+  secondaryHomeHref, secondaryHomeLabel,
+}: PageHeaderProps) {
   return (
     <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
       <div>
@@ -33,6 +45,11 @@ export default function PageHeader({ title, subtitle, homeLabel, homeHref = "/",
       </div>
       <div className="flex flex-shrink-0 items-center gap-2">
         {right}
+        {secondaryHomeHref && secondaryHomeLabel && (
+          <Link href={secondaryHomeHref} className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">
+            {secondaryHomeLabel}
+          </Link>
+        )}
         {showHomeLink && (
           <Link href={homeHref} className="rounded-xl bg-black px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800">
             ← {homeLabel}

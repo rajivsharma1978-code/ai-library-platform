@@ -219,7 +219,14 @@ export default function MyLibraryPage() {
     <main className="min-h-screen bg-[radial-gradient(circle_at_top,#fff8e8_0%,#f3e6c8_45%,#eaddc0_100%)] p-6">
       <div className="mx-auto max-w-6xl">
 
-        <PageHeader title={t.myLibraryTitle} subtitle={t.myLibrarySubtitle} homeLabel={t.commonHome} />
+        <PageHeader
+          title={t.myLibraryTitle}
+          subtitle={t.myLibrarySubtitle}
+          homeHref="/ai-tutor"
+          homeLabel={t.navAiTutor}
+          secondaryHomeHref="/"
+          secondaryHomeLabel={t.platformHome}
+        />
 
         <LearningNav />
 

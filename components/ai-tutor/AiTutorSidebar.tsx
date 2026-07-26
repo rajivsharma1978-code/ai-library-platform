@@ -46,7 +46,10 @@ export default function AiTutorSidebar({ t }: { t: UIText }) {
     { href: "/notes", icon: "📝", label: t.navNotes },
     { href: "/quiz", icon: "❓", label: t.aiTutorNavQuizzes },
     { href: "/analytics", icon: "📊", label: t.aiTutorNavProgress },
-    { href: "/revision", icon: "🕘", label: t.aiTutorNavHistory },
+    // Was mislabeled "History" (t.aiTutorNavHistory) while pointing at
+    // /revision — no separate History feature exists anywhere in the app,
+    // so the label now matches its actual destination instead.
+    { href: "/revision", icon: "🕘", label: t.navRevision },
     { href: "/settings", icon: "⚙️", label: t.aiTutorNavSettings },
   ];
 
@@ -79,6 +82,19 @@ export default function AiTutorSidebar({ t }: { t: UIText }) {
           );
         })}
       </nav>
+
+      {/* Distinct from the "Home" nav item above (which means the AI Tutor
+          dashboard itself) — this is the way back to the platform landing
+          page, styled as a plain secondary link so the two are never
+          confused for the same destination. */}
+      <Link
+        href="/"
+        title={collapsed ? t.platformHome : undefined}
+        className={`ndl-press mx-2 mb-1 flex items-center gap-3 rounded-xl border border-amber-100 px-3 py-2.5 text-sm font-bold text-slate-500 transition-colors hover:bg-amber-50 hover:text-slate-900 ${collapsed ? "justify-center" : ""}`}
+      >
+        <span className="text-base leading-none">🏛️</span>
+        {!collapsed && <span className="truncate">{t.platformHome}</span>}
+      </Link>
 
       <button
         onClick={toggle}

@@ -198,7 +198,10 @@ export default function FlashcardsPage() {
         <PageHeader
           title={t.commonFlashcards}
           subtitle={t.flashcardsPageSubtitle}
-          homeLabel={t.commonHome}
+          homeHref="/ai-tutor"
+          homeLabel={t.navAiTutor}
+          secondaryHomeHref="/"
+          secondaryHomeLabel={t.platformHome}
         />
 
         <LearningNav />

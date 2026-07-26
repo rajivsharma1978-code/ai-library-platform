@@ -652,6 +652,7 @@ export const UI_TEXT = {
     /* ══════════ Global UI + Multilingual Standardization Pass ══════════ */
     /* common (shared across pages) */
     commonHome: "Home",
+    platformHome: "Platform Home",
     commonBack: "Back",
     commonPrevious: "Previous",
     commonNext: "Next",
@@ -1695,6 +1696,7 @@ export const UI_TEXT = {
     emptyQuestion: "कृपया एक प्रश्न दर्ज करें।",
 
     commonHome: "होम",
+    platformHome: "प्लेटफ़ॉर्म होम",
     commonBack: "वापस",
     commonPrevious: "पिछला",
     commonNext: "अगला",
@@ -2731,6 +2733,7 @@ export const UI_TEXT = {
     emptyQuestion: "ஒரு கேள்வியை உள்ளிடுங்கள்.",
 
     commonHome: "முகப்பு",
+    platformHome: "தளத்தின் முகப்பு",
     commonBack: "பின்செல்",
     commonPrevious: "முந்தைய",
     commonNext: "அடுத்து",
@@ -3767,6 +3770,7 @@ export const UI_TEXT = {
     emptyQuestion: "একটি প্রশ্ন লিখুন।",
 
     commonHome: "হোম",
+    platformHome: "প্ল্যাটফর্ম হোম",
     commonBack: "পিছনে",
     commonPrevious: "পূর্ববর্তী",
     commonNext: "পরবর্তী",
@@ -4803,6 +4807,7 @@ export const UI_TEXT = {
     emptyQuestion: "ఒక ప్రశ్నను నమోదు చేయండి.",
 
     commonHome: "హోమ్",
+    platformHome: "ప్లాట్‌ఫారమ్ హోమ్",
     commonBack: "వెనుకకు",
     commonPrevious: "మునుపటి",
     commonNext: "తదుపరి",
@@ -5839,6 +5844,7 @@ export const UI_TEXT = {
     emptyQuestion: "कृपया एक प्रश्न प्रविष्ट करा.",
 
     commonHome: "मुख्यपृष्ठ",
+    platformHome: "प्लॅटफॉर्म मुख्यपृष्ठ",
     commonBack: "मागे",
     commonPrevious: "मागील",
     commonNext: "पुढील",

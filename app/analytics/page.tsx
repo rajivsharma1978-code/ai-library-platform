@@ -194,7 +194,10 @@ export default function AnalyticsPage() {
         <PageHeader
           title={t.analyticsPageTitle}
           subtitle={t.analyticsPageSubtitle}
-          homeLabel={t.commonHome}
+          homeHref="/ai-tutor"
+          homeLabel={t.navAiTutor}
+          secondaryHomeHref="/"
+          secondaryHomeLabel={t.platformHome}
         />
 
         <LearningNav />

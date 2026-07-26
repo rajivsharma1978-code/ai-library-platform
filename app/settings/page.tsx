@@ -152,7 +152,10 @@ export default function SettingsPage() {
         <PageHeader
           title={t.aiTutorNavSettings}
           subtitle={t.settingsSubtitle}
-          homeLabel={t.commonHome}
+          homeHref="/ai-tutor"
+          homeLabel={t.navAiTutor}
+          secondaryHomeHref="/"
+          secondaryHomeLabel={t.platformHome}
         />
 
         <LearningNav />
