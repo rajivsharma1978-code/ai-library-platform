@@ -21,57 +21,38 @@
 // is absent by construction rather than reduced in magnitude.
 //
 // ── P0 fix: legacy pdf.js build ───────────────────────────────────────
-// That rebuild still failed on real iPhone Safari — the on-screen
-// diagnostics below caught the actual cause: `TypeError:
-// getOrInsertComputed is not a function`, thrown by pdfjs-dist's MODERN
-// "generic" build, which assumes a JS engine feature this iPhone's
-// WebKit doesn't have. The `getPdfDocument` prop this component receives
-// now resolves to a PDFDocumentProxy created by pdfjs-dist's LEGACY
-// build instead (see PremiumReaderPreviewContent's
-// getSharedMobilePdfDocument) — nothing in THIS file changed for that
-// fix, since PDFDocumentProxy/PDFPageProxy's public API (getPage,
-// getViewport, render, getTextContent) is identical either way; only
-// which build produced the object differs, entirely upstream of here.
-//
-// ── TEMPORARY: real-device stage diagnostics ─────────────────────────────
-// Real-device testing (iPhone Safari, iPhone Chrome) still shows the Retry
-// failure with no way to see WHERE in the pipeline it's failing, since the
-// dev-tools/console isn't available on-device. Everything under
-// "DIAGNOSTICS STATE" below computes that same information (same as a
-// console.log would have carried) and reports it to the PARENT via
-// onDiagnostic, which is what actually renders the on-screen diagnostic
-// card — see that comment for why. This is intentionally temporary: it
-// changes nothing about the render pipeline, timeout duration, or retry
-// behavior — it only observes and reports.
+// Real-device testing (iPhone Safari) surfaced a second issue beyond the
+// architecture above: `TypeError: getOrInsertComputed is not a function`,
+// thrown by pdfjs-dist's MODERN "generic" build, which assumes a JS engine
+// feature that iPhone's WebKit doesn't have. The `getPdfDocument` prop
+// this component receives now resolves to a PDFDocumentProxy created by
+// pdfjs-dist's LEGACY build instead (see PremiumReaderPreviewContent's
+// getSharedMobilePdfDocument) — nothing in THIS file changes for that fix,
+// since PDFDocumentProxy/PDFPageProxy's public API (getPage, getViewport,
+// render, getTextContent) is identical either way; only which build
+// produced the object differs, entirely upstream of here.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { UI_TEXT } from "@/lib/i18n";
 import { useLanguage } from "@/lib/useLanguage";
 
 export type MobilePdfPageProps = {
   pdfPath: string;
-  /** Diagnostics-only — identifies which book this render belongs to in
-   *  the on-screen diagnostic card. Not used by the render pipeline itself. */
-  bookId?: string;
   pageNumber: number;
   totalPages: number;
   zoom?: number;
   pan?: { x: number; y: number };
   isPanning?: boolean;
-  /** Resolves to an already-cached pdf.js document (keyed by book) owned
-   *  by the parent — see PremiumReaderPreviewContent's
-   *  getSharedMobilePdfDocument (pdfjs-dist's LEGACY build — see the
-   *  file-top "P0 fix" comment for why this must NOT be the same modern
-   *  document AI text extraction uses). */
+  /** Resolves to an already-cached pdf.js document (keyed by book+URL) —
+   *  see PremiumReaderPreviewContent's getSharedMobilePdfDocument
+   *  (pdfjs-dist's LEGACY build — see the file-top "P0 fix" comment for
+   *  why this must NOT be the same modern document AI text extraction
+   *  uses). */
   getPdfDocument: () => Promise<any>;
   /** Same shape as PdfBookSpread's onTextExtracted — plain pdf.js
    *  page.getTextContent() output, fired AFTER the canvas is visible and
    *  never blocking it. No text-selection layer is built from this; it
    *  only feeds AI Companion / Read Aloud's existing pageTexts state. */
   onTextExtracted?: (texts: Record<number, string>) => void;
-  /** Diagnostics-only — fired on mount and on every stage change, so the
-   *  parent can render the on-screen diagnostic card itself (see the
-   *  "DIAGNOSTICS STATE" comment below for why this is parent-owned). */
-  onDiagnostic?: (diag: Diagnostics) => void;
 };
 
 // Matches PdfBookSpread's own render-timeout contract (see that file's
@@ -107,88 +88,9 @@ function isCancelledError(err: unknown): boolean {
   return !!err && typeof err === "object" && (err as any).name === "RenderingCancelledException";
 }
 
-// ── DIAGNOSTICS STATE (temporary) ────────────────────────────────────────
-// Owned and rendered by the PARENT (PremiumReaderPreviewContent) — this
-// component only computes the facts (via patchDiag below) and reports them
-// upward via onDiagnostic. This is deliberate: a diagnostic card rendered
-// only inside THIS component's own JSX is invisible if this component
-// never successfully mounts in the first place, which is exactly the
-// failure mode real-device testing needs to be able to distinguish from
-// "mounted but the pipeline itself failed."
-export type Stage =
-  | "component-mounted"
-  | "measuring-container"
-  | "loading-document"
-  | "document-loaded"
-  | "loading-page"
-  | "page-loaded"
-  | "canvas-ready"
-  | "render-started"
-  | "render-completed"
-  | "visible"
-  | "failed"
-  | "timed-out";
-
-export interface Diagnostics {
-  stage: Stage;
-  /** TEMPORARY (book-switch verification) — the exact pdfPath prop this
-   *  render cycle is using, and the `${bookId}:${pdfUrl}` cache key the
-   *  parent's getSharedMobilePdfDocument resolves it through. Both must
-   *  reflect the CURRENTLY selected book, never a previous one — that's
-   *  the whole point of surfacing them here. */
-  resolvedPdfUrl: string | null;
-  mobileCacheKey: string | null;
-  containerWidth: number | null;
-  dpr: number | null;
-  docLoadStartedAt: number | null;
-  docLoadCompletedAt: number | null;
-  pageLoadStartedAt: number | null;
-  pageLoadCompletedAt: number | null;
-  nativeVpW: number | null;
-  nativeVpH: number | null;
-  displayScale: number | null;
-  renderScale: number | null;
-  canvasW: number | null;
-  canvasH: number | null;
-  canvasMounted: boolean | null;
-  renderStartedAt: number | null;
-  renderCompletedAt: number | null;
-  timeoutFired: boolean;
-  errorName: string | null;
-  errorMessage: string | null;
-  attemptNumber: number;
-}
-
-function initialDiagnostics(stage: Stage): Diagnostics {
-  return {
-    stage,
-    resolvedPdfUrl: null,
-    mobileCacheKey: null,
-    containerWidth: null,
-    dpr: null,
-    docLoadStartedAt: null,
-    docLoadCompletedAt: null,
-    pageLoadStartedAt: null,
-    pageLoadCompletedAt: null,
-    nativeVpW: null,
-    nativeVpH: null,
-    displayScale: null,
-    renderScale: null,
-    canvasW: null,
-    canvasH: null,
-    canvasMounted: null,
-    renderStartedAt: null,
-    renderCompletedAt: null,
-    timeoutFired: false,
-    errorName: null,
-    errorMessage: null,
-    attemptNumber: 1,
-  };
-}
-
 export default function MobilePdfPage({
-  pdfPath, bookId, pageNumber, totalPages, zoom = 100, pan = { x: 0, y: 0 }, isPanning = false,
-  getPdfDocument, onTextExtracted, onDiagnostic,
+  pdfPath, pageNumber, totalPages, zoom = 100, pan = { x: 0, y: 0 }, isPanning = false,
+  getPdfDocument, onTextExtracted,
 }: MobilePdfPageProps) {
   const { language } = useLanguage();
   const t = UI_TEXT[language];
@@ -202,22 +104,8 @@ export default function MobilePdfPage({
   const [visible, setVisible] = useState(false);
   const [failed, setFailed] = useState(false);
   const [retryToken, setRetryToken] = useState(0);
-  const [diag, setDiag] = useState<Diagnostics>(() => initialDiagnostics("component-mounted"));
 
   const safePage = Math.max(1, Math.min(Math.floor(pageNumber) || 1, Math.max(1, Math.floor(totalPages) || 1)));
-
-  const patchDiag = useCallback((patch: Partial<Diagnostics>) => {
-    setDiag((prev) => ({ ...prev, ...patch }));
-  }, []);
-
-  // Report every diagnostic change up to the parent, which owns the
-  // on-screen diagnostic card (see the file-top comment on Diagnostics).
-  // This fires on mount too (diag's initial value), which is itself the
-  // "MobilePdfPage mounted: yes" signal the parent needs — if this
-  // component never mounts, the parent simply never hears from it.
-  useEffect(() => {
-    onDiagnostic?.(diag);
-  }, [diag, onDiagnostic]);
 
   // ── Measure the card's available content width ──────────────────────
   // Two independent sources feed the same measure() call: ResizeObserver
@@ -229,7 +117,6 @@ export default function MobilePdfPage({
   // few consecutive readings, so it's a one-time startup safety net, not
   // an ongoing timer.
   useEffect(() => {
-    patchDiag({ stage: "measuring-container", dpr: typeof window !== "undefined" ? window.devicePixelRatio || 1 : null });
     const cardEl = cardRef.current;
     if (!cardEl) return;
     const card = cardEl;
@@ -240,7 +127,6 @@ export default function MobilePdfPage({
       if (Math.abs(next - last) < WIDTH_CHANGE_THRESHOLD_PX) return;
       last = next;
       setContainerWidth(next);
-      patchDiag({ containerWidth: next });
     }
     measure(card.clientWidth);
     const ro = new ResizeObserver((entries) => {
@@ -257,7 +143,7 @@ export default function MobilePdfPage({
     }
     setTimeout(poll, 200);
     return () => { cancelled = true; ro.disconnect(); };
-  }, [patchDiag]);
+  }, []);
 
   // ── Render the current page directly onto the one visible canvas ────
   useEffect(() => {
@@ -274,24 +160,6 @@ export default function MobilePdfPage({
     // a page's pixels under the wrong page number.
     setVisible(false);
     setFailed(false);
-    // Reset the diagnostic timeline for this new page/book/retry run —
-    // per-stage timestamps and any prior error are stale once a new run
-    // starts. containerWidth/dpr are carried over since they're still
-    // accurate. Elapsed-since-mount is NOT reset (mountedAtRef is fixed
-    // at true component mount, on purpose).
-    setDiag((prev) => ({
-      ...initialDiagnostics("measuring-container"),
-      containerWidth: prev.containerWidth,
-      dpr: prev.dpr,
-      // TEMPORARY (book-switch verification) — mirrors exactly what the
-      // parent's getSharedMobilePdfDocument keys its cache by, computed
-      // from THIS render cycle's own props (never a previous one — with
-      // MobilePdfPage now keyed by `${bookId}:${pdfPath}` in the parent,
-      // a book switch fully remounts this component, so there is no
-      // "previous cycle" for these to leak from).
-      resolvedPdfUrl: pdfPath,
-      mobileCacheKey: `${bookId}:${pdfPath}`,
-    }));
 
     let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
     const clearRenderTimeout = () => {
@@ -299,40 +167,29 @@ export default function MobilePdfPage({
     };
 
     function attempt(attemptNumber: number) {
-      patchDiag({ attemptNumber });
       timeoutHandle = setTimeout(() => {
         timeoutHandle = null;
         if (isCancelled()) return;
-        patchDiag({ stage: "timed-out", timeoutFired: true });
         if (attemptNumber < RENDER_MAX_ATTEMPTS) {
           id === renderIdRef.current && attempt(attemptNumber + 1);
         } else {
           setFailed(true);
-          patchDiag({ stage: "failed" });
         }
       }, RENDER_TIMEOUT_MS);
 
       (async () => {
-        patchDiag({ stage: "loading-document", docLoadStartedAt: performance.now() });
         const pdf = await getPdfDocument();
         if (isCancelled()) return;
-        patchDiag({ stage: "document-loaded", docLoadCompletedAt: performance.now() });
         if (safePage > (pdf.numPages || safePage)) return;
 
-        patchDiag({ stage: "loading-page", pageLoadStartedAt: performance.now() });
         const page = await pdf.getPage(safePage);
         if (isCancelled()) return;
-        patchDiag({ stage: "page-loaded", pageLoadCompletedAt: performance.now() });
 
         const nativeVp = page.getViewport({ scale: 1 });
         const displayScale = Math.max(0.1, Math.min(width / nativeVp.width, 4));
         const dpr = Math.min(typeof window !== "undefined" ? (window.devicePixelRatio || 1) : 1, DPR_CAP);
         const renderScale = Math.min(displayScale * dpr, MAX_RENDER_SCALE);
         const renderVp = page.getViewport({ scale: renderScale });
-        patchDiag({
-          nativeVpW: Math.round(nativeVp.width), nativeVpH: Math.round(nativeVp.height),
-          displayScale: Number(displayScale.toFixed(3)), renderScale: Number(renderScale.toFixed(3)),
-        });
 
         // canvasRef is normally already attached by the time this runs —
         // the <canvas> is unconditionally in the tree whenever `!failed`,
@@ -350,11 +207,7 @@ export default function MobilePdfPage({
           canvas = canvasRef.current;
         }
         if (isCancelled()) return;
-        if (!canvas) {
-          patchDiag({ canvasMounted: false });
-          return; // still not there — let the outer timeout's retry/failure path handle it, same as an ordinary stall
-        }
-        patchDiag({ stage: "canvas-ready", canvasMounted: true });
+        if (!canvas) return; // still not there — let the outer timeout's retry/failure path handle it, same as an ordinary stall
         const ctx = canvas.getContext("2d");
         if (!ctx) throw new Error("mobile-pdf-no-2d-context");
 
@@ -373,19 +226,15 @@ export default function MobilePdfPage({
         canvas.height = Math.max(1, Math.floor(renderVp.height));
         canvas.style.width = Math.floor(displayScale * nativeVp.width) + "px";
         canvas.style.height = Math.floor(displayScale * nativeVp.height) + "px";
-        patchDiag({ canvasW: canvas.width, canvasH: canvas.height });
 
-        patchDiag({ stage: "render-started", renderStartedAt: performance.now() });
         const task = page.render({ canvasContext: ctx, viewport: renderVp });
         renderTaskRef.current = task;
         await task.promise;
         if (renderTaskRef.current === task) renderTaskRef.current = null;
         if (isCancelled()) return;
-        patchDiag({ stage: "render-completed", renderCompletedAt: performance.now() });
 
         clearRenderTimeout();
         setVisible(true);
-        patchDiag({ stage: "visible" });
 
         // Best-effort, non-blocking — never delays the canvas becoming
         // visible above, and a failure here never surfaces as a render
@@ -405,17 +254,10 @@ export default function MobilePdfPage({
         if (isCancelled() || isCancelledError(err)) return;
         clearRenderTimeout();
         console.error("Mobile PDF render error:", err);
-        // Never swallowed — the exact name/message always land in the
-        // on-screen diagnostic card, not just the console.
-        patchDiag({
-          errorName: err instanceof Error ? err.name : Object.prototype.toString.call(err),
-          errorMessage: err instanceof Error ? err.message : String(err),
-        });
         if (attemptNumber < RENDER_MAX_ATTEMPTS) {
           id === renderIdRef.current && attempt(attemptNumber + 1);
         } else {
           setFailed(true);
-          patchDiag({ stage: "failed" });
         }
       });
     }
@@ -430,7 +272,7 @@ export default function MobilePdfPage({
         renderTaskRef.current = null;
       }
     };
-  }, [pdfPath, bookId, safePage, containerWidth, retryToken, getPdfDocument, onTextExtracted, patchDiag]);
+  }, [pdfPath, safePage, containerWidth, retryToken, getPdfDocument, onTextExtracted]);
 
   const retry = useCallback(() => setRetryToken((n) => n + 1), []);
 

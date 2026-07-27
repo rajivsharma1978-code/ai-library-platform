@@ -27,7 +27,6 @@ import HighlightColorPicker from "@/components/reader-premium/study/HighlightCol
 import NotePopover, { NoteAIAction } from "@/components/reader-premium/study/NotePopover";
 import type { RevisionAction } from "@/components/reader-premium/study/StudyWorkspace";
 import type { PageOverlayHighlight, PageOverlayNote } from "@/components/reader-premium/PdfBookSpread";
-import type { Diagnostics as MobilePdfDiagnostics } from "@/components/reader-premium/MobilePdfPage";
 import { getPrintedPageMap, getPageDescriptionForAI, resolvePrintedPageTarget, getDisplayLabel, getSpreadDisplayLabel } from "@/lib/printedPageMap";
 import { snapSpreadCursor, getNextSpreadCursor, getPrevSpreadCursor } from "@/lib/spreadNavigation";
 import { cleanOcrTextForAi, sanitizeForSpeech, resolvePageText } from "@/lib/premium-reader/pageTextExtractor";
@@ -569,19 +568,6 @@ export default function PremiumReaderPreviewContent() {
   }, []);
   const isMobileViewport = viewportWidth < 640;
 
-  // ── TEMPORARY: mobile PDF stage diagnostics ──────────────────────────
-  // Owned HERE, not inside MobilePdfPage, specifically so the diagnostic
-  // card stays visible even if MobilePdfPage never successfully mounts on
-  // a real device — real-device testing (iPhone Safari, iPhone Chrome)
-  // reported seeing only the ordinary Retry screen with no diagnostic
-  // panel at all, which is exactly the ambiguity this resolves: `null`
-  // here means MobilePdfPage never reported in (never mounted, or crashed
-  // before its first effect), which is itself the answer, not a guess.
-  // Reset whenever the book changes so a stale diagnostic from a
-  // previously-open book can never be mistaken for the current one.
-  const [mobileDiag, setMobileDiag] = useState<MobilePdfDiagnostics | null>(null);
-  useEffect(() => { setMobileDiag(null); }, [bookId]);
-
   // ── Phase C1: mobile toolbar "More" sheet ────────────────────────────
   // Below 640px the top chrome collapses from 2 flex-wrap rows (5 visual
   // rows once wrapped) into 2 fixed rows, with the less-frequently-used
@@ -716,64 +702,29 @@ export default function PremiumReaderPreviewContent() {
     return promise;
   }, [bookId, currentBook.pdf]);
 
-  // ── P0 fix: legacy pdf.js build, mobile-only ──────────────────────────
-  // Real-device diagnostics on branch test/mobile-render-p0 (iPhone
-  // Safari) caught the exact failure: `TypeError: getOrInsertComputed is
-  // not a function`, thrown inside pdfjs-dist's MODERN "generic" build
-  // (the same one getSharedPdfDocument above uses) — that build assumes a
-  // JS engine feature this iPhone's WebKit/JavaScriptCore doesn't have.
-  // pdfjs-dist ships a separate "legacy" build specifically for broader
-  // engine compatibility, same public API (getDocument/getPage/render/
-  // getTextContent — nothing in MobilePdfPage's own code needs to
-  // change), at pdfjs-dist/legacy/build/pdf.mjs — confirmed to exist in
-  // the installed 5.7.284 by inspecting node_modules directly (no
-  // "exports" map in pdfjs-dist's package.json restricts this subpath).
-  // Its worker MUST be the matching legacy worker
-  // (pdfjs-dist/legacy/build/pdf.worker.min.mjs, copied to
-  // public/pdf.worker.legacy.min.mjs — a version-matched twin of the
-  // existing public/pdf.worker.min.mjs, same pattern), never the modern
-  // one — mixing them is a real version-mismatch risk pdf.js explicitly
-  // warns about.
+  // ── Mobile pdf.js document loader ──────────────────────────────────
+  // Uses pdfjs-dist's LEGACY build (pdfjs-dist/legacy/build/pdf.mjs),
+  // not the modern "generic" one getSharedPdfDocument above uses — the
+  // modern build relies on a JS engine feature iOS Safari's WebKit
+  // doesn't implement. Same public API either way (getDocument/getPage/
+  // render/getTextContent), so nothing in MobilePdfPage itself depends
+  // on which build produced the document. Its worker must be the
+  // matching legacy build too (public/pdf.worker.legacy.min.mjs, a
+  // version-matched twin of public/pdf.worker.min.mjs) — pdf.js warns
+  // against mixing worker/API versions.
   //
-  // A SEPARATE cache + module import (Option A, not a shared/toggled
-  // loader) — desktop's PdfBookSpread and this file's own
-  // getSharedPdfDocument (AI text extraction) are completely unaffected;
-  // neither this cache nor the legacy module is ever touched unless
-  // MobilePdfPage itself calls this function, which only happens below
+  // A fully separate cache + module import from getSharedPdfDocument —
+  // desktop's PdfBookSpread and AI text extraction never touch this
+  // cache or the legacy module; only MobilePdfPage does, and only below
   // 640px.
   //
-  // ── Book-switch fix ────────────────────────────────────────────────
-  // Real-device testing found every book switch on mobile kept rendering
-  // the FIRST book opened that session (AI Tech → correct; Nalanda,
-  // Chandrayaan afterward → still AI Tech pages, despite the cover/title
-  // updating correctly). Root cause, traced end to end: `<MobilePdfPage>`
-  // was rendered with no `key`, so React reused the exact same component
-  // instance — same canvasRef/renderTaskRef/renderIdRef, same
-  // once-only "measure container" effect — across every book switch
-  // instead of tearing it down, while this loader took NO parameters and
-  // cached purely by `bookId` via a useCallback closure over
-  // `currentBook.pdf`. Neither of those was independently, provably
-  // wrong in isolation (the closure DOES get a fresh `currentBook.pdf`
-  // whenever its declared deps change, and the render effect DOES list
-  // `pdfPath`/`getPdfDocument` as deps) — but together they meant NO
-  // book switch ever forced a clean, from-scratch render cycle, leaving
-  // a real opening for a stale/in-flight document resolution to land on
-  // the wrong book's canvas under real-device timing this session's
-  // prior browser-tool testing never exercised. Fixed by removing every
-  // opportunity for that ambiguity at once:
-  //   1. This loader now takes an EXPLICIT (bookId, pdfUrl) pair instead
-  //      of reading them from closure — the caller can never pass a
-  //      stale pair without also passing a stale bookId/pdfUrl, which is
-  //      exactly what MobilePdfPage's own props already guarantee.
-  //   2. The cache key is `${bookId}:${pdfUrl}` — never bookId alone —
-  //      so a future bookId/URL mismatch (e.g. a catalog edit) can never
-  //      silently reuse another book's cached document.
-  //   3. `<MobilePdfPage key={...}>` below now includes the same
-  //      `${bookId}:${pdfUrl}` — forcing React to fully unmount/remount
-  //      (fresh canvasRef, fresh renderTaskRef, fresh renderIdRef, fresh
-  //      containerWidth measurement) on every book switch, so nothing
-  //      from the previous book can persist into the next render cycle
-  //      even in principle.
+  // Takes an EXPLICIT (bookId, pdfUrl) pair rather than reading them
+  // from closure, and caches by the composite `${bookId}:${pdfUrl}` —
+  // never `bookId` alone — so a document can never be resolved or
+  // reused for the wrong book. `<MobilePdfPage key={...}>` below uses
+  // the same composite key, forcing a full unmount/remount on every
+  // book switch so no ref or in-flight promise from the previous book
+  // can carry into the next render cycle.
   const mobilePdfDocCacheRef = useRef<Record<string, Promise<any>>>({});
   const getSharedMobilePdfDocument = useCallback((forBookId: string, pdfUrl: string): Promise<any> => {
     const cacheKey = `${forBookId}:${pdfUrl}`;
@@ -3052,14 +3003,12 @@ export default function PremiumReaderPreviewContent() {
               <MobilePdfPage
                 key={`${bookId}:${currentBook.pdf}`}
                 pdfPath={currentBook.pdf}
-                bookId={bookId}
                 pageNumber={readerPage}
                 totalPages={totalPages}
                 zoom={zoom} pan={pan}
                 isPanning={isPanning}
                 getPdfDocument={getMobilePdfDocument}
                 onTextExtracted={handleTextExtracted}
-                onDiagnostic={setMobileDiag}
               />
             ) : (
               <PdfBookSpread
@@ -3079,38 +3028,6 @@ export default function PremiumReaderPreviewContent() {
               />
             )}
           </div>
-
-          {/* ── TEMPORARY: mobile PDF diagnostic card — parent-owned (see
-              the mobileDiag state declaration above for why) so it renders
-              directly underneath the Retry button regardless of whether
-              MobilePdfPage itself ever successfully mounts. Only shown
-              below 640px; never appears for desktop/tablet. */}
-          {isMobileViewport && (
-            <div className="mx-auto mt-2 w-full max-w-[1340px] flex-shrink-0 select-text rounded-2xl bg-slate-950/95 px-3 py-2 text-[10px] leading-snug text-white shadow-lg">
-              <p className="mb-1 text-[11px] font-black text-amber-300">Mobile PDF Diagnostic — temporary test build</p>
-              {[
-                ["MobilePdfPage mounted", mobileDiag ? "yes" : "no"],
-                ["current stage", mobileDiag?.stage ?? "n/a (never reported)"],
-                ["resolved PDF URL", mobileDiag?.resolvedPdfUrl ?? "—"],
-                ["mobile document cache key", mobileDiag?.mobileCacheKey ?? "—"],
-                ["attempt", mobileDiag ? `${mobileDiag.attemptNumber} / 2` : "—"],
-                ["document loaded", mobileDiag?.docLoadCompletedAt != null ? "yes" : "no"],
-                ["page loaded", mobileDiag?.pageLoadCompletedAt != null ? "yes" : "no"],
-                ["timeout fired", mobileDiag?.timeoutFired ? "yes" : "no"],
-                ["error name", mobileDiag?.errorName ?? "—"],
-                ["error message", mobileDiag?.errorMessage ?? "—"],
-                ["viewport width (window.innerWidth)", viewportWidth],
-                ["isMobileViewport", String(isMobileViewport)],
-                ["bookId", bookId],
-                ["requested page", readerPage],
-              ].map(([label, value]) => (
-                <div key={label as string} className="flex justify-between gap-3 border-b border-white/10 py-0.5 last:border-b-0">
-                  <span className="text-amber-300/80">{label}</span>
-                  <span className="text-right text-white break-all">{value as React.ReactNode}</span>
-                </div>
-              ))}
-            </div>
-          )}
 
           {/* ── Mobile: floating trigger to reopen the AI Companion
               overlay (no permanent column on a phone-sized screen). ──── */}
