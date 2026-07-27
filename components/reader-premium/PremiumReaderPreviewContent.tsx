@@ -44,6 +44,15 @@ const PdfBookSpread = dynamic(
   { ssr: false }
 );
 
+// P0: dedicated mobile PDF renderer — mounted instead of PdfBookSpread
+// only below the 640px viewport threshold (isMobileViewport). Code-split
+// the same way as PdfBookSpread so neither renderer's code ships to the
+// platform that doesn't use it.
+const MobilePdfPage = dynamic(
+  () => import("@/components/reader-premium/MobilePdfPage"),
+  { ssr: false }
+);
+
 // ── Languages ────────────────────────────────────────────────────────
 const LANGUAGES = ["English","Hindi","Tamil","Bengali","Marathi","Telugu"] as const;
 type Lang = typeof LANGUAGES[number];
@@ -676,8 +685,12 @@ export default function PremiumReaderPreviewContent() {
   // own rendering pipeline), keyed by book — reused by BOTH entire-book
   // extraction and chapter-scope's bounded page-range extraction below,
   // so switching scopes never opens a second document unnecessarily.
+  // Wrapped in useCallback (stable per bookId/pdf). Uses pdfjs-dist's
+  // MODERN "generic" build (bare `import("pdfjs-dist")` → its
+  // package.json "main", pdfjs-dist/build/pdf.mjs) — NOT used by
+  // MobilePdfPage; see getSharedMobilePdfDocument below for why.
   const pdfDocCacheRef = useRef<Record<string, Promise<any>>>({});
-  function getSharedPdfDocument(): Promise<any> {
+  const getSharedPdfDocument = useCallback((): Promise<any> => {
     const existing = pdfDocCacheRef.current[bookId];
     if (existing) return existing;
     const promise = (async () => {
@@ -687,7 +700,55 @@ export default function PremiumReaderPreviewContent() {
     })();
     pdfDocCacheRef.current[bookId] = promise;
     return promise;
-  }
+  }, [bookId, currentBook.pdf]);
+
+  // ── Mobile pdf.js document loader ──────────────────────────────────
+  // Uses pdfjs-dist's LEGACY build (pdfjs-dist/legacy/build/pdf.mjs),
+  // not the modern "generic" one getSharedPdfDocument above uses — the
+  // modern build relies on a JS engine feature iOS Safari's WebKit
+  // doesn't implement. Same public API either way (getDocument/getPage/
+  // render/getTextContent), so nothing in MobilePdfPage itself depends
+  // on which build produced the document. Its worker must be the
+  // matching legacy build too (public/pdf.worker.legacy.min.mjs, a
+  // version-matched twin of public/pdf.worker.min.mjs) — pdf.js warns
+  // against mixing worker/API versions.
+  //
+  // A fully separate cache + module import from getSharedPdfDocument —
+  // desktop's PdfBookSpread and AI text extraction never touch this
+  // cache or the legacy module; only MobilePdfPage does, and only below
+  // 640px.
+  //
+  // Takes an EXPLICIT (bookId, pdfUrl) pair rather than reading them
+  // from closure, and caches by the composite `${bookId}:${pdfUrl}` —
+  // never `bookId` alone — so a document can never be resolved or
+  // reused for the wrong book. `<MobilePdfPage key={...}>` below uses
+  // the same composite key, forcing a full unmount/remount on every
+  // book switch so no ref or in-flight promise from the previous book
+  // can carry into the next render cycle.
+  const mobilePdfDocCacheRef = useRef<Record<string, Promise<any>>>({});
+  const getSharedMobilePdfDocument = useCallback((forBookId: string, pdfUrl: string): Promise<any> => {
+    const cacheKey = `${forBookId}:${pdfUrl}`;
+    const existing = mobilePdfDocCacheRef.current[cacheKey];
+    if (existing) return existing;
+    const promise = (async () => {
+      const pdfjsLib = await import("pdfjs-dist/legacy/build/pdf.mjs");
+      pdfjsLib.GlobalWorkerOptions.workerSrc = "/pdf.worker.legacy.min.mjs";
+      return pdfjsLib.getDocument(pdfUrl).promise;
+    })();
+    mobilePdfDocCacheRef.current[cacheKey] = promise;
+    return promise;
+  }, []);
+
+  // Zero-arg wrapper for the prop MobilePdfPage actually expects
+  // (`getPdfDocument: () => Promise<any>`) — deliberately kept stable
+  // (via useCallback) across renders where bookId/currentBook.pdf are
+  // unchanged, so unrelated parent re-renders (zoom, pan, AI panel
+  // state, …) can never make MobilePdfPage's own render effect think a
+  // new document load is needed. Only recreated — same as before this
+  // fix — when the book itself actually changes.
+  const getMobilePdfDocument = useCallback((): Promise<any> => {
+    return getSharedMobilePdfDocument(bookId, currentBook.pdf);
+  }, [bookId, currentBook.pdf, getSharedMobilePdfDocument]);
 
   // Dev-only visibility into what each AI scope actually sent — never
   // shown in the UI, gated on NODE_ENV so it's a no-op in production.
@@ -2641,18 +2702,13 @@ export default function PremiumReaderPreviewContent() {
                           className="ndl-press flex h-11 flex-shrink-0 items-center rounded-xl bg-amber-50/70 px-4 text-sm font-bold text-slate-700 ring-1 ring-amber-100">{t.premiumReaderGo}</button>
                       </form>
 
-                      <div className="grid grid-cols-2 gap-2">
-                        <button onClick={() => toggleMode("text")}
-                          className={`ndl-press flex h-11 items-center justify-center gap-1.5 rounded-xl text-sm font-bold ${
-                            textSelectMode ? "bg-orange-600 text-white shadow" : "bg-amber-50/70 text-slate-700 ring-1 ring-amber-100"}`}>
-                          {textSelectMode ? `📖 ${t.premiumReaderPageTurn}` : `📝 ${t.premiumReaderTextSelect}`}
-                        </button>
-                        <button onClick={() => toggleMode("image")}
-                          className={`ndl-press flex h-11 items-center justify-center gap-1.5 rounded-xl text-sm font-bold ${
-                            imageSelectMode ? "bg-slate-900 text-white shadow" : "bg-amber-50/70 text-slate-700 ring-1 ring-amber-100"}`}>
-                          {imageSelectMode ? `✕ ${t.commonCancel}` : `📐 ${t.premiumReaderImageSelect}`}
-                        </button>
-                      </div>
+                      {/* P0: Text Select / Image Select removed from the
+                          mobile sheet for now — both depend on
+                          PdfBookSpread's text layer / crop-select target,
+                          which MobilePdfPage doesn't render yet (see that
+                          component's file-top comment). Untouched on
+                          desktop/tablet, where PdfBookSpread still owns
+                          both modes exactly as before. */}
 
                       <div className="flex items-center justify-between rounded-xl bg-amber-50/70 px-3 py-2 ring-1 ring-amber-100">
                         <span className="text-sm font-bold text-slate-700">🌐 {t.navLanguages}</span>
@@ -2938,21 +2994,39 @@ export default function PremiumReaderPreviewContent() {
             >
               ›
             </button>
-            <PdfBookSpread
-              pdfPath={currentBook.pdf}
-              pageNumber={readerPage}
-              totalPages={String(totalPages)}
-              layoutMode={isSpreadBook ? "spread" : "single"}
-              zoom={zoom} pan={pan}
-              textSelectMode={textSelectMode}
-              imageSelectMode={imageSelectMode}
-              pageHighlights={pageHighlightsForSpread}
-              pageNotes={pageNotesForSpread}
-              bookId={bookId}
-              onPageRendered={handlePageRendered}
-              onTextExtracted={handleTextExtracted}
-              isPanning={isPanning}
-            />
+            {/* P0: below 640px, MobilePdfPage replaces PdfBookSpread
+                entirely — a deliberately minimal single-page renderer (no
+                spread, no crop-detection, no text/image-selection layer,
+                no preloading). Desktop/tablet render exactly the same
+                PdfBookSpread call as before, byte-for-byte unchanged. */}
+            {isMobileViewport ? (
+              <MobilePdfPage
+                key={`${bookId}:${currentBook.pdf}`}
+                pdfPath={currentBook.pdf}
+                pageNumber={readerPage}
+                totalPages={totalPages}
+                zoom={zoom} pan={pan}
+                isPanning={isPanning}
+                getPdfDocument={getMobilePdfDocument}
+                onTextExtracted={handleTextExtracted}
+              />
+            ) : (
+              <PdfBookSpread
+                pdfPath={currentBook.pdf}
+                pageNumber={readerPage}
+                totalPages={String(totalPages)}
+                layoutMode={isSpreadBook ? "spread" : "single"}
+                zoom={zoom} pan={pan}
+                textSelectMode={textSelectMode}
+                imageSelectMode={imageSelectMode}
+                pageHighlights={pageHighlightsForSpread}
+                pageNotes={pageNotesForSpread}
+                bookId={bookId}
+                onPageRendered={handlePageRendered}
+                onTextExtracted={handleTextExtracted}
+                isPanning={isPanning}
+              />
+            )}
           </div>
 
           {/* ── Mobile: floating trigger to reopen the AI Companion
