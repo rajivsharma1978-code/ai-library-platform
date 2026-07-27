@@ -70,6 +70,14 @@ type AICompanionProps = {
   compact: boolean;
   onToggleCompact: () => void;
 
+  /** Phase D2: renders the Premium Reader's mobile bottom-sheet
+   *  presentation instead of the desktop/tablet panel below — same
+   *  props, same handlers (onAsk/onQuickAction/StudyWorkspace/etc.),
+   *  only a different, simpler default view (Ask AI + 4 quick actions +
+   *  "More AI →" categories) per that phase's spec. Desktop never
+   *  passes this, so its own branch is untouched. */
+  mobileSheet?: boolean;
+
   // ── Study Workspace tab (unchanged data/behavior — visual theme only) ─
   studyHighlights: StoredHighlight[];
   studyNotes: StoredNote[];
@@ -221,10 +229,14 @@ export default function AICompanion({
   studyHighlights, studyNotes, studyBookmarks, printedPageMap,
   onStudyJumpToPage, onStudyDeleteHighlight, onStudyDeleteNote, onStudyDeleteBookmark,
   onStudyGenerateFromHighlight, studyGeneratingId, openStudyTabSignal,
+  mobileSheet = false,
 }: AICompanionProps) {
   const [outerTab, setOuterTab] = useState<"companion" | "study">("companion");
   const [copied, setCopied] = useState(false);
   const [feedback, setFeedback] = useState<"like" | "dislike" | null>(null);
+  // ── Phase D2: mobile "More AI →" categories ──────────────────────────
+  const [showMoreCategories, setShowMoreCategories] = useState(false);
+  const [activeCategory, setActiveCategory] = useState<"learning" | "study" | "language" | "research" | null>(null);
 
   // Platform UI language — deliberately separate from the `language` prop
   // above, which is the AI response language (see the prop's own doc
@@ -283,6 +295,232 @@ export default function AICompanion({
         >
           »
         </button>
+      </div>
+    );
+  }
+
+  // ── Phase D2: mobile bottom-sheet presentation ───────────────────────
+  // A leaner default view than the desktop panel below — Ask AI input,
+  // the response (when there is one), 4 primary Quick Actions, and a
+  // "More AI →" expandable category list — but every action still calls
+  // the exact same onAsk/onQuickAction/onScopeChange/onDepthChange/
+  // onLanguageChange handlers the desktop panel uses, and Study still
+  // renders the same <StudyWorkspace> untouched. Nothing here is a new
+  // AI capability, only a different arrangement of existing ones.
+  if (mobileSheet) {
+    const primaryActions = QUICK_ACTIONS.filter(a => a.key === "explain" || a.key === "summarize" || a.key === "translate" || a.key === "quiz");
+    const learningActions = QUICK_ACTIONS.filter(a => a.key === "flashcards" || a.key === "revision");
+
+    const categoryTileCls = (active: boolean) =>
+      `ndl-press flex flex-col items-center gap-1 rounded-2xl px-2 py-3 text-center text-[11px] font-bold ${
+        active ? "bg-orange-600 text-white shadow" : "bg-amber-50/70 text-slate-700 hover:bg-amber-100"}`;
+
+    return (
+      <div className="ndl-fade-in-scale flex h-full max-h-[88vh] flex-col bg-white">
+        <div className="mx-auto mt-3 h-1 w-10 flex-shrink-0 rounded-full bg-slate-200" />
+        <div className="flex flex-shrink-0 items-center justify-between gap-2 px-5 py-3">
+          <h2 className="text-base font-black leading-snug text-slate-900">🤖 {t.aiCompanionHeading}</h2>
+          <div className="flex flex-shrink-0 items-center gap-2">
+            <div className="flex gap-1 rounded-full bg-amber-50 p-1">
+              <button
+                onClick={() => { setOuterTab("companion"); setShowMoreCategories(false); }}
+                className={`ndl-press rounded-full px-3 py-1.5 text-xs font-bold ${
+                  outerTab === "companion" ? "bg-orange-600 text-white" : "text-slate-500 hover:text-slate-800"}`}
+              >
+                {t.aiCompanionTabAskAi}
+              </button>
+              <button
+                onClick={() => setOuterTab("study")}
+                className={`ndl-press rounded-full px-3 py-1.5 text-xs font-bold ${
+                  outerTab === "study" ? "bg-orange-600 text-white" : "text-slate-500 hover:text-slate-800"}`}
+              >
+                {t.aiCompanionTabStudy}
+              </button>
+            </div>
+            <button
+              onClick={onToggleCompact}
+              title={t.aiCompanionCollapse}
+              className="ndl-press flex h-8 w-8 items-center justify-center rounded-full bg-amber-50 text-slate-600 hover:bg-amber-100"
+            >
+              ✕
+            </button>
+          </div>
+        </div>
+
+        {outerTab === "study" ? (
+          <div className="min-h-0 flex-1 overflow-y-auto p-4">
+            <StudyWorkspace
+              bookTitle={bookTitle}
+              highlights={studyHighlights}
+              notes={studyNotes}
+              bookmarks={studyBookmarks}
+              printedPageMap={printedPageMap}
+              onJumpToPage={onStudyJumpToPage}
+              onDeleteHighlight={onStudyDeleteHighlight}
+              onDeleteNote={onStudyDeleteNote}
+              onDeleteBookmark={onStudyDeleteBookmark}
+              onGenerateFromHighlight={onStudyGenerateFromHighlight}
+              generatingId={studyGeneratingId}
+            />
+          </div>
+        ) : showMoreCategories ? (
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+            <div className="flex-shrink-0 px-5 pt-1">
+              <button
+                onClick={() => { setShowMoreCategories(false); setActiveCategory(null); }}
+                className="ndl-press inline-flex items-center gap-1 rounded-full bg-amber-50 px-3 py-1.5 text-xs font-bold text-slate-600 hover:bg-amber-100"
+              >
+                ← {t.commonBack}
+              </button>
+            </div>
+            <div className="min-h-0 flex-1 overflow-y-auto px-5 py-3">
+              <div className="grid grid-cols-4 gap-2">
+                <button onClick={() => setActiveCategory(c => c === "learning" ? null : "learning")} className={categoryTileCls(activeCategory === "learning")}>
+                  <span className="text-lg leading-none" aria-hidden>🧠</span>{t.aiCompanionCategoryLearning}
+                </button>
+                <button onClick={() => { setOuterTab("study"); setShowMoreCategories(false); }} className={categoryTileCls(false)}>
+                  <span className="text-lg leading-none" aria-hidden>🔖</span>{t.aiCompanionTabStudy}
+                </button>
+                <button onClick={() => setActiveCategory(c => c === "language" ? null : "language")} className={categoryTileCls(activeCategory === "language")}>
+                  <span className="text-lg leading-none" aria-hidden>🌍</span>{t.navLanguages}
+                </button>
+                <button onClick={() => setActiveCategory(c => c === "research" ? null : "research")} className={categoryTileCls(activeCategory === "research")}>
+                  <span className="text-lg leading-none" aria-hidden>🔬</span>{t.aiCompanionCategoryResearch}
+                </button>
+              </div>
+
+              {activeCategory === "learning" && (
+                <div className="mt-3 flex flex-wrap gap-1.5">
+                  {learningActions.map((a) => (
+                    <button
+                      key={a.key}
+                      disabled={isLoading}
+                      onClick={() => { onQuickAction(a.label, a.prompt(language)); setShowMoreCategories(false); }}
+                      className="ndl-press rounded-full bg-amber-50/70 px-3 py-1.5 text-[11px] font-semibold text-slate-600 hover:bg-orange-100 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {QUICK_ACTION_TEXT[a.key].label}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {activeCategory === "language" && (
+                <div className="mt-3 flex items-center justify-between rounded-2xl bg-amber-50/60 px-3 py-2.5">
+                  <span className="text-[11px] font-semibold text-slate-500">🌐 {t.commonRespondingIn} <span className="font-bold text-slate-700">{language}</span></span>
+                  <LanguagePopover variant="link" language={language} onLanguageChange={onLanguageChange} availableLanguages={availableLanguages} />
+                </div>
+              )}
+
+              {activeCategory === "research" && (
+                <div className="mt-3 flex items-center gap-2 rounded-2xl bg-amber-50/60 p-2.5">
+                  <div className="flex min-w-0 flex-1 items-center gap-1.5">
+                    <label className="flex-shrink-0 text-[10px] font-bold uppercase tracking-wide text-slate-400">{t.commonScope}</label>
+                    <select
+                      value={hasActiveSelection ? "selection" : scope}
+                      disabled={hasActiveSelection}
+                      onChange={(e) => onScopeChange(e.target.value as "page" | "chapter" | "book")}
+                      className="ndl-press w-full min-w-0 rounded-lg bg-white/80 px-2 py-1.5 text-[11px] font-bold text-slate-700 outline-none disabled:opacity-70"
+                    >
+                      {hasActiveSelection && <option value="selection">📎 {t.aiCompanionScopeSelection}</option>}
+                      {SCOPE_OPTIONS.map((opt) => (<option key={opt.value} value={opt.value}>{opt.icon} {SCOPE_TEXT[opt.value]}</option>))}
+                    </select>
+                  </div>
+                  <div className="flex min-w-0 flex-1 items-center gap-1.5">
+                    <label className="flex-shrink-0 text-[10px] font-bold uppercase tracking-wide text-slate-400">{t.commonDepth}</label>
+                    <select
+                      value={depth}
+                      onChange={(e) => onDepthChange(e.target.value as "Beginner" | "Exam-focused" | "Research-level")}
+                      className="ndl-press w-full min-w-0 rounded-lg bg-white/80 px-2 py-1.5 text-[11px] font-bold text-slate-700 outline-none"
+                    >
+                      {DEPTH_OPTIONS.map((opt) => (<option key={opt.value} value={opt.value}>{opt.icon} {DEPTH_TEXT[opt.value]}</option>))}
+                    </select>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        ) : (
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+            <div className="min-h-0 flex-1 overflow-y-auto px-5 pt-1">
+              <div data-dock-avoid className="flex gap-2">
+                <input
+                  value={aiQuestion}
+                  onChange={(e) => setAiQuestion(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") onAsk(); }}
+                  placeholder={t.aiCompanionAskPlaceholder.replace("{language}", language)}
+                  className="min-w-0 flex-1 rounded-2xl border border-amber-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition-shadow focus:ring-2 focus:ring-orange-400"
+                />
+                <button
+                  onClick={onAsk}
+                  disabled={isLoading}
+                  className="ndl-press flex-shrink-0 rounded-2xl bg-orange-600 px-5 py-3 text-sm font-bold text-white shadow hover:bg-orange-700 disabled:opacity-50"
+                >
+                  {t.commonSend}
+                </button>
+              </div>
+
+              {(isLoading || aiResponse.trim()) && (
+                <div className={`mt-3 rounded-[1.75rem] p-5 text-[13px] text-slate-800 shadow-inner ${aiFailed ? "bg-red-50/40" : "bg-amber-50/50"}`}>
+                  {isLoading ? (
+                    <div className="flex flex-col gap-3" aria-label={t.aiCompanionThinking}>
+                      <div className="ndl-skeleton h-3.5 w-[85%] rounded-full" />
+                      <div className="ndl-skeleton h-3.5 w-full rounded-full" />
+                      <div className="ndl-skeleton h-3.5 w-[70%] rounded-full" />
+                    </div>
+                  ) : (
+                    <div key={aiResponse.slice(0, 40)} className="ndl-fade-in-scale">
+                      <MarkdownBlock text={aiResponse} />
+                      {aiFailed && onRetry && (
+                        <button onClick={onRetry} className="ndl-press mt-3 inline-flex items-center gap-1 rounded-full bg-red-100 px-3 py-1.5 text-[11px] font-bold text-red-700 hover:bg-red-200">
+                          🔁 {t.commonRetry}
+                        </button>
+                      )}
+                      {!isLoading && aiResponse.trim() && onReadAiResponse && (
+                        <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-amber-100/80 pt-3">
+                          <button onClick={onReadAiResponse} className="ndl-press inline-flex items-center gap-1 rounded-full bg-orange-100 px-3 py-1.5 text-[11px] font-bold text-orange-700 hover:bg-orange-200">
+                            {aiSpeechState === "loading" ? `⏳ ${t.readerPreparing}`
+                              : aiSpeechState === "speaking" ? `⏸ ${t.premiumReaderPause}`
+                              : aiSpeechState === "paused" ? `▶ ${t.premiumReaderResume}`
+                              : `🔊 ${t.aiCompanionReadResponse}`}
+                          </button>
+                          {(aiSpeechState === "speaking" || aiSpeechState === "paused") && onStopAiResponse && (
+                            <button onClick={onStopAiResponse} className="ndl-press inline-flex items-center gap-1 rounded-full bg-red-50 px-3 py-1.5 text-[11px] font-bold text-red-600 hover:bg-red-100">
+                              ⏹ {t.premiumReaderStop}
+                            </button>
+                          )}
+                          <button onClick={copyResponse} className="ndl-press inline-flex items-center gap-1 rounded-full bg-slate-100 px-3 py-1.5 text-[11px] font-bold text-slate-600 hover:bg-slate-200">
+                            {copied ? `✅ ${t.commonCopied}` : `📋 ${t.commonCopy}`}
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            <div className="flex-shrink-0 border-t border-amber-100 px-5 pt-3" style={{ paddingBottom: "max(1rem, env(safe-area-inset-bottom))" }}>
+              <div className="flex flex-wrap gap-1.5">
+                {primaryActions.map((a) => (
+                  <button
+                    key={a.key}
+                    disabled={isLoading}
+                    onClick={() => onQuickAction(a.label, a.prompt(language))}
+                    className="ndl-press rounded-full bg-amber-100 px-3 py-1.5 text-[11px] font-bold text-slate-800 hover:bg-orange-100 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {QUICK_ACTION_TEXT[a.key].label}
+                  </button>
+                ))}
+              </div>
+              <button
+                onClick={() => setShowMoreCategories(true)}
+                className="ndl-press mt-2.5 flex w-full items-center justify-center gap-1 rounded-2xl bg-amber-50/70 py-2.5 text-xs font-bold text-slate-600 hover:bg-amber-100"
+              >
+                {t.aiCompanionMoreAi}
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     );
   }

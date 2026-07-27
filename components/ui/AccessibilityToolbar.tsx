@@ -77,7 +77,27 @@ const TEXT: Record<Language, Record<string, string>> = {
   },
 };
 
-export default function AccessibilityToolbar() {
+type AccessibilityToolbarProps = {
+  /** Phase D2: the Premium Reader's mobile bottom nav has its own
+   *  "Accessibility" entry point that duplicates this component's own
+   *  floating ♿ trigger — set true (mobile-only, from that one call
+   *  site) to hide just the trigger button. The panel/open state, the
+   *  ndl-open-accessibility-panel listener below, VoiceAssistant, and
+   *  the Reading Ruler/Mask are all untouched and keep working. Every
+   *  other page in the app renders <AccessibilityToolbar /> with no
+   *  props, so this defaults to false and changes nothing there. */
+  hideTrigger?: boolean;
+  /** Phase D2: the Premium Reader's mobile "Accessibility" sheet must be
+   *  a translucent/blurred glass panel with the PDF visible behind it,
+   *  not the existing opaque bottom sheet every other page still uses.
+   *  "glass" swaps ONLY the panel's JSX/styling below — same settings
+   *  object, same toggle/setNumber/stepFontScale calls, same
+   *  toggleRow/sliderRow/sectionHeader helpers, so there is no second
+   *  copy of the settings logic. Defaults to "default" everywhere else. */
+  variant?: "default" | "glass";
+};
+
+export default function AccessibilityToolbar({ hideTrigger = false, variant = "default" }: AccessibilityToolbarProps = {}) {
   const { language } = useLanguage();
   const { mounted, settings, setSettings, stepFontScale, setToggle, toggle, setNumber } = useA11ySettings();
   const [open, setOpen] = useState(false);
@@ -136,6 +156,30 @@ export default function AccessibilityToolbar() {
   }, []);
   useEffect(() => {
     return () => { window.speechSynthesis?.cancel(); };
+  }, []);
+
+  // Phase D1 (Premium Reader mobile redesign): the new mobile bottom
+  // nav's "Settings" entry point has no direct handle into this
+  // component's own `open` state, so it dispatches this event instead
+  // of reaching in — same pattern as the existing `ndl-voice-command`
+  // window event elsewhere in the app. Purely additive: nothing about
+  // the panel's own settings/behavior changes, this only adds one more
+  // way to open it alongside the existing trigger button below.
+  useEffect(() => {
+    function onOpenRequest() { setOpen(true); }
+    window.addEventListener("ndl-open-accessibility-panel", onOpenRequest);
+    return () => window.removeEventListener("ndl-open-accessibility-panel", onOpenRequest);
+  }, []);
+
+  // Phase D3: the mobile immersive-mode tap gesture closes any open
+  // glass panel as part of entering immersive mode (spec point 1) — same
+  // remote-control pattern as the open event above, so the gesture
+  // handler (PremiumReaderPreviewContent) doesn't need a ref into this
+  // component's internal `open` state either.
+  useEffect(() => {
+    function onCloseRequest() { setOpen(false); }
+    window.addEventListener("ndl-close-accessibility-panel", onCloseRequest);
+    return () => window.removeEventListener("ndl-close-accessibility-panel", onCloseRequest);
   }, []);
 
   function toggleReadAloud() {
@@ -198,9 +242,180 @@ export default function AccessibilityToolbar() {
     </button>
   );
 
+  // ── Phase D2: glass variant (Premium Reader mobile only) ─────────────
+  // A translucent, blurred bottom sheet so the PDF stays visible/legible
+  // behind it — deliberately a SEPARATE branch from the existing default
+  // panel below rather than a modification of it, since the old opaque
+  // sheet must keep rendering byte-for-byte everywhere else in the app.
+  // Every value/handler is the exact same settings/toggle/setNumber/
+  // stepFontScale from the one useA11ySettings() call above — no second
+  // copy of any settings logic, only new JSX. Scoped to exactly the 6
+  // items D2 asked for (Font Size, Font Family, Line Spacing, Theme,
+  // Read Aloud, Reading Aids) — everything else (High Contrast, Focus
+  // Mode, Visual Comfort, …) stays reachable only via the existing panel
+  // on desktop/tablet and other pages, unchanged.
+  const glassPanel = (
+    <div
+      ref={panelRef}
+      data-a11y-no-invert
+      className="fixed inset-x-0 bottom-0 z-[161] max-h-[80vh] w-full overflow-y-auto rounded-t-[1.75rem] border-t border-white/30 p-5 text-slate-900 shadow-[0_-10px_60px_rgba(0,0,0,0.35)] backdrop-blur-2xl backdrop-saturate-150"
+      style={{
+        backgroundColor: settings.darkMode ? "rgba(15,23,42,0.32)" : "rgba(255,255,255,0.28)",
+        color: settings.darkMode ? "#fff" : undefined,
+        // Phase D3.1 point 8: iPhone Safari's home-indicator safe area —
+        // every other mobile sheet in the reader already accounts for
+        // this, this one didn't yet.
+        paddingBottom: "max(1.25rem, env(safe-area-inset-bottom))",
+      }}
+    >
+      <div className={`mx-auto mb-3 h-1 w-10 rounded-full ${settings.darkMode ? "bg-white/30" : "bg-slate-400/50"}`} />
+      <div className="mb-4 flex items-center justify-between">
+        {/* Phase D3.1 point 4: "Reading Options" here (not "Accessibility
+            Settings") — same ut.a11yReadingOptions key the bottom nav's
+            "Reading" button already uses as its title, so the sheet you
+            land on always matches what you tapped. */}
+        <h2 className="text-lg font-black">{ut.a11yReadingOptions}</h2>
+        <button
+          onClick={() => setOpen(false)}
+          aria-label={t.close}
+          className={`rounded-full p-1.5 text-lg leading-none ${settings.darkMode ? "hover:bg-white/10" : "hover:bg-black/5"}`}
+        >
+          ✕
+        </button>
+      </div>
+
+      <div className="flex flex-col gap-2.5">
+        {/* ── Phase D2.1: truthfulness correction ─────────────────────
+            The PDF page is a raster <canvas> painted by pdf.js — no CSS
+            rule can reach into it to change what FONT it was drawn with
+            or how its TEXT is spaced (there is no reflowed/live text
+            layer anywhere in this app; app/read/page.tsx and
+            MobilePdfPage.tsx are both canvas-only, confirmed by reading
+            both files). Font Size/Font Family/Line Spacing below are
+            REAL settings (same state as the desktop panel) but they only
+            ever affected the app's own HTML chrome, never the book page
+            — showing them as live controls here would be exactly the
+            "looks like it adjusts the book, actually changes unrelated
+            HTML" problem this correction exists to fix. They're kept,
+            disabled, and clearly labeled instead of removed, since the
+            underlying settings remain real and may back a genuine
+            reflowed Text Reading Mode later (D3+) — see the "Text
+            Reading Mode" section below.
+            Reading Options (Theme + Brightness + Contrast) and Reading
+            Aids, by contrast, DO reach the canvas: computeFilter()
+            (lib/accessibilitySettings.ts) sets one combined `filter` on
+            <body>, which visually composites over every descendant
+            including <canvas> — verified against the dark-mode-only
+            counter-rule in globals.css (`html[data-a11y-dark] canvas
+            { filter: invert(1) hue-rotate(180deg) }`), which exists
+            specifically to cancel JUST the invert/hue-rotate term so the
+            page doesn't look like a photo negative; brightness/contrast/
+            sepia/high-contrast carry no such counter-rule and reach the
+            canvas untouched. Reading Aids (Ruler/Mask) are `position:
+            fixed` overlays portaled above everything at z-index 9996/
+            9997 (components/ui/ReadingOverlays.tsx), so they're visibly
+            on top of the PDF by construction. Zoom already lives
+            directly in the header, wired straight into MobilePdfPage's
+            render scale — genuinely live, nothing to change here. */}
+        {/* Phase D3.1: dropped a redundant "Reading Options" sub-label
+            here — the sheet's own <h2> above already says that; repeating
+            it as the first section header read as clutter, not structure. */}
+        {toggleRow(t.darkMode, settings.darkMode, () => toggle("darkMode"), "🌙")}
+        {toggleRow(ut.paperModeLabel, settings.paperMode, () => toggle("paperMode"), "📄")}
+        {toggleRow(ut.sepiaLabel, settings.sepia, () => toggle("sepia"), "🟤")}
+        {sliderRow(ut.brightnessLabel, settings.brightness, 50, 150, 5, v => setNumber("brightness", v), "%")}
+        {sliderRow(ut.contrastLabel, settings.contrast, 50, 150, 5, v => setNumber("contrast", v), "%")}
+
+        {/* Reading Aids (Ruler + Mask) — identical to the desktop panel's
+            section, same expanded.ruler local state and setNumber calls. */}
+        {sectionHeader(ut.sectionReadingAids, "ruler", "📏")}
+        {expanded.ruler && (
+          <div className="flex flex-col gap-2.5 pl-1">
+            {toggleRow(ut.rulerLabel, settings.rulerEnabled, () => toggle("rulerEnabled"), "📏")}
+            {settings.rulerEnabled && sliderRow(ut.rulerThickness, settings.rulerThickness, 4, 40, 2, v => setNumber("rulerThickness", v), "px")}
+            {settings.rulerEnabled && (
+              <div className={`flex items-center justify-between rounded-2xl px-4 py-3 backdrop-blur-sm ${settings.darkMode ? "bg-white/10" : "bg-white/40"}`}>
+                <span className="text-sm font-bold">{ut.rulerColor}</span>
+                <input
+                  type="color"
+                  value={settings.rulerColor}
+                  onChange={(e) => setSettings(prev => ({ ...prev, rulerColor: e.target.value }))}
+                  aria-label={ut.rulerColor}
+                  className="h-8 w-12 cursor-pointer rounded border-0 bg-transparent"
+                />
+              </div>
+            )}
+            {toggleRow(ut.maskLabel, settings.maskEnabled, () => toggle("maskEnabled"), "🎭")}
+            {settings.maskEnabled && sliderRow(ut.maskHeight, settings.maskHeight, 60, 320, 10, v => setNumber("maskHeight", v), "px")}
+            {settings.maskEnabled && sliderRow(ut.maskOpacity, settings.maskOpacity, 10, 90, 5, v => setNumber("maskOpacity", v), "%")}
+          </div>
+        )}
+
+        {/* ── Text Reading Mode (Phase D2.1) ───────────────────────────
+            Font Size / Font Family / Line Spacing kept visible so the
+            underlying (real) settings aren't hidden, but genuinely
+            disabled — no onClick/onChange wired here at all, not just
+            styled to look inactive — because none of them reach the
+            fixed-layout PDF canvas (see the comment above). No reflow
+            engine exists to build "Text Reading Mode" against in this
+            task, so this is honestly labeled as unavailable rather than
+            faked or silently dropped. */}
+        <p className={`mt-1 px-1 text-[10px] font-black uppercase tracking-widest ${settings.darkMode ? "text-white/50" : "text-slate-500"}`}>{ut.a11yTextReadingMode}</p>
+        <div aria-disabled className="flex flex-col gap-2.5 opacity-45">
+          <div className={`flex items-center justify-between rounded-2xl px-4 py-3 backdrop-blur-sm ${settings.darkMode ? "bg-white/10" : "bg-white/40"}`}>
+            <span className="flex items-center gap-2 text-sm font-bold">
+              <span aria-hidden>🔤</span>{t.fontSize}
+            </span>
+            <div className="flex items-center gap-2">
+              <button disabled aria-label={t.fontDecrease} className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-400 text-white font-black">−</button>
+              <span className="w-10 text-center text-xs font-bold">{settings.fontScale}%</span>
+              <button disabled aria-label={t.fontIncrease} className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-400 text-white font-black">+</button>
+            </div>
+          </div>
+          <div className={`flex items-center justify-between rounded-2xl px-4 py-3 backdrop-blur-sm ${settings.darkMode ? "bg-white/10" : "bg-white/40"}`}>
+            <span className="flex items-center gap-2 text-sm font-bold">
+              <span aria-hidden>🔠</span>{ut.dyslexiaLabel}
+            </span>
+            <span className={`rounded-full px-2.5 py-0.5 text-[10px] font-black uppercase tracking-wide ${settings.darkMode ? "bg-white/20" : "bg-slate-200 text-slate-500"}`}>{t.off}</span>
+          </div>
+          <div className={`rounded-2xl px-4 py-3 backdrop-blur-sm ${settings.darkMode ? "bg-white/10" : "bg-white/40"}`}>
+            <div className="mb-1.5 flex items-center justify-between text-sm font-bold">
+              <span>{ut.lineSpacing}</span>
+              <span className="text-xs font-bold opacity-70">{settings.lineSpacing.toFixed(1)}×</span>
+            </div>
+            <input type="range" disabled min={1.2} max={2.4} step={0.1} value={settings.lineSpacing} aria-label={ut.lineSpacing} className="w-full accent-slate-400" />
+          </div>
+        </div>
+        <p className={`px-1 text-[11px] font-semibold ${settings.darkMode ? "text-white/50" : "text-slate-500"}`}>
+          🔒 {ut.a11yAvailableInTextReadingMode}
+        </p>
+      </div>
+
+      <button
+        onClick={() => setSettings(DEFAULT_A11Y_SETTINGS)}
+        className={`mt-4 w-full rounded-2xl px-4 py-2.5 text-xs font-bold ${settings.darkMode ? "text-white/70 hover:bg-white/10" : "text-slate-600 hover:bg-black/5"}`}
+      >
+        {t.reset}
+      </button>
+    </div>
+  );
+
+  const isGlassMobile = variant === "glass" && isMobile;
+
   return (
     <FloatingControlsDock>
-      {open && (
+      {open && isGlassMobile && (
+        <>
+          {/* Transparent tap-catcher, not a dark dimmer — a background
+              tap closes the sheet (Reading First: "background
+              interaction blocked where appropriate") without ever
+              obscuring the PDF the way the old modal's bg-black/40
+              backdrop would. */}
+          <div className="fixed inset-0 z-[160]" onClick={() => setOpen(false)} />
+          {glassPanel}
+        </>
+      )}
+      {open && !isGlassMobile && (
         <div
           ref={panelRef}
           data-a11y-no-invert
@@ -326,16 +541,18 @@ export default function AccessibilityToolbar() {
         </div>
       )}
 
-      <button
-        ref={triggerRef as React.RefObject<HTMLButtonElement>}
-        data-dock-handle
-        onClick={() => setOpen(o => !o)}
-        aria-label={t.toolbarLabel}
-        title={t.toolbarLabel}
-        className="flex h-11 w-11 items-center justify-center rounded-full bg-orange-600 text-xl text-white shadow-lg shadow-orange-500/30 transition-transform hover:-translate-y-0.5 hover:bg-orange-700"
-      >
-        ♿
-      </button>
+      {!hideTrigger && (
+        <button
+          ref={triggerRef as React.RefObject<HTMLButtonElement>}
+          data-dock-handle
+          onClick={() => setOpen(o => !o)}
+          aria-label={t.toolbarLabel}
+          title={t.toolbarLabel}
+          className="flex h-11 w-11 items-center justify-center rounded-full bg-orange-600 text-xl text-white shadow-lg shadow-orange-500/30 transition-transform hover:-translate-y-0.5 hover:bg-orange-700"
+        >
+          ♿
+        </button>
+      )}
 
       <VoiceAssistant settings={settings} stepFontScale={stepFontScale} setToggle={setToggle} />
 

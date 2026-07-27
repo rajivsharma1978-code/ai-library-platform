@@ -20,6 +20,17 @@ type PremiumReaderLayoutProps = {
    *  instead of a permanent flex column, so the book keeps the full
    *  viewport width whenever the panel isn't explicitly open. */
   aiPanelOverlay?: boolean;
+  /** Phase D1 (mobile UX redesign): on mobile (<640px) the permanent left
+   *  sidebar is removed entirely rather than collapsed, so the reading
+   *  zone gets the full viewport width — ReaderNav itself is untouched,
+   *  this just omits it from the tree. Desktop/tablet always pass false
+   *  (or omit), so their layout is byte-for-byte unchanged. */
+  hideNav?: boolean;
+  /** Phase D3: lets the mobile-only AI/Study bottom sheet close on a
+   *  backdrop tap, matching the Accessibility glass panel and the More
+   *  sheet (both already close on backdrop tap). Only ever passed when
+   *  aiPanelOverlay is true, i.e. never on desktop/tablet. */
+  onCloseAiPanel?: () => void;
 };
 
 export type PremiumReaderLayoutHandle = { toggleFullscreen: () => void };
@@ -45,7 +56,7 @@ const EXIT_CONTROL_IDLE_MS = 2200;
  * ReaderLayout's .ndl-reader-grid class did.
  */
 const PremiumReaderLayout = forwardRef<PremiumReaderLayoutHandle, PremiumReaderLayoutProps>(function PremiumReaderLayout(
-  { center, aiPanel, aiPanelWidthPx, aiPanelOverlay = false }, ref
+  { center, aiPanel, aiPanelWidthPx, aiPanelOverlay = false, hideNav = false, onCloseAiPanel }, ref
 ) {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [exitControlVisible, setExitControlVisible] = useState(true);
@@ -101,10 +112,15 @@ const PremiumReaderLayout = forwardRef<PremiumReaderLayoutHandle, PremiumReaderL
   return (
     <div
       ref={mainRef}
-      className="h-screen w-full overflow-hidden bg-[radial-gradient(circle_at_top,#fff8e8_0%,#f3e6c8_45%,#eaddc0_100%)] text-slate-950"
+      // Phase D3.1 point 8: mobile (hideNav is only ever true below 640px)
+      // uses h-dvh instead of h-screen so Safari's collapsing/expanding
+      // address bar doesn't leave chrome stranded above or below the
+      // real visible viewport. Desktop/tablet keep h-screen (100vh)
+      // completely unchanged — hideNav is false there, always.
+      className={`${hideNav ? "h-dvh" : "h-screen"} w-full overflow-hidden bg-[radial-gradient(circle_at_top,#fff8e8_0%,#f3e6c8_45%,#eaddc0_100%)] text-slate-950`}
     >
       <div className="flex h-full">
-        <ReaderNav forceCollapsed={isFullscreen} />
+        {!hideNav && <ReaderNav forceCollapsed={isFullscreen} />}
 
         <section className="relative h-full min-w-0 flex-1 overflow-hidden">
           {center}
@@ -121,12 +137,20 @@ const PremiumReaderLayout = forwardRef<PremiumReaderLayoutHandle, PremiumReaderL
         )}
       </div>
 
-      {/* Mobile: AI Companion as a full-height overlay instead of a
-          permanent column, so the book keeps the full viewport width
-          until the panel is explicitly opened. */}
+      {/* Mobile (Phase D2 "Reading First"): AI Companion / Study as a
+          bottom sheet instead of a permanent column OR the old opaque
+          full-screen cover — a dimmed-but-visible backdrop (not solid
+          white) keeps the PDF in view behind it, and the sheet itself
+          is capped below full height so a strip of the page always
+          shows above it. This branch is exclusively mobile
+          (aiPanelOverlay = isMobileViewport && !aiPanelCompact), so
+          desktop/tablet — which always use the <aside> above — are
+          completely unaffected by this styling change. */}
       {aiPanelOverlay && (
-        <div data-a11y-focus-hide className="ndl-fade-in-scale fixed inset-0 z-50 bg-white">
-          {aiPanel}
+        <div data-a11y-focus-hide className="fixed inset-0 z-50 flex items-end justify-center bg-black/30" onClick={onCloseAiPanel}>
+          <div className="ndl-fade-in-scale flex max-h-[88vh] w-full flex-col overflow-hidden rounded-t-[1.75rem] bg-white shadow-[0_-10px_60px_rgba(0,0,0,0.35)]" onClick={(e) => e.stopPropagation()}>
+            {aiPanel}
+          </div>
         </div>
       )}
 

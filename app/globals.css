@@ -114,8 +114,17 @@
 .ndl-press:active {
   transform: scale(0.96);
 }
+/* Phase D3: Premium Reader mobile immersive-mode chrome fade (header,
+   bottom nav, floating Previous/Next) — a dedicated class rather than
+   Tailwind's transition-opacity utility so the reduced-motion override
+   below can target it precisely, same pattern as .ndl-press/.ndl-fade-
+   in-scale above. 250ms sits in the 200–300ms "native mobile feeling"
+   range the phase asked for. */
+.ndl-chrome-fade {
+  transition: opacity 250ms ease-out;
+}
 @media (prefers-reduced-motion: reduce) {
-  .ndl-press, .ndl-fade-in-scale, .ndl-skeleton, .ndl-skeleton-dark {
+  .ndl-press, .ndl-fade-in-scale, .ndl-skeleton, .ndl-skeleton-dark, .ndl-chrome-fade {
     animation: none !important;
     transition: none !important;
   }
@@ -217,6 +226,15 @@ html[data-a11y-dyslexia="true"] div {
   letter-spacing: var(--a11y-letter-spacing) !important;
   word-spacing: var(--a11y-word-spacing) !important;
   line-height: var(--a11y-line-height) !important;
+}
+/* Phase D2: Line Spacing is exposed as its own standalone control in the
+   Premium Reader's mobile Accessibility sheet (independent of Dyslexia
+   Mode), so it can no longer stay gated behind data-a11y-dyslexia the
+   way letter/word spacing above still are. applyA11ySettings() already
+   sets --a11y-line-height on <html> unconditionally, so this is a no-op
+   at the 1.5 default until the user actually moves the slider. */
+p, li, span, div {
+  line-height: var(--a11y-line-height);
 }
 html[data-a11y-dyslexia="true"] p {
   margin-bottom: var(--a11y-paragraph-spacing) !important;
