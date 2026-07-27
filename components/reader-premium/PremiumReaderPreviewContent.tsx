@@ -27,6 +27,7 @@ import HighlightColorPicker from "@/components/reader-premium/study/HighlightCol
 import NotePopover, { NoteAIAction } from "@/components/reader-premium/study/NotePopover";
 import type { RevisionAction } from "@/components/reader-premium/study/StudyWorkspace";
 import type { PageOverlayHighlight, PageOverlayNote } from "@/components/reader-premium/PdfBookSpread";
+import type { Diagnostics as MobilePdfDiagnostics } from "@/components/reader-premium/MobilePdfPage";
 import { getPrintedPageMap, getPageDescriptionForAI, resolvePrintedPageTarget, getDisplayLabel, getSpreadDisplayLabel } from "@/lib/printedPageMap";
 import { snapSpreadCursor, getNextSpreadCursor, getPrevSpreadCursor } from "@/lib/spreadNavigation";
 import { cleanOcrTextForAi, sanitizeForSpeech, resolvePageText } from "@/lib/premium-reader/pageTextExtractor";
@@ -567,6 +568,19 @@ export default function PremiumReaderPreviewContent() {
     };
   }, []);
   const isMobileViewport = viewportWidth < 640;
+
+  // ── TEMPORARY: mobile PDF stage diagnostics ──────────────────────────
+  // Owned HERE, not inside MobilePdfPage, specifically so the diagnostic
+  // card stays visible even if MobilePdfPage never successfully mounts on
+  // a real device — real-device testing (iPhone Safari, iPhone Chrome)
+  // reported seeing only the ordinary Retry screen with no diagnostic
+  // panel at all, which is exactly the ambiguity this resolves: `null`
+  // here means MobilePdfPage never reported in (never mounted, or crashed
+  // before its first effect), which is itself the answer, not a guess.
+  // Reset whenever the book changes so a stale diagnostic from a
+  // previously-open book can never be mistaken for the current one.
+  const [mobileDiag, setMobileDiag] = useState<MobilePdfDiagnostics | null>(null);
+  useEffect(() => { setMobileDiag(null); }, [bookId]);
 
   // ── Phase C1: mobile toolbar "More" sheet ────────────────────────────
   // Below 640px the top chrome collapses from 2 flex-wrap rows (5 visual
@@ -2960,6 +2974,7 @@ export default function PremiumReaderPreviewContent() {
                 isPanning={isPanning}
                 getPdfDocument={getSharedPdfDocument}
                 onTextExtracted={handleTextExtracted}
+                onDiagnostic={setMobileDiag}
               />
             ) : (
               <PdfBookSpread
@@ -2979,6 +2994,36 @@ export default function PremiumReaderPreviewContent() {
               />
             )}
           </div>
+
+          {/* ── TEMPORARY: mobile PDF diagnostic card — parent-owned (see
+              the mobileDiag state declaration above for why) so it renders
+              directly underneath the Retry button regardless of whether
+              MobilePdfPage itself ever successfully mounts. Only shown
+              below 640px; never appears for desktop/tablet. */}
+          {isMobileViewport && (
+            <div className="mx-auto mt-2 w-full max-w-[1340px] flex-shrink-0 select-text rounded-2xl bg-slate-950/95 px-3 py-2 text-[10px] leading-snug text-white shadow-lg">
+              <p className="mb-1 text-[11px] font-black text-amber-300">Mobile PDF Diagnostic — temporary test build</p>
+              {[
+                ["MobilePdfPage mounted", mobileDiag ? "yes" : "no"],
+                ["current stage", mobileDiag?.stage ?? "n/a (never reported)"],
+                ["attempt", mobileDiag ? `${mobileDiag.attemptNumber} / 2` : "—"],
+                ["document loaded", mobileDiag?.docLoadCompletedAt != null ? "yes" : "no"],
+                ["page loaded", mobileDiag?.pageLoadCompletedAt != null ? "yes" : "no"],
+                ["timeout fired", mobileDiag?.timeoutFired ? "yes" : "no"],
+                ["error name", mobileDiag?.errorName ?? "—"],
+                ["error message", mobileDiag?.errorMessage ?? "—"],
+                ["viewport width (window.innerWidth)", viewportWidth],
+                ["isMobileViewport", String(isMobileViewport)],
+                ["bookId", bookId],
+                ["requested page", readerPage],
+              ].map(([label, value]) => (
+                <div key={label as string} className="flex justify-between gap-3 border-b border-white/10 py-0.5 last:border-b-0">
+                  <span className="text-amber-300/80">{label}</span>
+                  <span className="text-right text-white break-all">{value as React.ReactNode}</span>
+                </div>
+              ))}
+            </div>
+          )}
 
           {/* ── Mobile: floating trigger to reopen the AI Companion
               overlay (no permanent column on a phone-sized screen). ──── */}

@@ -24,11 +24,12 @@
 // Real-device testing (iPhone Safari, iPhone Chrome) still shows the Retry
 // failure with no way to see WHERE in the pipeline it's failing, since the
 // dev-tools/console isn't available on-device. Everything under
-// "DIAGNOSTICS STATE" below renders a visible, on-screen diagnostic card
-// instead — same information a console.log would have carried, just shown
-// in the UI so it can be read or screenshotted directly off the phone. This
-// is intentionally temporary: it changes nothing about the render pipeline,
-// timeout duration, or retry behavior — it only observes and displays.
+// "DIAGNOSTICS STATE" below computes that same information (same as a
+// console.log would have carried) and reports it to the PARENT via
+// onDiagnostic, which is what actually renders the on-screen diagnostic
+// card — see that comment for why. This is intentionally temporary: it
+// changes nothing about the render pipeline, timeout duration, or retry
+// behavior — it only observes and reports.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { UI_TEXT } from "@/lib/i18n";
 import { useLanguage } from "@/lib/useLanguage";
@@ -54,6 +55,10 @@ export type MobilePdfPageProps = {
    *  never blocking it. No text-selection layer is built from this; it
    *  only feeds AI Companion / Read Aloud's existing pageTexts state. */
   onTextExtracted?: (texts: Record<number, string>) => void;
+  /** Diagnostics-only — fired on mount and on every stage change, so the
+   *  parent can render the on-screen diagnostic card itself (see the
+   *  "DIAGNOSTICS STATE" comment below for why this is parent-owned). */
+  onDiagnostic?: (diag: Diagnostics) => void;
 };
 
 // Matches PdfBookSpread's own render-timeout contract (see that file's
@@ -90,7 +95,14 @@ function isCancelledError(err: unknown): boolean {
 }
 
 // ── DIAGNOSTICS STATE (temporary) ────────────────────────────────────────
-type Stage =
+// Owned and rendered by the PARENT (PremiumReaderPreviewContent) — this
+// component only computes the facts (via patchDiag below) and reports them
+// upward via onDiagnostic. This is deliberate: a diagnostic card rendered
+// only inside THIS component's own JSX is invisible if this component
+// never successfully mounts in the first place, which is exactly the
+// failure mode real-device testing needs to be able to distinguish from
+// "mounted but the pipeline itself failed."
+export type Stage =
   | "component-mounted"
   | "measuring-container"
   | "loading-document"
@@ -104,7 +116,7 @@ type Stage =
   | "failed"
   | "timed-out";
 
-interface Diagnostics {
+export interface Diagnostics {
   stage: Stage;
   containerWidth: number | null;
   dpr: number | null;
@@ -152,18 +164,9 @@ function initialDiagnostics(stage: Stage): Diagnostics {
   };
 }
 
-function DiagnosticRow({ label, value }: { label: string; value: React.ReactNode }) {
-  return (
-    <div className="flex justify-between gap-3 border-b border-white/10 py-0.5 last:border-b-0">
-      <span className="text-amber-300/80">{label}</span>
-      <span className="text-right text-white break-all">{value ?? "—"}</span>
-    </div>
-  );
-}
-
 export default function MobilePdfPage({
   pdfPath, bookId, pageNumber, totalPages, zoom = 100, pan = { x: 0, y: 0 }, isPanning = false,
-  getPdfDocument, onTextExtracted,
+  getPdfDocument, onTextExtracted, onDiagnostic,
 }: MobilePdfPageProps) {
   const { language } = useLanguage();
   const t = UI_TEXT[language];
@@ -172,14 +175,12 @@ export default function MobilePdfPage({
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const renderTaskRef = useRef<any>(null);
   const renderIdRef = useRef(0);
-  const mountedAtRef = useRef<number>(typeof performance !== "undefined" ? performance.now() : Date.now());
 
   const [containerWidth, setContainerWidth] = useState<number | null>(null);
   const [visible, setVisible] = useState(false);
   const [failed, setFailed] = useState(false);
   const [retryToken, setRetryToken] = useState(0);
   const [diag, setDiag] = useState<Diagnostics>(() => initialDiagnostics("component-mounted"));
-  const [, forceTick] = useState(0);
 
   const safePage = Math.max(1, Math.min(Math.floor(pageNumber) || 1, Math.max(1, Math.floor(totalPages) || 1)));
 
@@ -187,14 +188,14 @@ export default function MobilePdfPage({
     setDiag((prev) => ({ ...prev, ...patch }));
   }, []);
 
-  // Live-updating elapsed-ms ticker while still in flight — purely visual,
-  // so a phone screen shows the counter moving instead of a frozen number
-  // while waiting on a slow/stuck stage.
+  // Report every diagnostic change up to the parent, which owns the
+  // on-screen diagnostic card (see the file-top comment on Diagnostics).
+  // This fires on mount too (diag's initial value), which is itself the
+  // "MobilePdfPage mounted: yes" signal the parent needs — if this
+  // component never mounts, the parent simply never hears from it.
   useEffect(() => {
-    if (diag.stage === "visible" || diag.stage === "failed") return;
-    const id = setInterval(() => forceTick((n) => n + 1), 500);
-    return () => clearInterval(id);
-  }, [diag.stage]);
+    onDiagnostic?.(diag);
+  }, [diag, onDiagnostic]);
 
   // ── Measure the card's available content width ──────────────────────
   // Two independent sources feed the same measure() call: ResizeObserver
@@ -405,8 +406,6 @@ export default function MobilePdfPage({
 
   const zoomTransform = `translate(${pan.x}px, ${pan.y}px) scale(${zoom / 100})`;
 
-  const elapsedMs = Math.round((typeof performance !== "undefined" ? performance.now() : Date.now()) - mountedAtRef.current);
-
   return (
     <section className="flex h-full flex-col bg-[radial-gradient(circle_at_center,#fff8e8_0%,#ead2a6_50%,#c18a3f_100%)] px-3 py-3">
       <main className="relative mx-auto flex w-full max-w-[720px] flex-1 min-h-0 items-center justify-center">
@@ -449,48 +448,6 @@ export default function MobilePdfPage({
           )}
         </div>
       </main>
-
-      {/* ── TEMPORARY: on-screen diagnostic card ─────────────────────────
-          Only ever mounted below 640px (this whole component only renders
-          there), so this never appears for desktop/tablet users. Selectable
-          text so it can be copied, plus it's screenshot-friendly. */}
-      <div className="mx-auto mt-2 w-full max-w-[720px] flex-shrink-0 select-text rounded-2xl bg-slate-950/95 px-3 py-2 text-[10px] leading-snug text-white shadow-lg">
-        <p className="mb-1 text-[11px] font-black text-amber-300">Mobile PDF Diagnostic — temporary test build</p>
-        <DiagnosticRow label="stage" value={diag.stage} />
-        <DiagnosticRow label="bookId" value={bookId} />
-        <DiagnosticRow label="requested page" value={pageNumber} />
-        <DiagnosticRow label="attempt" value={`${diag.attemptNumber} / ${RENDER_MAX_ATTEMPTS}`} />
-        <DiagnosticRow label="elapsed ms (since mount)" value={elapsedMs} />
-        <DiagnosticRow label="container width" value={diag.containerWidth} />
-        <DiagnosticRow label="devicePixelRatio" value={diag.dpr} />
-        <DiagnosticRow label="pdf url" value={pdfPath} />
-        <DiagnosticRow
-          label="document load"
-          value={
-            diag.docLoadCompletedAt != null ? `done (${Math.round(diag.docLoadCompletedAt - (diag.docLoadStartedAt ?? diag.docLoadCompletedAt))}ms)`
-            : diag.docLoadStartedAt != null ? "started…"
-            : "not started"
-          }
-        />
-        <DiagnosticRow
-          label="page load"
-          value={
-            diag.pageLoadCompletedAt != null ? `done (${Math.round(diag.pageLoadCompletedAt - (diag.pageLoadStartedAt ?? diag.pageLoadCompletedAt))}ms)`
-            : diag.pageLoadStartedAt != null ? "started…"
-            : "not started"
-          }
-        />
-        <DiagnosticRow label="native viewport" value={diag.nativeVpW != null ? `${diag.nativeVpW} × ${diag.nativeVpH}` : null} />
-        <DiagnosticRow label="display scale" value={diag.displayScale} />
-        <DiagnosticRow label="render scale" value={diag.renderScale} />
-        <DiagnosticRow label="canvas backing dims" value={diag.canvasW != null ? `${diag.canvasW} × ${diag.canvasH}` : null} />
-        <DiagnosticRow label="canvas mounted" value={diag.canvasMounted == null ? null : diag.canvasMounted ? "yes" : "no"} />
-        <DiagnosticRow label="render started" value={diag.renderStartedAt != null ? "yes" : "no"} />
-        <DiagnosticRow label="render completed" value={diag.renderCompletedAt != null ? "yes" : "no"} />
-        <DiagnosticRow label="timeout fired" value={diag.timeoutFired ? "yes" : "no"} />
-        <DiagnosticRow label="error name" value={diag.errorName} />
-        <DiagnosticRow label="error message" value={diag.errorMessage} />
-      </div>
     </section>
   );
 }
