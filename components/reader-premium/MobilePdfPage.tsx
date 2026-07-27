@@ -131,6 +131,13 @@ export type Stage =
 
 export interface Diagnostics {
   stage: Stage;
+  /** TEMPORARY (book-switch verification) — the exact pdfPath prop this
+   *  render cycle is using, and the `${bookId}:${pdfUrl}` cache key the
+   *  parent's getSharedMobilePdfDocument resolves it through. Both must
+   *  reflect the CURRENTLY selected book, never a previous one — that's
+   *  the whole point of surfacing them here. */
+  resolvedPdfUrl: string | null;
+  mobileCacheKey: string | null;
   containerWidth: number | null;
   dpr: number | null;
   docLoadStartedAt: number | null;
@@ -155,6 +162,8 @@ export interface Diagnostics {
 function initialDiagnostics(stage: Stage): Diagnostics {
   return {
     stage,
+    resolvedPdfUrl: null,
+    mobileCacheKey: null,
     containerWidth: null,
     dpr: null,
     docLoadStartedAt: null,
@@ -274,6 +283,14 @@ export default function MobilePdfPage({
       ...initialDiagnostics("measuring-container"),
       containerWidth: prev.containerWidth,
       dpr: prev.dpr,
+      // TEMPORARY (book-switch verification) — mirrors exactly what the
+      // parent's getSharedMobilePdfDocument keys its cache by, computed
+      // from THIS render cycle's own props (never a previous one — with
+      // MobilePdfPage now keyed by `${bookId}:${pdfPath}` in the parent,
+      // a book switch fully remounts this component, so there is no
+      // "previous cycle" for these to leak from).
+      resolvedPdfUrl: pdfPath,
+      mobileCacheKey: `${bookId}:${pdfPath}`,
     }));
 
     let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
@@ -413,7 +430,7 @@ export default function MobilePdfPage({
         renderTaskRef.current = null;
       }
     };
-  }, [pdfPath, safePage, containerWidth, retryToken, getPdfDocument, onTextExtracted, patchDiag]);
+  }, [pdfPath, bookId, safePage, containerWidth, retryToken, getPdfDocument, onTextExtracted, patchDiag]);
 
   const retry = useCallback(() => setRetryToken((n) => n + 1), []);
 

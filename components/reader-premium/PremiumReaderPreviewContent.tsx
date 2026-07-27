@@ -741,18 +741,63 @@ export default function PremiumReaderPreviewContent() {
   // neither this cache nor the legacy module is ever touched unless
   // MobilePdfPage itself calls this function, which only happens below
   // 640px.
+  //
+  // ── Book-switch fix ────────────────────────────────────────────────
+  // Real-device testing found every book switch on mobile kept rendering
+  // the FIRST book opened that session (AI Tech → correct; Nalanda,
+  // Chandrayaan afterward → still AI Tech pages, despite the cover/title
+  // updating correctly). Root cause, traced end to end: `<MobilePdfPage>`
+  // was rendered with no `key`, so React reused the exact same component
+  // instance — same canvasRef/renderTaskRef/renderIdRef, same
+  // once-only "measure container" effect — across every book switch
+  // instead of tearing it down, while this loader took NO parameters and
+  // cached purely by `bookId` via a useCallback closure over
+  // `currentBook.pdf`. Neither of those was independently, provably
+  // wrong in isolation (the closure DOES get a fresh `currentBook.pdf`
+  // whenever its declared deps change, and the render effect DOES list
+  // `pdfPath`/`getPdfDocument` as deps) — but together they meant NO
+  // book switch ever forced a clean, from-scratch render cycle, leaving
+  // a real opening for a stale/in-flight document resolution to land on
+  // the wrong book's canvas under real-device timing this session's
+  // prior browser-tool testing never exercised. Fixed by removing every
+  // opportunity for that ambiguity at once:
+  //   1. This loader now takes an EXPLICIT (bookId, pdfUrl) pair instead
+  //      of reading them from closure — the caller can never pass a
+  //      stale pair without also passing a stale bookId/pdfUrl, which is
+  //      exactly what MobilePdfPage's own props already guarantee.
+  //   2. The cache key is `${bookId}:${pdfUrl}` — never bookId alone —
+  //      so a future bookId/URL mismatch (e.g. a catalog edit) can never
+  //      silently reuse another book's cached document.
+  //   3. `<MobilePdfPage key={...}>` below now includes the same
+  //      `${bookId}:${pdfUrl}` — forcing React to fully unmount/remount
+  //      (fresh canvasRef, fresh renderTaskRef, fresh renderIdRef, fresh
+  //      containerWidth measurement) on every book switch, so nothing
+  //      from the previous book can persist into the next render cycle
+  //      even in principle.
   const mobilePdfDocCacheRef = useRef<Record<string, Promise<any>>>({});
-  const getSharedMobilePdfDocument = useCallback((): Promise<any> => {
-    const existing = mobilePdfDocCacheRef.current[bookId];
+  const getSharedMobilePdfDocument = useCallback((forBookId: string, pdfUrl: string): Promise<any> => {
+    const cacheKey = `${forBookId}:${pdfUrl}`;
+    const existing = mobilePdfDocCacheRef.current[cacheKey];
     if (existing) return existing;
     const promise = (async () => {
       const pdfjsLib = await import("pdfjs-dist/legacy/build/pdf.mjs");
       pdfjsLib.GlobalWorkerOptions.workerSrc = "/pdf.worker.legacy.min.mjs";
-      return pdfjsLib.getDocument(currentBook.pdf).promise;
+      return pdfjsLib.getDocument(pdfUrl).promise;
     })();
-    mobilePdfDocCacheRef.current[bookId] = promise;
+    mobilePdfDocCacheRef.current[cacheKey] = promise;
     return promise;
-  }, [bookId, currentBook.pdf]);
+  }, []);
+
+  // Zero-arg wrapper for the prop MobilePdfPage actually expects
+  // (`getPdfDocument: () => Promise<any>`) — deliberately kept stable
+  // (via useCallback) across renders where bookId/currentBook.pdf are
+  // unchanged, so unrelated parent re-renders (zoom, pan, AI panel
+  // state, …) can never make MobilePdfPage's own render effect think a
+  // new document load is needed. Only recreated — same as before this
+  // fix — when the book itself actually changes.
+  const getMobilePdfDocument = useCallback((): Promise<any> => {
+    return getSharedMobilePdfDocument(bookId, currentBook.pdf);
+  }, [bookId, currentBook.pdf, getSharedMobilePdfDocument]);
 
   // Dev-only visibility into what each AI scope actually sent — never
   // shown in the UI, gated on NODE_ENV so it's a no-op in production.
@@ -3005,13 +3050,14 @@ export default function PremiumReaderPreviewContent() {
                 PdfBookSpread call as before, byte-for-byte unchanged. */}
             {isMobileViewport ? (
               <MobilePdfPage
+                key={`${bookId}:${currentBook.pdf}`}
                 pdfPath={currentBook.pdf}
                 bookId={bookId}
                 pageNumber={readerPage}
                 totalPages={totalPages}
                 zoom={zoom} pan={pan}
                 isPanning={isPanning}
-                getPdfDocument={getSharedMobilePdfDocument}
+                getPdfDocument={getMobilePdfDocument}
                 onTextExtracted={handleTextExtracted}
                 onDiagnostic={setMobileDiag}
               />
@@ -3045,6 +3091,8 @@ export default function PremiumReaderPreviewContent() {
               {[
                 ["MobilePdfPage mounted", mobileDiag ? "yes" : "no"],
                 ["current stage", mobileDiag?.stage ?? "n/a (never reported)"],
+                ["resolved PDF URL", mobileDiag?.resolvedPdfUrl ?? "—"],
+                ["mobile document cache key", mobileDiag?.mobileCacheKey ?? "—"],
                 ["attempt", mobileDiag ? `${mobileDiag.attemptNumber} / 2` : "—"],
                 ["document loaded", mobileDiag?.docLoadCompletedAt != null ? "yes" : "no"],
                 ["page loaded", mobileDiag?.pageLoadCompletedAt != null ? "yes" : "no"],
