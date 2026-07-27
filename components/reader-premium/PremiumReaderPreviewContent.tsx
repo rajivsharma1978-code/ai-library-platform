@@ -698,10 +698,11 @@ export default function PremiumReaderPreviewContent() {
   // Shared lazily-opened pdf.js document (independent of PdfBookSpread's
   // own rendering pipeline), keyed by book — reused by BOTH entire-book
   // extraction and chapter-scope's bounded page-range extraction below,
-  // AND (P0) MobilePdfPage's page rendering on mobile, so switching
-  // scopes or turning a mobile page never opens a second document
-  // unnecessarily. Wrapped in useCallback (stable per bookId/pdf) since
-  // it's now also passed as a prop into MobilePdfPage's render effect.
+  // so switching scopes never opens a second document unnecessarily.
+  // Wrapped in useCallback (stable per bookId/pdf). Uses pdfjs-dist's
+  // MODERN "generic" build (bare `import("pdfjs-dist")` → its
+  // package.json "main", pdfjs-dist/build/pdf.mjs) — NOT used by
+  // MobilePdfPage; see getSharedMobilePdfDocument below for why.
   const pdfDocCacheRef = useRef<Record<string, Promise<any>>>({});
   const getSharedPdfDocument = useCallback((): Promise<any> => {
     const existing = pdfDocCacheRef.current[bookId];
@@ -712,6 +713,44 @@ export default function PremiumReaderPreviewContent() {
       return pdfjsLib.getDocument(currentBook.pdf).promise;
     })();
     pdfDocCacheRef.current[bookId] = promise;
+    return promise;
+  }, [bookId, currentBook.pdf]);
+
+  // ── P0 fix: legacy pdf.js build, mobile-only ──────────────────────────
+  // Real-device diagnostics on branch test/mobile-render-p0 (iPhone
+  // Safari) caught the exact failure: `TypeError: getOrInsertComputed is
+  // not a function`, thrown inside pdfjs-dist's MODERN "generic" build
+  // (the same one getSharedPdfDocument above uses) — that build assumes a
+  // JS engine feature this iPhone's WebKit/JavaScriptCore doesn't have.
+  // pdfjs-dist ships a separate "legacy" build specifically for broader
+  // engine compatibility, same public API (getDocument/getPage/render/
+  // getTextContent — nothing in MobilePdfPage's own code needs to
+  // change), at pdfjs-dist/legacy/build/pdf.mjs — confirmed to exist in
+  // the installed 5.7.284 by inspecting node_modules directly (no
+  // "exports" map in pdfjs-dist's package.json restricts this subpath).
+  // Its worker MUST be the matching legacy worker
+  // (pdfjs-dist/legacy/build/pdf.worker.min.mjs, copied to
+  // public/pdf.worker.legacy.min.mjs — a version-matched twin of the
+  // existing public/pdf.worker.min.mjs, same pattern), never the modern
+  // one — mixing them is a real version-mismatch risk pdf.js explicitly
+  // warns about.
+  //
+  // A SEPARATE cache + module import (Option A, not a shared/toggled
+  // loader) — desktop's PdfBookSpread and this file's own
+  // getSharedPdfDocument (AI text extraction) are completely unaffected;
+  // neither this cache nor the legacy module is ever touched unless
+  // MobilePdfPage itself calls this function, which only happens below
+  // 640px.
+  const mobilePdfDocCacheRef = useRef<Record<string, Promise<any>>>({});
+  const getSharedMobilePdfDocument = useCallback((): Promise<any> => {
+    const existing = mobilePdfDocCacheRef.current[bookId];
+    if (existing) return existing;
+    const promise = (async () => {
+      const pdfjsLib = await import("pdfjs-dist/legacy/build/pdf.mjs");
+      pdfjsLib.GlobalWorkerOptions.workerSrc = "/pdf.worker.legacy.min.mjs";
+      return pdfjsLib.getDocument(currentBook.pdf).promise;
+    })();
+    mobilePdfDocCacheRef.current[bookId] = promise;
     return promise;
   }, [bookId, currentBook.pdf]);
 
@@ -2972,7 +3011,7 @@ export default function PremiumReaderPreviewContent() {
                 totalPages={totalPages}
                 zoom={zoom} pan={pan}
                 isPanning={isPanning}
-                getPdfDocument={getSharedPdfDocument}
+                getPdfDocument={getSharedMobilePdfDocument}
                 onTextExtracted={handleTextExtracted}
                 onDiagnostic={setMobileDiag}
               />

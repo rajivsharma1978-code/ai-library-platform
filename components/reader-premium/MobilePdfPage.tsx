@@ -20,6 +20,19 @@
 // pixel reads, double-canvas compositing, extra concurrent work per page)
 // is absent by construction rather than reduced in magnitude.
 //
+// ── P0 fix: legacy pdf.js build ───────────────────────────────────────
+// That rebuild still failed on real iPhone Safari — the on-screen
+// diagnostics below caught the actual cause: `TypeError:
+// getOrInsertComputed is not a function`, thrown by pdfjs-dist's MODERN
+// "generic" build, which assumes a JS engine feature this iPhone's
+// WebKit doesn't have. The `getPdfDocument` prop this component receives
+// now resolves to a PDFDocumentProxy created by pdfjs-dist's LEGACY
+// build instead (see PremiumReaderPreviewContent's
+// getSharedMobilePdfDocument) — nothing in THIS file changed for that
+// fix, since PDFDocumentProxy/PDFPageProxy's public API (getPage,
+// getViewport, render, getTextContent) is identical either way; only
+// which build produced the object differs, entirely upstream of here.
+//
 // ── TEMPORARY: real-device stage diagnostics ─────────────────────────────
 // Real-device testing (iPhone Safari, iPhone Chrome) still shows the Retry
 // failure with no way to see WHERE in the pipeline it's failing, since the
@@ -45,10 +58,10 @@ export type MobilePdfPageProps = {
   pan?: { x: number; y: number };
   isPanning?: boolean;
   /** Resolves to an already-cached pdf.js document (keyed by book) owned
-   *  by the parent — see PremiumReaderPreviewContent's getSharedPdfDocument.
-   *  Reusing it means this component never opens its own second copy of
-   *  the same PDF; the parent's AI text-extraction path and this renderer
-   *  share the exact same fetch/parse. */
+   *  by the parent — see PremiumReaderPreviewContent's
+   *  getSharedMobilePdfDocument (pdfjs-dist's LEGACY build — see the
+   *  file-top "P0 fix" comment for why this must NOT be the same modern
+   *  document AI text extraction uses). */
   getPdfDocument: () => Promise<any>;
   /** Same shape as PdfBookSpread's onTextExtracted — plain pdf.js
    *  page.getTextContent() output, fired AFTER the canvas is visible and
