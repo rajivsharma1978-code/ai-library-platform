@@ -258,13 +258,19 @@ export default function AccessibilityToolbar({ hideTrigger = false, variant = "d
     <div
       ref={panelRef}
       data-a11y-no-invert
-      // Real-device fix 3: capped lower than before (was 80vh) so a
-      // visibly larger strip of the page stays uncovered even though
-      // the sheet was already translucent — height was the remaining
-      // source of "blocks almost the entire page" on top of transparency.
-      className="fixed inset-x-0 bottom-0 z-[161] max-h-[62vh] w-full overflow-y-auto rounded-t-[1.75rem] border-t border-white/30 p-5 text-slate-900 shadow-[0_-10px_60px_rgba(0,0,0,0.35)] backdrop-blur-2xl backdrop-saturate-150"
+      // Real-device fix 3 / final polish point 6: capped lower than the
+      // original (was 80vh, then 62vh) and now pushed further toward an
+      // Apple Books / iPadOS Control Center feel — much more see-through
+      // (0.28/0.32 alpha → 0.14/0.18) and a stronger blur (blur-2xl's
+      // 40px → an arbitrary 56px) so the page is genuinely legible
+      // through the sheet, not just technically non-opaque. Individual
+      // rows keep their own slightly-more-opaque backing (see the
+      // bg-white/40 → bg-white/55 bump on the row backgrounds below) so
+      // text stays readable even though the sheet itself is much more
+      // transparent now.
+      className="fixed inset-x-0 bottom-0 z-[161] max-h-[58vh] w-full overflow-y-auto rounded-t-[1.75rem] border-t border-white/40 p-5 text-slate-900 shadow-[0_-10px_60px_rgba(0,0,0,0.35)] backdrop-blur-[56px] backdrop-saturate-150"
       style={{
-        backgroundColor: settings.darkMode ? "rgba(15,23,42,0.32)" : "rgba(255,255,255,0.28)",
+        backgroundColor: settings.darkMode ? "rgba(15,23,42,0.18)" : "rgba(255,255,255,0.14)",
         color: settings.darkMode ? "#fff" : undefined,
         // Phase D3.1 point 8: iPhone Safari's home-indicator safe area —
         // every other mobile sheet in the reader already accounts for
@@ -338,7 +344,7 @@ export default function AccessibilityToolbar({ hideTrigger = false, variant = "d
             {toggleRow(ut.rulerLabel, settings.rulerEnabled, () => toggle("rulerEnabled"), "📏")}
             {settings.rulerEnabled && sliderRow(ut.rulerThickness, settings.rulerThickness, 4, 40, 2, v => setNumber("rulerThickness", v), "px")}
             {settings.rulerEnabled && (
-              <div className={`flex items-center justify-between rounded-2xl px-4 py-3 backdrop-blur-sm ${settings.darkMode ? "bg-white/10" : "bg-white/40"}`}>
+              <div className={`flex items-center justify-between rounded-2xl px-4 py-3 backdrop-blur-sm ${settings.darkMode ? "bg-white/20" : "bg-white/55"}`}>
                 <span className="text-sm font-bold">{ut.rulerColor}</span>
                 <input
                   type="color"
@@ -366,7 +372,7 @@ export default function AccessibilityToolbar({ hideTrigger = false, variant = "d
             faked or silently dropped. */}
         <p className={`mt-1 px-1 text-[10px] font-black uppercase tracking-widest ${settings.darkMode ? "text-white/50" : "text-slate-500"}`}>{ut.a11yTextReadingMode}</p>
         <div aria-disabled className="flex flex-col gap-2.5 opacity-45">
-          <div className={`flex items-center justify-between rounded-2xl px-4 py-3 backdrop-blur-sm ${settings.darkMode ? "bg-white/10" : "bg-white/40"}`}>
+          <div className={`flex items-center justify-between rounded-2xl px-4 py-3 backdrop-blur-sm ${settings.darkMode ? "bg-white/20" : "bg-white/55"}`}>
             <span className="flex items-center gap-2 text-sm font-bold">
               <span aria-hidden>🔤</span>{t.fontSize}
             </span>
@@ -376,13 +382,13 @@ export default function AccessibilityToolbar({ hideTrigger = false, variant = "d
               <button disabled aria-label={t.fontIncrease} className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-400 text-white font-black">+</button>
             </div>
           </div>
-          <div className={`flex items-center justify-between rounded-2xl px-4 py-3 backdrop-blur-sm ${settings.darkMode ? "bg-white/10" : "bg-white/40"}`}>
+          <div className={`flex items-center justify-between rounded-2xl px-4 py-3 backdrop-blur-sm ${settings.darkMode ? "bg-white/20" : "bg-white/55"}`}>
             <span className="flex items-center gap-2 text-sm font-bold">
               <span aria-hidden>🔠</span>{ut.dyslexiaLabel}
             </span>
             <span className={`rounded-full px-2.5 py-0.5 text-[10px] font-black uppercase tracking-wide ${settings.darkMode ? "bg-white/20" : "bg-slate-200 text-slate-500"}`}>{t.off}</span>
           </div>
-          <div className={`rounded-2xl px-4 py-3 backdrop-blur-sm ${settings.darkMode ? "bg-white/10" : "bg-white/40"}`}>
+          <div className={`rounded-2xl px-4 py-3 backdrop-blur-sm ${settings.darkMode ? "bg-white/20" : "bg-white/55"}`}>
             <div className="mb-1.5 flex items-center justify-between text-sm font-bold">
               <span>{ut.lineSpacing}</span>
               <span className="text-xs font-bold opacity-70">{settings.lineSpacing.toFixed(1)}×</span>
