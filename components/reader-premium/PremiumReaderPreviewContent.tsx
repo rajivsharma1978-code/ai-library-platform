@@ -634,7 +634,83 @@ export default function PremiumReaderPreviewContent() {
     return false;
   }
 
+  // Real-device fix 6 (mobile text/image selection): the press-region
+  // half-extents used to seed a long-press selection when none already
+  // exists — a "paragraph-sized" chunk around the finger, not the whole
+  // page. Clamped to the canvas bounds by cropCanvasRegion itself.
+  const LONGPRESS_REGION_HALF_W = 130;
+  const LONGPRESS_REGION_HALF_H = 90;
+
+  // Real-device fix 6: long-press with no existing selection captures a
+  // small region around the press point via cropCanvasRegion — the EXACT
+  // same helper (and canvas[data-pdf-page] query) desktop's drag-select
+  // already uses, so this is not a new PDF/rendering capability, just a
+  // second way to produce the start/end points it expects. From there it
+  // reuses desktop's own no-native-selection OCR fallback (callAskAI with
+  // an "extract readable text" prompt) verbatim. If OCR comes back with
+  // real text, that becomes a "text" activeSelection (long-press text →
+  // text selection); if OCR comes back empty, the region is treated as a
+  // picture instead and becomes an "image" activeSelection (long-press
+  // image → image selection) — the same crop data, just routed the other
+  // way. Either way this only ever POPULATES activeSelection/
+  // interactionMode; the existing "UNIFIED FLOATING MENU" (already in
+  // this file) is what actually renders the on-screen menu and runs
+  // Explain/Summarize/etc. — no new selection UI, no new AI logic.
+  async function tryLongPressSelection(x: number, y: number) {
+    const start = { x: x - LONGPRESS_REGION_HALF_W, y: y - LONGPRESS_REGION_HALF_H };
+    const end = { x: x + LONGPRESS_REGION_HALF_W, y: y + LONGPRESS_REGION_HALF_H };
+    const targetPage = resolveInteractionPageNumber(x, y);
+    const cropped = cropCanvasRegion(start, end, targetPage);
+    if (!cropped) return;
+
+    const sel = window.getSelection();
+    const selText = sel?.toString().trim() || "";
+    if (selText.length >= 2 && selText.length <= 1200) {
+      switchInteractionMode("text");
+      setSelectionRects([]);
+      setActiveSelection({ type: "text", id: Date.now().toString(), text: selText, pageNumber: targetPage, x, y });
+      return;
+    }
+
+    setAiLoading(true);
+    setAiResponse(t.premiumReaderExtractingRegion);
+    try {
+      const ocrText = await callAskAI(
+        "Extract all readable text from this image region exactly as it appears. " +
+        "Return ONLY the extracted text, preserving line breaks and spacing. " +
+        "No explanation, no commentary, no formatting — just the text.",
+        book, targetPage,
+        `Image region from ${pageDescription(targetPage)} of "${book}".`,
+        language, cropped.dataUrl,
+        "Selected Region"
+      );
+      const cleaned = ocrText.trim();
+      if (cleaned.length > 1) {
+        switchInteractionMode("text");
+        setSelectionRects([cropped.rect]);
+        setActiveSelection({ type: "text", id: Date.now().toString(), text: cleaned, pageNumber: targetPage, x, y });
+        setAiResponse(t.premiumReaderTextExtracted);
+      } else {
+        // No readable text in this region — treat it as a picture instead
+        // (same crop data, "image" selection now) rather than a dead end.
+        switchInteractionMode("image");
+        setCapturedImageRect(cropped.rect);
+        setActiveSelection({ type: "image", id: Date.now().toString(), imageData: cropped.dataUrl, pageNumber: targetPage });
+        setAiResponse("");
+      }
+    } catch {
+      setAiResponse(t.premiumReaderExtractionFailed);
+    } finally {
+      setAiLoading(false);
+    }
+  }
+
   function handleGestureDown(e: React.MouseEvent) {
+    // Real-device gesture safety: never arm a gesture while a locally-
+    // rendered sheet (More / Contents / page strip) is open — the AI
+    // sheet and Reading Options panel are both portaled outside this
+    // subtree already, so they were never reachable here to begin with.
+    if (mobileMoreOpen || contentsOpen || pageStripOpen) { gestureStartRef.current = null; return; }
     if (interactionMode !== "none") { gestureStartRef.current = null; return; }
     const onControl = isInteractiveTarget(e.target);
     const vh = window.innerHeight;
@@ -646,14 +722,11 @@ export default function PremiumReaderPreviewContent() {
     longPressFiredRef.current = false;
     if (longPressTimerRef.current) { clearTimeout(longPressTimerRef.current); longPressTimerRef.current = null; }
     if (onControl) return;
-    // Armed unconditionally — the callback re-checks activeSelection at
-    // fire time (Section 5: "if no text exists, do nothing"), which is
-    // what makes this a correct no-op today (MobilePdfPage has no text
-    // layer, so activeSelection never gets set on mobile) without any
-    // extra gating here, and correct automatically if that ever changes.
+    const pressX = e.clientX, pressY = e.clientY;
     longPressTimerRef.current = setTimeout(() => {
       longPressFiredRef.current = true;
-      if (activeSelection?.type === "text") handleSelectionAction("explain");
+      if (activeSelection?.type === "text") { handleSelectionAction("explain"); return; }
+      if (!activeSelection) tryLongPressSelection(pressX, pressY);
     }, GESTURE_LONGPRESS_MS);
   }
 
@@ -693,6 +766,25 @@ export default function PremiumReaderPreviewContent() {
       window.dispatchEvent(new Event("ndl-open-accessibility-panel"));
       return;
     }
+
+    // Real-device fix 2: horizontal swipe → page turn. Reuses goPrev/
+    // goNext verbatim (the same functions the arrow buttons call — they
+    // keep working exactly as before, untouched). Not zone-restricted
+    // like the vertical swipes (page turning should work from anywhere
+    // on the page, not just an edge strip), but gated to zoom<=105% so
+    // it never fights with panning a zoomed-in page — at default zoom
+    // there's nothing to pan into anyway, so this is the one case where
+    // a horizontal drag can only ever mean "turn the page." Same
+    // distance/duration thresholds as the vertical swipes, which is what
+    // makes this "prevent accidental page turns": a short/slow drag
+    // (an ordinary text-selection-style touch or a hesitant pan) never
+    // qualifies.
+    const mostlyHorizontal = absDx > absDy * 1.5;
+    if (zoom <= 105 && mostlyHorizontal && absDx > SWIPE_MIN_DISTANCE && dt < SWIPE_MAX_MS) {
+      if (dx < 0) goNext(); else goPrev();
+      return;
+    }
+
     // Plain tap → toggle immersive mode. Entering immersive mode also
     // closes any open glass panel (More sheet + Accessibility glass),
     // per spec point 1's "Glass panels close if open."
@@ -1181,6 +1273,44 @@ export default function PremiumReaderPreviewContent() {
     return pageTexts[readerPage] || "";
   }
 
+  // ── Mobile UX Polish: robust current-page context for AI ─────────────
+  // Priority, per that phase's explicit spec:
+  //   1. Already-extracted text for the current page (pageTexts) — the
+  //      existing, unchanged path when extraction succeeded.
+  //   2. The currently-rendered page canvas itself, captured the exact
+  //      same way Image Select already captures a crop (canvas.toDataURL
+  //      at line ~217) and sent through the SAME image-AI path
+  //      runImageSelectionAction already uses — this is not a new
+  //      backend capability, just reusing the existing vision path as a
+  //      fallback source instead of requiring the user to crop-select
+  //      first. No PDF pipeline or rendering code is touched; this only
+  //      *reads* whichever <canvas> is already on screen via a plain DOM
+  //      query, which works for both MobilePdfPage's single canvas and
+  //      PdfBookSpread's.
+  //   3. The prior graceful "Viewing Page X" text-only fallback, exactly
+  //      as before, only when neither of the above is available.
+  // Purely additive: tier 1 is byte-for-byte the previous behavior, so
+  // desktop (where extraction is already reliable) sees no change in the
+  // common case — this only improves the case that was previously
+  // silently falling straight to tier 3.
+  function getCurrentPageContentForAI(): { content: string; imageDataUrl?: string } {
+    const visibleText = getVisiblePageText();
+    if (visibleText.length > 50) {
+      return { content: `Content from ${pageDescription(readerPage)} of "${book}":\n\n${cleanOcrTextForAi(visibleText)}` };
+    }
+    const canvas = bookAreaRef.current?.querySelector("canvas") as HTMLCanvasElement | null;
+    if (canvas && canvas.width > 0 && canvas.height > 0) {
+      try {
+        const imageDataUrl = canvas.toDataURL("image/png");
+        return {
+          content: `Viewing ${pageDescription(readerPage)} of "${book}". No extracted text was available for this page — read the attached page image directly and answer using what's visible in it.`,
+          imageDataUrl,
+        };
+      } catch { /* canvas unreadable (rare) — fall through to tier 3 */ }
+    }
+    return { content: `Viewing ${pageDescription(readerPage)} of "${book}".` };
+  }
+
   // ══════════════════════════════════════════════════════════════════
   // ENTIRE BOOK scope — full-book text extraction with a graceful
   // metadata-based fallback for image-heavy/scanned books (e.g. Nalanda),
@@ -1494,17 +1624,14 @@ export default function PremiumReaderPreviewContent() {
       return runAI(scopeInstruction, content, undefined, label, action, "current chapter", useHistory, onSuccess);
     }
 
-    const visibleText = getVisiblePageText();
-    const content = visibleText.length > 50
-      ? `Content from ${pageDescription(readerPage)} of "${book}":\n\n${cleanOcrTextForAi(visibleText)}`
-      : `Viewing ${pageDescription(readerPage)} of "${book}".`;
+    const { content, imageDataUrl } = getCurrentPageContentForAI();
     logScopeDebug({
       scope: "page",
-      source: visibleText.length > 50 ? "visible page cache" : "no cached text yet",
+      source: imageDataUrl ? "canvas image fallback" : (getVisiblePageText().length > 50 ? "visible page cache" : "no cached text yet"),
       pages: isSpreadBook && readerPage > 1 ? 2 : 1,
       chars: content.length,
     });
-    return runAI(prompt, content, undefined, undefined, action, "current page/spread", useHistory, onSuccess);
+    return runAI(prompt, content, imageDataUrl, undefined, action, "current page/spread", useHistory, onSuccess);
   }
 
   // ── Navigation ──────────────────────────────────────────────────────
@@ -1643,11 +1770,14 @@ export default function PremiumReaderPreviewContent() {
     useHistory: boolean = false,
     onSuccess?: () => void
   ): Promise<boolean> {
-    const fallback = getVisiblePageText().length > 50
-      ? `Content from ${pageDescription(readerPage)} of "${book}":\n\n${cleanOcrTextForAi(getVisiblePageText())}`
-      : `Viewing ${pageDescription(readerPage)} of "${book}".`;
+    // Same tier-1/2/3 fallback as the page-scope caller above — only
+    // actually invoked (and only captures a canvas) when a caller didn't
+    // already build its own `content`, e.g. Quick Actions with no
+    // explicit scope handling falling through to here.
+    const usingFallback = content === undefined;
+    const fallback = usingFallback ? getCurrentPageContentForAI() : null;
     return executeAiCall({
-      prompt, content: content ?? fallback, imageDataUrl,
+      prompt, content: content ?? fallback!.content, imageDataUrl: imageDataUrl ?? fallback?.imageDataUrl,
       chapterOverride: chapterOverride ?? pageDescription(readerPage),
       action, scopeLabel, language, studyMode: DEPTH_TO_STUDY_MODE[depth],
       history: useHistory ? aiHistory : undefined,
@@ -2727,18 +2857,13 @@ export default function PremiumReaderPreviewContent() {
             </>
           ) : (
             <>
-              {/* ── Phase D3.1: mobile header polish — same two rows and
-                  same controls as D2/D3 (nothing removed, nothing
-                  relocated again), just tightened: circular buttons
-                  are h-11/w-11 (44px, a real minimum touch target —
-                  they were h-9/36px before) instead of visually
-                  padded-looking larger ones, row gaps trimmed (mb-1 →
-                  mb-0.5, px-1 → px-0.5) so total header height drops.
-                  Row 2 gets a compact "More" button at the end, sharing
-                  Bookmark's exact circular treatment, as a direct-reach
-                  duplicate of the bottom nav's own More entry (both
-                  open the identical setMobileMoreOpen(true) sheet — one
-                  more entry point, not a second sheet). Phase D3: fades
+              {/* ── Mobile UX Polish: header, two rows, same controls as
+                  D2/D3 — 44px circular touch targets, tight row gaps.
+                  Real-device fix 1 (DUPLICATE "MORE"): the row-2 "⋯"
+                  button D3.1 added here was confirmed on-device to be a
+                  literal duplicate of the bottom nav's own "More" entry
+                  (both opened the identical sheet) — removed; the bottom
+                  nav is now the ONLY More entry point. Phase D3: fades
                   on a single tap anywhere on the reading area (immersive
                   mode, handleGestureUp above); the More sheet itself is
                   NOT inside this wrapper so it always stays fully
@@ -2792,14 +2917,6 @@ export default function PremiumReaderPreviewContent() {
                       title={t.premiumReaderZoomInTitle} aria-label={t.premiumReaderZoomInTitle}
                       className="ndl-press inline-flex h-11 w-11 items-center justify-center rounded-full bg-amber-50/70 text-xs font-bold text-slate-700 ring-1 ring-amber-100 hover:bg-amber-100 disabled:opacity-40">+</button>
                   </div>
-
-                  <div className="flex-1" />
-
-                  <button onClick={() => setMobileMoreOpen(true)}
-                    title={t.premiumReaderMoreTools} aria-label={t.premiumReaderMoreTools}
-                    className="ndl-press inline-flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-full bg-white text-base font-bold text-slate-700 shadow ring-1 ring-slate-200 hover:bg-amber-50">
-                    ⋯
-                  </button>
                 </div>
               </div>
 
@@ -3217,6 +3334,7 @@ export default function PremiumReaderPreviewContent() {
               onClick={goPrev}
               title={t.commonPrevious}
               aria-label={t.premiumReaderPreviousPage}
+              {...(isMobileViewport ? { "data-dock-avoid": true } : {})}
               className={`ndl-press absolute left-1 top-1/2 z-30 -translate-y-1/2 flex items-center justify-center rounded-full text-slate-700 hover:bg-white ${
                 isMobileViewport
                   ? `h-9 w-9 bg-white/70 text-base shadow ring-1 ring-amber-100/70 ndl-chrome-fade ${mobileChromeCls}`
@@ -3228,6 +3346,7 @@ export default function PremiumReaderPreviewContent() {
               onClick={goNext}
               title={t.commonNext}
               aria-label={t.premiumReaderNextPage}
+              {...(isMobileViewport ? { "data-dock-avoid": true } : {})}
               className={`ndl-press absolute right-1 top-1/2 z-30 -translate-y-1/2 flex items-center justify-center rounded-full text-slate-700 hover:bg-white ${
                 isMobileViewport
                   ? `h-9 w-9 bg-white/70 text-base shadow ring-1 ring-amber-100/70 ndl-chrome-fade ${mobileChromeCls}`
@@ -3270,31 +3389,24 @@ export default function PremiumReaderPreviewContent() {
             )}
           </div>
 
-          {/* ── Phase D2: mobile-only 5-item bottom navigation — AI,
-              Contents, Study, Accessibility, More. Replaces D1's
-              AI/Contents/Bookmarks/Search/Settings row: Study now
-              covers Bookmarks + Notes + Highlights in one entry (parity
-              with the desktop Study Workspace), Accessibility replaces
-              the standalone Settings/Search split, and More absorbs the
-              header's old ⋮ button now that D2 wants frequent actions
-              (Read Page, Zoom, Bookmark) directly in the header instead
-              of behind a menu. Every button is still just an entry
-              point into something that already exists:
+          {/* ── Mobile-only 4-item bottom navigation — AI, Contents,
+              Reading, More. Real-device fix 4 dropped "Study" from this
+              row: the AI sheet's own "Ask AI / Study" tab pill is one
+              tap inside the AI entry already, so a separate bottom-nav
+              Study button was pure duplication. setOpenStudyTabSignal
+              itself is untouched — the "studyTab" voice command still
+              uses it, only this nav entry point is gone. Every
+              remaining button is still just an entry point into
+              something that already exists:
                 AI            → toggleAiPanelCompact, same fn the old
                                 floating 🤖 trigger used (retired in D1
                                 since this button covers the same job).
                 Contents      → setContentsOpen (same modal as before).
-                Study         → forces the AI panel open + bumps
-                                openStudyTabSignal, landing directly on
-                                AICompanion's existing Study tab
-                                (StudyWorkspace itself is untouched —
-                                see AICompanion.tsx).
-                Accessibility → dispatches "ndl-open-accessibility-panel"
+                Reading       → dispatches "ndl-open-accessibility-panel"
                                 (unchanged from D1); AccessibilityToolbar
-                                now renders its NEW glass variant for
-                                this call site specifically (see
-                                variant="glass" below), not the old
-                                opaque modal.
+                                renders its glass variant for this call
+                                site specifically (see variant="glass"
+                                below), not the old opaque modal.
                 More          → setMobileMoreOpen, the same sheet as
                                 D1 (Home, Fullscreen, Fit, Go to page,
                                 Language) — now a direct primary nav
@@ -3304,6 +3416,7 @@ export default function PremiumReaderPreviewContent() {
               below, byte-for-byte unchanged. ─────────────────────────── */}
           {isMobileViewport ? (
             <div
+              data-dock-avoid
               className={`mx-auto mt-1 flex w-full max-w-[1340px] flex-shrink-0 items-center justify-between gap-1 rounded-2xl bg-white px-2 py-1.5 shadow ring-1 ring-amber-100 ndl-chrome-fade ${mobileChromeCls}`}
               style={{ marginBottom: "env(safe-area-inset-bottom)" }}
             >
@@ -3319,12 +3432,13 @@ export default function PremiumReaderPreviewContent() {
                 <span className="text-base leading-none" aria-hidden="true">📚</span>
                 {t.premiumReaderContents}
               </button>
-              <button onClick={() => { setAiPanelCompact(false); setOpenStudyTabSignal(s => (s || 0) + 1); }}
-                title={t.aiCompanionTabStudy} aria-label={t.aiCompanionTabStudy}
-                className="ndl-press flex flex-1 flex-col items-center gap-0.5 rounded-xl px-1 py-1.5 text-[10px] font-bold text-slate-600 hover:bg-amber-50">
-                <span className="text-base leading-none" aria-hidden="true">🔖</span>
-                {t.aiCompanionTabStudy}
-              </button>
+              {/* Real-device fix 4: "Study" removed from the bottom nav —
+                  it duplicated the AI sheet's own "Ask AI / Study" tabs
+                  one tap away. setOpenStudyTabSignal/openStudyTabSignal
+                  itself is untouched (still used by the "studyTab" voice
+                  command and the AI sheet's own tab pill), only this
+                  entry point is gone. Bottom nav is now AI / Contents /
+                  Reading / More. */}
               {/* Phase D3.1 point 6: visible label reads "Reading" (short,
                   matches the sheet's own "Reading Options" title) while
                   title/aria-label keep the fuller "Accessibility" meaning

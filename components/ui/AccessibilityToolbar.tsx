@@ -258,7 +258,11 @@ export default function AccessibilityToolbar({ hideTrigger = false, variant = "d
     <div
       ref={panelRef}
       data-a11y-no-invert
-      className="fixed inset-x-0 bottom-0 z-[161] max-h-[80vh] w-full overflow-y-auto rounded-t-[1.75rem] border-t border-white/30 p-5 text-slate-900 shadow-[0_-10px_60px_rgba(0,0,0,0.35)] backdrop-blur-2xl backdrop-saturate-150"
+      // Real-device fix 3: capped lower than before (was 80vh) so a
+      // visibly larger strip of the page stays uncovered even though
+      // the sheet was already translucent — height was the remaining
+      // source of "blocks almost the entire page" on top of transparency.
+      className="fixed inset-x-0 bottom-0 z-[161] max-h-[62vh] w-full overflow-y-auto rounded-t-[1.75rem] border-t border-white/30 p-5 text-slate-900 shadow-[0_-10px_60px_rgba(0,0,0,0.35)] backdrop-blur-2xl backdrop-saturate-150"
       style={{
         backgroundColor: settings.darkMode ? "rgba(15,23,42,0.32)" : "rgba(255,255,255,0.28)",
         color: settings.darkMode ? "#fff" : undefined,
