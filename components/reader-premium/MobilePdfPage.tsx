@@ -101,6 +101,13 @@ export default function MobilePdfPage({
   const renderIdRef = useRef(0);
 
   const [containerWidth, setContainerWidth] = useState<number | null>(null);
+  // RC1 P2: tracked alongside width so the render effect below can fit
+  // the page to whichever dimension is actually the tighter constraint
+  // (see "Render the current page" effect) — needed once landscape mode
+  // widens the card beyond its old fixed max-width (see the JSX below),
+  // where a tall portrait-oriented page would otherwise overflow the
+  // short landscape viewport if sized by width alone.
+  const [containerHeight, setContainerHeight] = useState<number | null>(null);
   const [visible, setVisible] = useState(false);
   const [failed, setFailed] = useState(false);
   const [retryToken, setRetryToken] = useState(0);
@@ -120,25 +127,25 @@ export default function MobilePdfPage({
     const cardEl = cardRef.current;
     if (!cardEl) return;
     const card = cardEl;
-    let last = 0;
+    let lastW = 0, lastH = 0;
     let cancelled = false;
-    function measure(width: number) {
-      const next = Math.max(0, width - CARD_PADDING_PX * 2);
-      if (Math.abs(next - last) < WIDTH_CHANGE_THRESHOLD_PX) return;
-      last = next;
-      setContainerWidth(next);
+    function measure(width: number, height: number) {
+      const nextW = Math.max(0, width - CARD_PADDING_PX * 2);
+      const nextH = Math.max(0, height - CARD_PADDING_PX * 2);
+      if (Math.abs(nextW - lastW) >= WIDTH_CHANGE_THRESHOLD_PX) { lastW = nextW; setContainerWidth(nextW); }
+      if (Math.abs(nextH - lastH) >= WIDTH_CHANGE_THRESHOLD_PX) { lastH = nextH; setContainerHeight(nextH); }
     }
-    measure(card.clientWidth);
+    measure(card.clientWidth, card.clientHeight);
     const ro = new ResizeObserver((entries) => {
       const entry = entries[0];
-      if (entry) measure(entry.contentRect.width);
+      if (entry) measure(entry.contentRect.width, entry.contentRect.height);
     });
     ro.observe(card);
     let pollCount = 0;
     function poll() {
       if (cancelled || pollCount >= 15) return;
       pollCount++;
-      measure(card.clientWidth);
+      measure(card.clientWidth, card.clientHeight);
       setTimeout(poll, 200);
     }
     setTimeout(poll, 200);
@@ -149,6 +156,7 @@ export default function MobilePdfPage({
   useEffect(() => {
     if (containerWidth == null || containerWidth <= 0) return;
     const width = containerWidth;
+    const height = containerHeight;
 
     let cancelled = false;
     const id = ++renderIdRef.current;
@@ -186,7 +194,17 @@ export default function MobilePdfPage({
         if (isCancelled()) return;
 
         const nativeVp = page.getViewport({ scale: 1 });
-        const displayScale = Math.max(0.1, Math.min(width / nativeVp.width, 4));
+        // RC1 P2: contain-fit against BOTH dimensions, not width alone —
+        // width-only was fine while the card's max-width kept it
+        // narrower than the phone was tall (portrait), but landscape
+        // mode now lets the card grow much wider than the phone is
+        // tall, where a portrait-oriented page sized by width alone
+        // would render taller than the available height and get
+        // clipped by the card's `overflow:hidden`. Falls back to width-
+        // only if height hasn't measured yet (never blocks first paint).
+        const scaleForWidth = width / nativeVp.width;
+        const scaleForHeight = height != null && height > 0 ? height / nativeVp.height : scaleForWidth;
+        const displayScale = Math.max(0.1, Math.min(scaleForWidth, scaleForHeight, 4));
         const dpr = Math.min(typeof window !== "undefined" ? (window.devicePixelRatio || 1) : 1, DPR_CAP);
         const renderScale = Math.min(displayScale * dpr, MAX_RENDER_SCALE);
         const renderVp = page.getViewport({ scale: renderScale });
@@ -272,7 +290,7 @@ export default function MobilePdfPage({
         renderTaskRef.current = null;
       }
     };
-  }, [pdfPath, safePage, containerWidth, retryToken, getPdfDocument, onTextExtracted]);
+  }, [pdfPath, safePage, containerWidth, containerHeight, retryToken, getPdfDocument, onTextExtracted]);
 
   const retry = useCallback(() => setRetryToken((n) => n + 1), []);
 
@@ -280,7 +298,17 @@ export default function MobilePdfPage({
 
   return (
     <section className="flex h-full flex-col bg-[radial-gradient(circle_at_center,#fff8e8_0%,#ead2a6_50%,#c18a3f_100%)] px-3 py-3">
-      <main className="relative mx-auto flex w-full max-w-[720px] flex-1 min-h-0 items-center justify-center">
+      {/* RC1 P2: cap raised from 720px — that was a portrait-era number
+          that quietly wasted width in landscape (the page still only
+          rendered as wide as 720px allowed, even when the phone had far
+          more width on its side). Safe to raise because the render
+          effect above now contain-fits against height too, so a wide
+          card no longer risks rendering the page taller than the
+          landscape viewport — whichever dimension is actually tighter
+          still wins. 1400px is comfortably above any real phone's long
+          edge (isMobileViewport only applies below a 640px short edge),
+          so this never binds on a tablet-sized screen. */}
+      <main className="relative mx-auto flex w-full max-w-[1400px] flex-1 min-h-0 items-center justify-center">
         <div
           ref={cardRef}
           className="relative z-10 flex h-full w-full items-center justify-center rounded-[1.75rem] border border-amber-200 bg-[#fffaf0] p-2 shadow-[0_20px_50px_rgba(75,45,12,0.25)]"

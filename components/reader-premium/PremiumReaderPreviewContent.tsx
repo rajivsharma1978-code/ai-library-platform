@@ -517,6 +517,58 @@ export default function PremiumReaderPreviewContent() {
     router.replace(next, { scroll: false });
   }, [bookOpened, bookId, readerPage, isUploadedBook, pathname, router]);
 
+  // ── RC1 P0 fix #1 (book switching bug) ───────────────────────────────
+  // Root cause: `readerPage`/`bookOpened` above are seeded via lazy
+  // useState initializers, which — by React's own contract — run EXACTLY
+  // ONCE per component instance, on its very first render. Next.js App
+  // Router reuses the SAME PremiumReaderPreviewContent instance across a
+  // book-to-book navigation that stays on the /reader-premium route
+  // (only `?book=` changes) — e.g. a "Continue Reading"/related-book
+  // link tapped from inside an already-open reader, or any client-side
+  // <Link> to another book. `bookId`/`currentBook` themselves are
+  // recomputed fresh every render directly from `searchParams` (lines
+  // 352-374 above), so the correct PDF/document/title were never
+  // actually wrong — but `readerPage` kept whatever value the PREVIOUS
+  // book had left it at, and `pageTexts` (below) is keyed by bare page
+  // number, so the previous book's cached page text bled into the new
+  // book's "page N" the instant the AI or Read Aloud used it. Together
+  // these are exactly what "switching books frequently shows the wrong
+  // one" looks like from the outside: PDF pages that don't match the
+  // title, or AI answers describing the wrong book's content. The
+  // MobilePdfPage `key={bookId:pdf}` remount (elsewhere in this file)
+  // already made the canvas/document side of this correct — this effect
+  // is what was still missing on the plain React state side. Runs only
+  // when `bookId` actually changes (tracked via a ref, not react to its
+  // own effect deps in a loop) — never on first mount, since the lazy
+  // initializers already handle that case correctly.
+  const lastBookIdRef = useRef(bookId);
+  useEffect(() => {
+    if (lastBookIdRef.current === bookId) return;
+    lastBookIdRef.current = bookId;
+
+    const urlPage = Number(searchParams.get("page"));
+    const hasExplicitPage = Number.isFinite(urlPage) && urlPage >= 1;
+    const clamped = hasExplicitPage
+      ? Math.min(Math.max(1, Math.floor(urlPage)), totalPages || urlPage)
+      : 1;
+    setReaderPage(snapSpreadCursor(clamped, currentBook.layout));
+    setBookOpened(hasExplicitPage);
+    hasEngagedRef.current = hasExplicitPage;
+
+    // Zoom/pan are reading-position state, same category as page number
+    // — a new book should never inherit the previous one's zoom level
+    // or pan offset.
+    setZoom(100);
+    setPan({ x: 0, y: 0 });
+    autoFitDone.current = false;
+
+    // Page-number-keyed caches must not leak between books — pageTexts
+    // is keyed by bare page number (not `${bookId}:${page}`), so
+    // "page 5" of the old book would otherwise still answer for
+    // "page 5" of the new one until every page had been re-visited.
+    setPageTexts({});
+  }, [bookId, searchParams, totalPages, currentBook.layout]);
+
   // ── Zoom / pan ────────────────────────────────────────────────────
   const [zoom, setZoom] = useState(100);
   const [pan, setPan] = useState({ x: 0, y: 0 });
@@ -597,6 +649,11 @@ export default function PremiumReaderPreviewContent() {
   const isMobileViewport = isTouchDevice
     ? Math.min(viewportWidth, viewportHeight) < 640
     : viewportWidth < 640;
+  // RC1 P2: landscape specifically — wide edge is now the CSS width
+  // (viewportWidth), short edge the height, so a simple width>height
+  // check on top of isMobileViewport identifies "phone, rotated
+  // sideways" without touching the short-edge classification above.
+  const isMobileLandscape = isMobileViewport && viewportWidth > viewportHeight;
 
   // ── Phase C1: mobile toolbar "More" sheet ────────────────────────────
   // Below 640px the top chrome collapses from 2 flex-wrap rows (5 visual
@@ -627,6 +684,47 @@ export default function PremiumReaderPreviewContent() {
   const mobileChromeCls = mobileChromeVisible
     ? "opacity-100 pointer-events-auto"
     : "opacity-0 pointer-events-none";
+
+  // RC1 P2: auto-hide chrome after inactivity, landscape only. D3
+  // deliberately dropped the old idle timer in favor of tap-only
+  // (comment above) for the general/portrait case — that stays exactly
+  // as-is. Landscape is a narrower, explicitly-requested exception:
+  // "still feels desktop-like… auto-hide chrome after inactivity, tap
+  // restores controls." Reuses mobileChromeVisible/setMobileChromeVisible
+  // (the same state the tap gesture already drives), so "tap restores
+  // controls" needs no new code — finishTapOrSwipe's existing plain-tap
+  // branch already flips this same state back to visible.
+  const LANDSCAPE_AUTOHIDE_MS = 3000;
+  const landscapeIdleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    if (!isMobileLandscape) {
+      // Leaving landscape (rotated back to portrait, or navigated away):
+      // never leave the reader stuck with hidden chrome on a mode that
+      // has no auto-restore of its own.
+      if (landscapeIdleTimerRef.current) { clearTimeout(landscapeIdleTimerRef.current); landscapeIdleTimerRef.current = null; }
+      setMobileChromeVisible(true);
+      return;
+    }
+    function resetIdleTimer() {
+      if (landscapeIdleTimerRef.current) clearTimeout(landscapeIdleTimerRef.current);
+      landscapeIdleTimerRef.current = setTimeout(() => setMobileChromeVisible(false), LANDSCAPE_AUTOHIDE_MS);
+    }
+    resetIdleTimer();
+    // touchstart/touchmove cover real devices; mousedown/mousemove keep
+    // this working under mouse-only testing/input, same dual-path
+    // reasoning as the gesture system above.
+    window.addEventListener("touchstart", resetIdleTimer, { passive: true });
+    window.addEventListener("touchmove", resetIdleTimer, { passive: true });
+    window.addEventListener("mousedown", resetIdleTimer);
+    window.addEventListener("mousemove", resetIdleTimer);
+    return () => {
+      window.removeEventListener("touchstart", resetIdleTimer);
+      window.removeEventListener("touchmove", resetIdleTimer);
+      window.removeEventListener("mousedown", resetIdleTimer);
+      window.removeEventListener("mousemove", resetIdleTimer);
+      if (landscapeIdleTimerRef.current) { clearTimeout(landscapeIdleTimerRef.current); landscapeIdleTimerRef.current = null; }
+    };
+  }, [isMobileLandscape]);
 
   // ── Phase D3: mobile-only tap/swipe/long-press gesture layer ─────────
   // Deliberately NOT a second set of onTouch* listeners — this app
@@ -735,6 +833,27 @@ export default function PremiumReaderPreviewContent() {
     }
   }
 
+  // RC1 P0 fix #2/#4: pulled out of handleGestureDown so the new native-
+  // touch path (handleTouchStart below) can arm the exact same gesture —
+  // zone detection, long-press timer, everything — from a plain {x,y}
+  // instead of a React.MouseEvent, without duplicating the logic.
+  function startGesture(x: number, y: number, onControl: boolean) {
+    const vh = window.innerHeight;
+    const zone: "top" | "bottom" | null =
+      y < vh * SWIPE_ZONE_FRACTION ? "top"
+      : y > vh * (1 - SWIPE_ZONE_FRACTION) ? "bottom"
+      : null;
+    gestureStartRef.current = { x, y, time: Date.now(), zone, onControl };
+    longPressFiredRef.current = false;
+    if (longPressTimerRef.current) { clearTimeout(longPressTimerRef.current); longPressTimerRef.current = null; }
+    if (onControl) return;
+    longPressTimerRef.current = setTimeout(() => {
+      longPressFiredRef.current = true;
+      if (activeSelection?.type === "text") { handleSelectionAction("explain"); return; }
+      if (!activeSelection) tryLongPressSelection(x, y);
+    }, GESTURE_LONGPRESS_MS);
+  }
+
   function handleGestureDown(e: React.MouseEvent) {
     // Real-device gesture safety: never arm a gesture while a locally-
     // rendered sheet (More / Contents / page strip) is open — the AI
@@ -742,22 +861,7 @@ export default function PremiumReaderPreviewContent() {
     // subtree already, so they were never reachable here to begin with.
     if (mobileMoreOpen || contentsOpen || pageStripOpen) { gestureStartRef.current = null; return; }
     if (interactionMode !== "none") { gestureStartRef.current = null; return; }
-    const onControl = isInteractiveTarget(e.target);
-    const vh = window.innerHeight;
-    const zone: "top" | "bottom" | null =
-      e.clientY < vh * SWIPE_ZONE_FRACTION ? "top"
-      : e.clientY > vh * (1 - SWIPE_ZONE_FRACTION) ? "bottom"
-      : null;
-    gestureStartRef.current = { x: e.clientX, y: e.clientY, time: Date.now(), zone, onControl };
-    longPressFiredRef.current = false;
-    if (longPressTimerRef.current) { clearTimeout(longPressTimerRef.current); longPressTimerRef.current = null; }
-    if (onControl) return;
-    const pressX = e.clientX, pressY = e.clientY;
-    longPressTimerRef.current = setTimeout(() => {
-      longPressFiredRef.current = true;
-      if (activeSelection?.type === "text") { handleSelectionAction("explain"); return; }
-      if (!activeSelection) tryLongPressSelection(pressX, pressY);
-    }, GESTURE_LONGPRESS_MS);
+    startGesture(e.clientX, e.clientY, isInteractiveTarget(e.target));
   }
 
   function handleGestureMove(e: React.MouseEvent) {
@@ -771,14 +875,14 @@ export default function PremiumReaderPreviewContent() {
     }
   }
 
-  function handleGestureUp(e: React.MouseEvent) {
-    if (longPressTimerRef.current) { clearTimeout(longPressTimerRef.current); longPressTimerRef.current = null; }
-    const start = gestureStartRef.current;
-    gestureStartRef.current = null;
-    if (!start || start.onControl || longPressFiredRef.current || interactionMode !== "none") return;
-
-    const dx = e.clientX - start.x;
-    const dy = e.clientY - start.y;
+  // RC1 P0 fix #2: extracted so both the mouse-based path (handleGestureUp
+  // below) and the new native-touch path (finishTouchGesture further down)
+  // classify a finished single-pointer gesture identically — one source
+  // of truth for the swipe/tap thresholds instead of two copies that
+  // could drift.
+  function finishTapOrSwipe(start: { x: number; y: number; time: number; zone: "top" | "bottom" | null }, endX: number, endY: number) {
+    const dx = endX - start.x;
+    const dy = endY - start.y;
     const dt = Date.now() - start.time;
     const absDx = Math.abs(dx), absDy = Math.abs(dy);
     const mostlyVertical = absDy > absDx * 1.5;
@@ -797,18 +901,14 @@ export default function PremiumReaderPreviewContent() {
       return;
     }
 
-    // Real-device fix 2: horizontal swipe → page turn. Reuses goPrev/
-    // goNext verbatim (the same functions the arrow buttons call — they
-    // keep working exactly as before, untouched). Not zone-restricted
-    // like the vertical swipes (page turning should work from anywhere
-    // on the page, not just an edge strip), but gated to zoom<=105% so
-    // it never fights with panning a zoomed-in page — at default zoom
-    // there's nothing to pan into anyway, so this is the one case where
-    // a horizontal drag can only ever mean "turn the page." Same
-    // distance/duration thresholds as the vertical swipes, which is what
-    // makes this "prevent accidental page turns": a short/slow drag
-    // (an ordinary text-selection-style touch or a hesitant pan) never
-    // qualifies.
+    // Horizontal swipe → page turn. Reuses goPrev/goNext verbatim (the
+    // same functions the arrow buttons call). Not zone-restricted like
+    // the vertical swipes. Gated to zoom<=105% — RC1 P0 fix #3 requires
+    // swipe page-turn disabled above 100% zoom so it never fights
+    // one-finger panning; the native-touch path additionally never even
+    // reaches this function while zoomed (it diverts to panning at
+    // touchstart), this check is what keeps the mouse-based fallback
+    // path consistent with the same rule.
     const mostlyHorizontal = absDx > absDy * 1.5;
     if (zoom <= 105 && mostlyHorizontal && absDx > SWIPE_MIN_DISTANCE && dt < SWIPE_MAX_MS) {
       if (dx < 0) goNext(); else goPrev();
@@ -829,6 +929,160 @@ export default function PremiumReaderPreviewContent() {
       });
     }
   }
+
+  function handleGestureUp(e: React.MouseEvent) {
+    if (longPressTimerRef.current) { clearTimeout(longPressTimerRef.current); longPressTimerRef.current = null; }
+    const start = gestureStartRef.current;
+    gestureStartRef.current = null;
+    if (!start || start.onControl || longPressFiredRef.current || interactionMode !== "none") return;
+    finishTapOrSwipe(start, e.clientX, e.clientY);
+  }
+
+  // ── RC1 P0 fixes #2/#3/#4: native touch-event gesture system ──────────
+  // The mouse-based layer above (handleGestureDown/Move/Up, driven by the
+  // browser's synthetic mouse-compat events from touches) is unreliable
+  // for swipe/long-press on real iOS Safari, and mouse events cannot
+  // represent a second finger at all, so pinch-to-zoom is impossible on
+  // that path. This is a second, real listener on the same element,
+  // attached with addEventListener(..., { passive: false }) via the
+  // useEffect below rather than JSX onTouchStart/Move/End props — React
+  // registers JSX touch handlers as passive by default, which silently
+  // no-ops preventDefault() and was the actual reason swipes/long-press
+  // felt unreliable on-device. A real touchstart's preventDefault() here
+  // suppresses the synthetic mouse cascade on genuine touchscreens, so
+  // this system and the mouse-based one above never double-fire; the
+  // mouse-based path is left untouched as the fallback for non-touch
+  // input (a real mouse, or this session's own testing tools).
+  const pinchRef = useRef<{ startDist: number; startZoom: number } | null>(null);
+  const touchPanRef = useRef<{ x: number; y: number; px: number; py: number } | null>(null);
+
+  function touchDistance(a: Touch, b: Touch): number {
+    return Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+  }
+
+  function handleTouchStart(e: TouchEvent) {
+    if (mobileMoreOpen || contentsOpen || pageStripOpen) return;
+    // Explicit text/image select mode: leave this untouched, exactly as
+    // before — it's still driven by the mouse-compat path via
+    // onCenterMouseDown/Move (drag-to-select), which real touches still
+    // feed as long as this handler doesn't preventDefault them away.
+    if (interactionMode !== "none") return;
+
+    if (e.touches.length === 2) {
+      e.preventDefault();
+      if (longPressTimerRef.current) { clearTimeout(longPressTimerRef.current); longPressTimerRef.current = null; }
+      gestureStartRef.current = null;
+      touchPanRef.current = null;
+      pinchRef.current = { startDist: touchDistance(e.touches[0], e.touches[1]), startZoom: zoom };
+      return;
+    }
+    if (e.touches.length !== 1) return;
+    pinchRef.current = null;
+
+    const touch = e.touches[0];
+    const onControl = isInteractiveTarget(e.target);
+    if (onControl) return; // never swallow a real tap on a button/input
+
+    if (zoom > 100) {
+      e.preventDefault();
+      gestureStartRef.current = null;
+      if (longPressTimerRef.current) { clearTimeout(longPressTimerRef.current); longPressTimerRef.current = null; }
+      touchPanRef.current = { x: touch.clientX, y: touch.clientY, px: pan.x, py: pan.y };
+      return;
+    }
+
+    e.preventDefault();
+    startGesture(touch.clientX, touch.clientY, onControl);
+  }
+
+  function handleTouchMove(e: TouchEvent) {
+    // One finger lifted mid-pinch: hand off to one-finger panning (if
+    // still zoomed) instead of just going dead until the next touchstart.
+    if (pinchRef.current && e.touches.length < 2) {
+      pinchRef.current = null;
+      if (e.touches.length === 1 && zoom > 100) {
+        const touch = e.touches[0];
+        touchPanRef.current = { x: touch.clientX, y: touch.clientY, px: pan.x, py: pan.y };
+      }
+    }
+
+    if (pinchRef.current && e.touches.length === 2) {
+      e.preventDefault();
+      const dist = touchDistance(e.touches[0], e.touches[1]);
+      const ratio = dist / pinchRef.current.startDist;
+      const nextZoom = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Math.round(pinchRef.current.startZoom * ratio)));
+      setZoom(nextZoom);
+      return;
+    }
+
+    if (touchPanRef.current && e.touches.length === 1) {
+      e.preventDefault();
+      const touch = e.touches[0];
+      const start = touchPanRef.current;
+      setPan({ x: start.px + (touch.clientX - start.x), y: start.py + (touch.clientY - start.y) });
+      return;
+    }
+
+    const start = gestureStartRef.current;
+    if (!start || longPressFiredRef.current || !longPressTimerRef.current) return;
+    const touch = e.touches[0];
+    if (!touch) return;
+    const dx = Math.abs(touch.clientX - start.x);
+    const dy = Math.abs(touch.clientY - start.y);
+    if (dx > GESTURE_LONGPRESS_MAX_MOVE || dy > GESTURE_LONGPRESS_MAX_MOVE) {
+      clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+  }
+
+  function handleTouchEnd(e: TouchEvent) {
+    if (pinchRef.current) {
+      if (e.touches.length < 2) pinchRef.current = null;
+      return;
+    }
+    if (touchPanRef.current) {
+      if (e.touches.length === 0) touchPanRef.current = null;
+      return;
+    }
+
+    if (longPressTimerRef.current) { clearTimeout(longPressTimerRef.current); longPressTimerRef.current = null; }
+    const start = gestureStartRef.current;
+    gestureStartRef.current = null;
+    if (!start || start.onControl || longPressFiredRef.current || interactionMode !== "none") return;
+    const touch = e.changedTouches[0];
+    if (!touch) return;
+    finishTapOrSwipe(start, touch.clientX, touch.clientY);
+  }
+
+  // Native listeners, not JSX onTouchStart/Move/End props — see the
+  // block comment above for why. Attached via a ref-indirection wrapper
+  // so the actual DOM listeners are only added/removed once (or when
+  // isMobileViewport flips), not on every render — a pinch or pan
+  // updates zoom/pan state on every touchmove tick, and reattaching
+  // real listeners that often would risk jank during exactly the
+  // "smooth animation" the pinch-zoom spec asks for. The wrapper always
+  // calls through to the latest handler closures, so state is never
+  // stale despite the stable listener identity.
+  const touchHandlersRef = useRef({ handleTouchStart, handleTouchMove, handleTouchEnd });
+  touchHandlersRef.current = { handleTouchStart, handleTouchMove, handleTouchEnd };
+
+  useEffect(() => {
+    const el = bookAreaRef.current;
+    if (!el || !isMobileViewport) return;
+    const onStart = (e: TouchEvent) => touchHandlersRef.current.handleTouchStart(e);
+    const onMove = (e: TouchEvent) => touchHandlersRef.current.handleTouchMove(e);
+    const onEnd = (e: TouchEvent) => touchHandlersRef.current.handleTouchEnd(e);
+    el.addEventListener("touchstart", onStart, { passive: false });
+    el.addEventListener("touchmove", onMove, { passive: false });
+    el.addEventListener("touchend", onEnd, { passive: false });
+    el.addEventListener("touchcancel", onEnd, { passive: false });
+    return () => {
+      el.removeEventListener("touchstart", onStart);
+      el.removeEventListener("touchmove", onMove);
+      el.removeEventListener("touchend", onEnd);
+      el.removeEventListener("touchcancel", onEnd);
+    };
+  }, [isMobileViewport]);
 
   // AI panel starts compact on ENTERING fullscreen (per spec), same
   // "force once on the false→true edge" pattern as ReaderNav's own
@@ -2748,6 +3002,11 @@ export default function PremiumReaderPreviewContent() {
   const fsGroupGap = isFullscreenLayout ? "gap-2" : "gap-2.5";
   const fsBottomMt = isFullscreenLayout ? "mt-1" : "mt-1.5";
   const fsBottomPy = isFullscreenLayout ? "py-1.5" : "py-2";
+  // RC1 P2: bottom-nav button layout — stacked icon-over-label in
+  // portrait (unchanged), icon-beside-label with tighter padding in
+  // landscape so the compact bar (py-0.5 on its wrapper above) doesn't
+  // clip either the icon or the label.
+  const mobileNavBtnCls = isMobileLandscape ? "flex-row gap-1.5 px-1 py-1" : "flex-col gap-0.5 px-1 py-1.5";
 
   return (
     <>
@@ -2887,27 +3146,29 @@ export default function PremiumReaderPreviewContent() {
             </>
           ) : (
             <>
-              {/* ── Final mobile polish points 1 & 7: header compressed
-                  further — 40px (h-10) circular touch targets (was 44px;
-                  still a comfortable tap size, chosen to genuinely cut
-                  vertical height rather than just claim to), tighter
-                  gaps (gap-1 not gap-1.5, px-0 not px-0.5), the row-2
-                  divider dropped (Read Page/Zoom now read as one group,
-                  using the horizontal space instead of spending it on a
-                  separator), and Read Page's own padding trimmed
-                  (px-3→px-2.5) as its own "reduce slightly." Same
-                  controls, same handlers — no functionality moved.
-                  Real-device fix 1 (prior round): the row-2 "⋯" button
-                  D3.1 added was a literal duplicate of the bottom nav's
-                  own "More" — stays removed. Phase D3: fades on a single
-                  tap anywhere on the reading area (immersive mode,
-                  handleGestureUp above); the More sheet itself is NOT
-                  inside this wrapper so it always stays fully visible/
-                  interactive once opened. ────────────────────────────── */}
+              {/* ── RC1 P1 fix #6: single-row header. Was two full 40px
+                  rows (identity row + a second row for Read Page/Zoom) —
+                  now one row of 36px (h-9) icon-first controls, roughly
+                  halving the chrome's vertical footprint so the page
+                  itself stays the visual focus. Zoom's dedicated +/−
+                  buttons moved to the More sheet below: RC1 P0 fix #3
+                  added real pinch-to-zoom, so the header no longer needs
+                  to spend a whole row on a control most mobile users will
+                  now reach via the gesture instead — the buttons still
+                  exist (never removed outright) for anyone who can't
+                  pinch, just relocated to a secondary surface. Read Page
+                  goes icon-only here (was icon+label) for the same
+                  space reason; its title/aria-label still carry the full
+                  text for screen readers. Same handlers throughout — no
+                  functionality removed, only regrouped. Phase D3: fades
+                  on a single tap anywhere on the reading area (immersive
+                  mode, handleGestureUp above); the More sheet itself is
+                  NOT inside this wrapper so it always stays fully
+                  visible/interactive once opened. ───────────────────── */}
               <div className={`flex-shrink-0 ndl-chrome-fade ${mobileChromeCls}`}>
-                <div className="mx-auto mb-0.5 flex w-full max-w-[1340px] flex-shrink-0 items-center gap-1 px-0">
+                <div className="mx-auto flex w-full max-w-[1340px] flex-shrink-0 items-center gap-1 px-0 py-1">
                   <Link href="/library" title={t.commonBack} aria-label={t.commonBack}
-                    className="ndl-press inline-flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full bg-white text-sm font-bold text-slate-700 shadow ring-1 ring-slate-200 hover:bg-amber-50">
+                    className="ndl-press inline-flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-white text-sm font-bold text-slate-700 shadow ring-1 ring-slate-200 hover:bg-amber-50">
                     ←
                   </Link>
                   <h1 className="min-w-0 flex-1 truncate text-center text-sm font-black text-slate-900">{book}</h1>
@@ -2918,39 +3179,26 @@ export default function PremiumReaderPreviewContent() {
                   {displayLabel && (
                     <button onClick={() => setPageStripOpen(true)}
                       title={t.premiumReaderGoToPageTitle} aria-label={t.premiumReaderGoToPageTitle}
-                      className="ndl-press flex h-10 flex-shrink-0 items-center rounded-full bg-white px-2 text-[10px] font-bold text-slate-600 shadow ring-1 ring-amber-100 hover:bg-amber-50">
+                      className="ndl-press flex h-9 flex-shrink-0 items-center rounded-full bg-white px-2 text-[10px] font-bold text-slate-600 shadow ring-1 ring-amber-100 hover:bg-amber-50">
                       {displayLabel}
                     </button>
+                  )}
+                  <button onClick={handleReadPage} disabled={speechState === "loading"}
+                    title={t.premiumReaderReadPageTitle} aria-label={t.premiumReaderReadPageTitle}
+                    className="ndl-press inline-flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-slate-900 text-sm text-white shadow hover:bg-slate-800 disabled:opacity-50">
+                    {speechState === "loading" ? "⏳" : speechState === "speaking" ? "⏸" : speechState === "paused" ? "▶" : "🔊"}
+                  </button>
+                  {(speechState === "speaking" || speechState === "paused") && (
+                    <button onClick={handleStopReadAloud} title={t.premiumReaderStop} aria-label={t.premiumReaderStop}
+                      className="ndl-press inline-flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-red-600 text-xs font-bold text-white shadow hover:bg-red-700">⏹</button>
                   )}
                   <button onClick={toggleBookmarkCurrentPage}
                     title={isCurrentPageBookmarked ? t.premiumReaderBookmarked : t.premiumReaderBookmark}
                     aria-label={isCurrentPageBookmarked ? t.premiumReaderBookmarked : t.premiumReaderBookmark}
-                    className={`ndl-press inline-flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full text-sm shadow ring-1 ${
+                    className={`ndl-press inline-flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full text-sm shadow ring-1 ${
                       isCurrentPageBookmarked ? "bg-amber-500 text-white ring-amber-500" : "bg-white text-slate-700 ring-slate-200 hover:bg-amber-50"}`}>
                     🔖
                   </button>
-                </div>
-
-                <div className="mx-auto mb-0.5 flex w-full max-w-[1340px] flex-shrink-0 items-center gap-1 px-0">
-                  <button onClick={handleReadPage} disabled={speechState === "loading"}
-                    title={t.premiumReaderReadPageTitle} aria-label={t.premiumReaderReadPageTitle}
-                    className="ndl-press inline-flex h-10 flex-shrink-0 items-center gap-1 rounded-full bg-slate-900 px-2.5 text-xs font-bold text-white shadow hover:bg-slate-800 disabled:opacity-50">
-                    {readLabel}
-                  </button>
-                  {(speechState === "speaking" || speechState === "paused") && (
-                    <button onClick={handleStopReadAloud} title={t.premiumReaderStop} aria-label={t.premiumReaderStop}
-                      className="ndl-press inline-flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full bg-red-600 text-xs font-bold text-white shadow hover:bg-red-700">⏹</button>
-                  )}
-
-                  <div className="flex flex-1 items-center justify-end gap-1">
-                    <button onClick={() => setZoom(z => Math.max(z - ZOOM_STEP, ZOOM_MIN))} disabled={zoom <= ZOOM_MIN}
-                      title={t.premiumReaderZoomOutTitle} aria-label={t.premiumReaderZoomOutTitle}
-                      className="ndl-press inline-flex h-10 w-10 items-center justify-center rounded-full bg-amber-50/70 text-xs font-bold text-slate-700 ring-1 ring-amber-100 hover:bg-amber-100 disabled:opacity-40">−</button>
-                    <span className="min-w-[30px] text-center text-[11px] font-bold tabular-nums text-slate-600">{zoom}%</span>
-                    <button onClick={() => setZoom(z => Math.min(z + ZOOM_STEP, ZOOM_MAX))} disabled={zoom >= ZOOM_MAX}
-                      title={t.premiumReaderZoomInTitle} aria-label={t.premiumReaderZoomInTitle}
-                      className="ndl-press inline-flex h-10 w-10 items-center justify-center rounded-full bg-amber-50/70 text-xs font-bold text-slate-700 ring-1 ring-amber-100 hover:bg-amber-100 disabled:opacity-40">+</button>
-                  </div>
                 </div>
               </div>
 
@@ -2990,6 +3238,27 @@ export default function PremiumReaderPreviewContent() {
                           className="ndl-press flex h-11 items-center justify-center gap-1.5 rounded-xl bg-white text-sm font-bold text-slate-700 shadow ring-1 ring-slate-200">
                           ℹ️ {t.premiumReaderBookDetails}
                         </button>
+                      </div>
+
+                      {/* RC1 P1 fix #6: Zoom's dedicated +/− controls,
+                          relocated out of the header now that pinch-to-
+                          zoom (RC1 P0 fix #3) is the primary way to zoom
+                          on mobile — kept here, not removed, for anyone
+                          who prefers buttons over a gesture. */}
+                      <div className="flex items-center justify-between rounded-xl bg-amber-50/70 px-3 py-2 ring-1 ring-amber-100">
+                        <span className="text-sm font-bold text-slate-700">🔍 {t.premiumReaderZoomLabel}</span>
+                        <div className="flex items-center gap-2">
+                          <button onClick={() => setZoom(z => Math.max(z - ZOOM_STEP, ZOOM_MIN))} disabled={zoom <= ZOOM_MIN}
+                            title={t.premiumReaderZoomOutTitle} aria-label={t.premiumReaderZoomOutTitle}
+                            className="ndl-press inline-flex h-9 w-9 items-center justify-center rounded-full bg-white text-sm font-bold text-slate-700 shadow ring-1 ring-amber-100 hover:bg-amber-100 disabled:opacity-40">−</button>
+                          <span className="min-w-[34px] text-center text-xs font-bold tabular-nums text-slate-600">{zoom}%</span>
+                          <button onClick={() => setZoom(z => Math.min(z + ZOOM_STEP, ZOOM_MAX))} disabled={zoom >= ZOOM_MAX}
+                            title={t.premiumReaderZoomInTitle} aria-label={t.premiumReaderZoomInTitle}
+                            className="ndl-press inline-flex h-9 w-9 items-center justify-center rounded-full bg-white text-sm font-bold text-slate-700 shadow ring-1 ring-amber-100 hover:bg-amber-100 disabled:opacity-40">+</button>
+                          <button onClick={fitScreen}
+                            title={t.premiumReaderFit} aria-label={t.premiumReaderFit}
+                            className="ndl-press inline-flex h-9 items-center rounded-full bg-white px-3 text-xs font-bold text-slate-700 shadow ring-1 ring-amber-100 hover:bg-amber-100">{t.premiumReaderFit}</button>
+                        </div>
                       </div>
 
                       {fullscreenSupported && (
@@ -3098,7 +3367,16 @@ export default function PremiumReaderPreviewContent() {
                       onClick={() => { navigateToPdfPage(p); setPageStripOpen(false); }}
                       className={`ndl-press flex h-12 flex-col items-center justify-center rounded-xl text-[11px] font-bold ${
                         p === readerPage ? "bg-slate-900 text-white shadow" : "bg-amber-50/70 text-slate-700 hover:bg-amber-100"}`}>
-                      {getDisplayLabel(p, printedPageMap)}
+                      {/* RC1 P0 fix #5 (blank Contents placeholders): most
+                          books (everything except Nalanda/Chandrayaan-3 —
+                          see lib/printedPageMap.ts) have no printed-page
+                          map at all, so getDisplayLabel returns "" for
+                          every one of their pages — every button in this
+                          grid rendered blank for those books. Falls back
+                          to the real PDF page number (never a fabricated
+                          chapter name) exactly like resolvePrintedPageTarget
+                          already does for Go to Page on an unmapped book. */}
+                      {getDisplayLabel(p, printedPageMap) || p}
                     </button>
                   ))}
                 </div>
@@ -3460,12 +3738,18 @@ export default function PremiumReaderPreviewContent() {
           {isMobileViewport ? (
             <div
               data-dock-avoid
-              className={`mx-auto mt-1 flex w-full max-w-[1340px] flex-shrink-0 items-center justify-between gap-1 rounded-2xl bg-white px-2 py-1.5 shadow ring-1 ring-amber-100 ndl-chrome-fade ${mobileChromeCls}`}
+              className={`mx-auto mt-1 flex w-full max-w-[1340px] flex-shrink-0 items-center justify-between gap-1 rounded-2xl bg-white px-2 shadow ring-1 ring-amber-100 ndl-chrome-fade ${mobileChromeCls} ${isMobileLandscape ? "py-0.5" : "py-1.5"}`}
               style={{ marginBottom: "env(safe-area-inset-bottom)" }}
             >
+              {/* RC1 P2: landscape keeps the bar itself compact (py-0.5
+                  vs 1.5, icon+label side-by-side vs stacked) — same 4
+                  buttons/handlers, just a shorter footprint so more of
+                  the short landscape height goes to the page. Portrait
+                  is untouched (mobileNavBtnCls below resolves to the
+                  exact original stacked classes there). */}
               <button onClick={toggleAiPanelCompact}
                 title={t.aiCompanionExpand} aria-label={t.aiCompanionExpand}
-                className="ndl-press flex flex-1 flex-col items-center gap-0.5 rounded-xl px-1 py-1.5 text-[10px] font-bold text-slate-600 hover:bg-amber-50">
+                className={`ndl-press flex flex-1 items-center justify-center rounded-xl text-[10px] font-bold text-slate-600 hover:bg-amber-50 ${mobileNavBtnCls}`}>
                 <span className="text-base leading-none" aria-hidden="true">🤖</span>
                 {t.premiumReaderAiTab}
               </button>
@@ -3481,7 +3765,7 @@ export default function PremiumReaderPreviewContent() {
                   More → Book Information instead of being removed. */}
               <button onClick={() => setPageStripOpen(true)}
                 title={t.premiumReaderContents} aria-label={t.premiumReaderContents}
-                className="ndl-press flex flex-1 flex-col items-center gap-0.5 rounded-xl px-1 py-1.5 text-[10px] font-bold text-slate-600 hover:bg-amber-50">
+                className={`ndl-press flex flex-1 items-center justify-center rounded-xl text-[10px] font-bold text-slate-600 hover:bg-amber-50 ${mobileNavBtnCls}`}>
                 <span className="text-base leading-none" aria-hidden="true">📚</span>
                 {t.premiumReaderContents}
               </button>
@@ -3499,13 +3783,13 @@ export default function PremiumReaderPreviewContent() {
                   no feature change, just a friendlier mobile label. */}
               <button onClick={() => window.dispatchEvent(new Event("ndl-open-accessibility-panel"))}
                 title={t.a11yReadingOptions} aria-label={t.settingsAccessibility}
-                className="ndl-press flex flex-1 flex-col items-center gap-0.5 rounded-xl px-1 py-1.5 text-[10px] font-bold text-slate-600 hover:bg-amber-50">
+                className={`ndl-press flex flex-1 items-center justify-center rounded-xl text-[10px] font-bold text-slate-600 hover:bg-amber-50 ${mobileNavBtnCls}`}>
                 <span className="text-base leading-none" aria-hidden="true">♿</span>
                 {t.premiumReaderReadingTab}
               </button>
               <button onClick={() => setMobileMoreOpen(true)}
                 title={t.premiumReaderMoreTools} aria-label={t.premiumReaderMoreTools}
-                className="ndl-press flex flex-1 flex-col items-center gap-0.5 rounded-xl px-1 py-1.5 text-[10px] font-bold text-slate-600 hover:bg-amber-50">
+                className={`ndl-press flex flex-1 items-center justify-center rounded-xl text-[10px] font-bold text-slate-600 hover:bg-amber-50 ${mobileNavBtnCls}`}>
                 <span className="text-base leading-none" aria-hidden="true">⋯</span>
                 {t.premiumReaderMoreTools}
               </button>
