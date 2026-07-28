@@ -3169,11 +3169,10 @@ export default function PremiumReaderPreviewContent() {
   const fsGroupGap = isFullscreenLayout ? "gap-2" : "gap-2.5";
   const fsBottomMt = isFullscreenLayout ? "mt-1" : "mt-1.5";
   const fsBottomPy = isFullscreenLayout ? "py-1.5" : "py-2";
-  // RC1 P2: bottom-nav button layout — stacked icon-over-label in
-  // portrait (unchanged), icon-beside-label with tighter padding in
-  // landscape so the compact bar (py-0.5 on its wrapper above) doesn't
-  // clip either the icon or the label.
-  const mobileNavBtnCls = isMobileLandscape ? "flex-row gap-1.5 px-1 py-1" : "flex-col gap-0.5 px-1 py-1.5";
+  // Portrait-only bottom-nav button layout (stacked icon-over-label).
+  // Landscape now renders its own separate floating dock (see below) with
+  // its own icon-only buttons, so this no longer needs a landscape branch.
+  const mobileNavBtnCls = "flex-col gap-0.5 px-1 py-1.5";
 
   return (
     <>
@@ -3341,6 +3340,17 @@ export default function PremiumReaderPreviewContent() {
                   mode, handleGestureUp above); the More sheet itself is
                   NOT inside this wrapper so it always stays fully
                   visible/interactive once opened. ───────────────────── */}
+              {/* Premium landscape redesign: the portrait header below is
+                  an in-flow flex-shrink-0 row (reserves its height even
+                  while faded via mobileChromeCls, by design — portrait
+                  has room to spare). Landscape instead renders NOTHING
+                  in-flow here — see the `position:fixed` bar rendered
+                  further down as a sibling of the whole mobile branch —
+                  so the book's flex:1 area claims the full column height
+                  regardless of chrome visibility, per "controls overlay
+                  the page, never resize it." Portrait is byte-for-byte
+                  unchanged. */}
+              {!isMobileLandscape && (
               <div className={`flex-shrink-0 ndl-chrome-fade ${mobileChromeCls}`}>
                 <div className="mx-auto flex w-full max-w-[1340px] flex-shrink-0 items-center gap-1 px-0 py-1">
                   <Link href="/library" title={t.commonBack} aria-label={t.commonBack}
@@ -3377,6 +3387,64 @@ export default function PremiumReaderPreviewContent() {
                   </button>
                 </div>
               </div>
+              )}
+
+              {/* ── Premium landscape redesign: floating overlay header —
+                  position:fixed (zero flow footprint, see comment above),
+                  deep charcoal/midnight glass with a thin warm-gold hairline,
+                  icon-only controls per spec ("no second row… only Back,
+                  title, page, Read Page, Bookmark, More"). Same handlers as
+                  the portrait header — no new behavior, only a different
+                  shell for a landscape-only visual language. Fades with the
+                  same mobileChromeCls (tap-to-reveal, 3s auto-hide — RC1 P2
+                  landscape auto-hide, unchanged) and never resizes the book
+                  underneath it since it's outside the flex flow. ────────── */}
+              {isMobileLandscape && (
+                <div
+                  className={`pointer-events-none fixed inset-x-0 top-0 z-40 flex justify-center ndl-chrome-fade ${mobileChromeCls}`}
+                  style={{
+                    paddingTop: "max(0.4rem, env(safe-area-inset-top))",
+                    paddingLeft: "max(0.6rem, env(safe-area-inset-left))",
+                    paddingRight: "max(0.6rem, env(safe-area-inset-right))",
+                  }}
+                >
+                  <div
+                    className="pointer-events-auto flex max-w-[92vw] items-center gap-1 rounded-full px-2.5 py-1.5 backdrop-blur-2xl"
+                    style={{ background: "rgba(15,13,11,0.6)", border: "1px solid rgba(212,175,110,0.16)", boxShadow: "0 10px 28px rgba(0,0,0,0.35)" }}
+                  >
+                    <Link href="/library" title={t.commonBack} aria-label={t.commonBack}
+                      className="ndl-press flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full text-[12px] text-amber-100/80 hover:bg-white/10">
+                      ←
+                    </Link>
+                    <span className="min-w-0 max-w-[34vw] truncate px-1 text-[11px] font-semibold tracking-wide text-amber-50/85">{book}</span>
+                    {displayLabel && (
+                      <button onClick={() => setPageStripOpen(true)}
+                        title={t.premiumReaderGoToPageTitle} aria-label={t.premiumReaderGoToPageTitle}
+                        className="ndl-press flex-shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold text-amber-200/70 hover:bg-white/10">
+                        {displayLabel}
+                      </button>
+                    )}
+                    <span className="h-4 w-px flex-shrink-0 bg-white/10" />
+                    <button onClick={handleReadPage} disabled={speechState === "loading"}
+                      title={t.premiumReaderReadPageTitle} aria-label={t.premiumReaderReadPageTitle}
+                      className="ndl-press flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full text-[13px] text-amber-100/80 hover:bg-white/10 disabled:opacity-40">
+                      {speechState === "loading" ? "⏳" : speechState === "speaking" ? "⏸" : speechState === "paused" ? "▶" : "🔊"}
+                    </button>
+                    <button onClick={toggleBookmarkCurrentPage}
+                      title={isCurrentPageBookmarked ? t.premiumReaderBookmarked : t.premiumReaderBookmark}
+                      aria-label={isCurrentPageBookmarked ? t.premiumReaderBookmarked : t.premiumReaderBookmark}
+                      className={`ndl-press flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full text-[13px] ${
+                        isCurrentPageBookmarked ? "text-amber-300" : "text-amber-100/80 hover:bg-white/10"}`}>
+                      🔖
+                    </button>
+                    <button onClick={() => setMobileMoreOpen(true)}
+                      title={t.premiumReaderMoreTools} aria-label={t.premiumReaderMoreTools}
+                      className="ndl-press flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full text-[13px] text-amber-100/80 hover:bg-white/10">
+                      ⋯
+                    </button>
+                  </div>
+                </div>
+              )}
 
               {/* ── "More" sheet — secondary actions only (frequent
                   actions — Read Page, Zoom, Bookmark — live directly in
@@ -3825,17 +3893,25 @@ export default function PremiumReaderPreviewContent() {
               onClick/aria wiring, desktop classes untouched. Phase D3
               point 1: on mobile these also fade with the rest of the
               chrome in immersive mode (mobileChromeCls) — desktop's
-              opacity/pointer-events are untouched (always visible). ── */}
+              opacity/pointer-events are untouched (always visible).
+              Premium landscape redesign: a third, even lighter variant —
+              thin chevrons that "almost disappear when inactive" instead
+              of the portrait pill (no white circle, no shadow), still the
+              exact same goPrev/goNext/mobileChromeCls wiring. Desktop and
+              portrait classes are untouched. ─────────────────────────── */}
           <div style={{ flex: 1, minHeight: 0, position: "relative" }}>
             <button
               onClick={goPrev}
               title={t.commonPrevious}
               aria-label={t.premiumReaderPreviousPage}
               {...(isMobileViewport ? { "data-dock-avoid": true } : {})}
-              className={`ndl-press absolute left-1 top-1/2 z-30 -translate-y-1/2 flex items-center justify-center rounded-full text-slate-700 hover:bg-white ${
-                isMobileViewport
-                  ? `h-9 w-9 bg-white/70 text-base shadow ring-1 ring-amber-100/70 ndl-chrome-fade ${mobileChromeCls}`
-                  : "h-11 w-11 bg-white/90 text-lg shadow-lg ring-1 ring-amber-100"}`}
+              className={`ndl-press absolute top-1/2 z-30 -translate-y-1/2 flex items-center justify-center rounded-full hover:bg-white ${
+                isMobileLandscape
+                  ? `left-0 h-10 w-6 text-white/40 text-base hover:text-white/70 hover:bg-transparent ndl-chrome-fade ${mobileChromeCls}`
+                  : isMobileViewport
+                  ? `left-1 h-9 w-9 bg-white/70 text-base text-slate-700 shadow ring-1 ring-amber-100/70 ndl-chrome-fade ${mobileChromeCls}`
+                  : "left-1 h-11 w-11 bg-white/90 text-lg text-slate-700 shadow-lg ring-1 ring-amber-100"}`}
+              style={isMobileLandscape ? { paddingLeft: "env(safe-area-inset-left)" } : undefined}
             >
               ‹
             </button>
@@ -3844,10 +3920,13 @@ export default function PremiumReaderPreviewContent() {
               title={t.commonNext}
               aria-label={t.premiumReaderNextPage}
               {...(isMobileViewport ? { "data-dock-avoid": true } : {})}
-              className={`ndl-press absolute right-1 top-1/2 z-30 -translate-y-1/2 flex items-center justify-center rounded-full text-slate-700 hover:bg-white ${
-                isMobileViewport
-                  ? `h-9 w-9 bg-white/70 text-base shadow ring-1 ring-amber-100/70 ndl-chrome-fade ${mobileChromeCls}`
-                  : "h-11 w-11 bg-white/90 text-lg shadow-lg ring-1 ring-amber-100"}`}
+              className={`ndl-press absolute top-1/2 z-30 -translate-y-1/2 flex items-center justify-center rounded-full hover:bg-white ${
+                isMobileLandscape
+                  ? `right-0 h-10 w-6 text-white/40 text-base hover:text-white/70 hover:bg-transparent ndl-chrome-fade ${mobileChromeCls}`
+                  : isMobileViewport
+                  ? `right-1 h-9 w-9 bg-white/70 text-base text-slate-700 shadow ring-1 ring-amber-100/70 ndl-chrome-fade ${mobileChromeCls}`
+                  : "right-1 h-11 w-11 bg-white/90 text-lg text-slate-700 shadow-lg ring-1 ring-amber-100"}`}
+              style={isMobileLandscape ? { paddingRight: "env(safe-area-inset-right)" } : undefined}
             >
               ›
             </button>
@@ -3866,6 +3945,7 @@ export default function PremiumReaderPreviewContent() {
                 isPanning={isPanning}
                 getPdfDocument={getMobilePdfDocument}
                 onTextExtracted={handleTextExtracted}
+                landscape={isMobileLandscape}
               />
             ) : (
               <PdfBookSpread
@@ -3912,17 +3992,44 @@ export default function PremiumReaderPreviewContent() {
               (Contents, page label, progress slider, fullscreen toggle)
               below, byte-for-byte unchanged. ─────────────────────────── */}
           {isMobileViewport ? (
+            isMobileLandscape ? (
+              // ── Premium landscape redesign: compact centered floating
+              // dock (position:fixed — zero flow footprint, same reasoning
+              // as the landscape header above), NOT the full-width
+              // justify-between bar portrait uses. Same 4 destinations/
+              // handlers as portrait, icon-only (labels dropped — landscape
+              // height is precious and title/aria-label already carry the
+              // full text for accessibility). Fades with mobileChromeCls,
+              // same tap-to-reveal + 3s auto-hide as everywhere else. ────
+              <div
+                data-dock-avoid
+                className={`pointer-events-none fixed inset-x-0 bottom-0 z-40 flex justify-center ndl-chrome-fade ${mobileChromeCls}`}
+                style={{ paddingBottom: "max(0.5rem, env(safe-area-inset-bottom))" }}
+              >
+                <div
+                  className="pointer-events-auto flex items-center gap-1 rounded-full px-2 py-1.5 backdrop-blur-2xl"
+                  style={{ background: "rgba(15,13,11,0.6)", border: "1px solid rgba(212,175,110,0.16)", boxShadow: "0 10px 28px rgba(0,0,0,0.35)" }}
+                >
+                  <button onClick={toggleAiPanelCompact}
+                    title={t.aiCompanionExpand} aria-label={t.aiCompanionExpand}
+                    className="ndl-press flex h-9 w-9 items-center justify-center rounded-full text-[15px] text-amber-100/80 hover:bg-white/10">🤖</button>
+                  <button onClick={() => setPageStripOpen(true)}
+                    title={t.premiumReaderContents} aria-label={t.premiumReaderContents}
+                    className="ndl-press flex h-9 w-9 items-center justify-center rounded-full text-[15px] text-amber-100/80 hover:bg-white/10">📚</button>
+                  <button onClick={() => window.dispatchEvent(new Event("ndl-open-accessibility-panel"))}
+                    title={t.a11yReadingOptions} aria-label={t.settingsAccessibility}
+                    className="ndl-press flex h-9 w-9 items-center justify-center rounded-full text-[15px] text-amber-100/80 hover:bg-white/10">♿</button>
+                  <button onClick={() => setMobileMoreOpen(true)}
+                    title={t.premiumReaderMoreTools} aria-label={t.premiumReaderMoreTools}
+                    className="ndl-press flex h-9 w-9 items-center justify-center rounded-full text-[15px] text-amber-100/80 hover:bg-white/10">⋯</button>
+                </div>
+              </div>
+            ) : (
             <div
               data-dock-avoid
-              className={`mx-auto mt-1 flex w-full max-w-[1340px] flex-shrink-0 items-center justify-between gap-1 rounded-2xl bg-white px-2 shadow ring-1 ring-amber-100 ndl-chrome-fade ${mobileChromeCls} ${isMobileLandscape ? "py-0.5" : "py-1.5"}`}
+              className={`mx-auto mt-1 flex w-full max-w-[1340px] flex-shrink-0 items-center justify-between gap-1 rounded-2xl bg-white px-2 py-1.5 shadow ring-1 ring-amber-100 ndl-chrome-fade ${mobileChromeCls}`}
               style={{ marginBottom: "env(safe-area-inset-bottom)" }}
             >
-              {/* RC1 P2: landscape keeps the bar itself compact (py-0.5
-                  vs 1.5, icon+label side-by-side vs stacked) — same 4
-                  buttons/handlers, just a shorter footprint so more of
-                  the short landscape height goes to the page. Portrait
-                  is untouched (mobileNavBtnCls below resolves to the
-                  exact original stacked classes there). */}
               <button onClick={toggleAiPanelCompact}
                 title={t.aiCompanionExpand} aria-label={t.aiCompanionExpand}
                 className={`ndl-press flex flex-1 items-center justify-center rounded-xl text-[10px] font-bold text-slate-600 hover:bg-amber-50 ${mobileNavBtnCls}`}>
@@ -3970,6 +4077,7 @@ export default function PremiumReaderPreviewContent() {
                 {t.premiumReaderMoreTools}
               </button>
             </div>
+            )
           ) : (
             <div className={`mx-auto ${fsBottomMt} flex w-full max-w-[1340px] flex-shrink-0 items-center gap-3 rounded-full bg-white px-4 ${fsBottomPy} shadow ring-1 ring-amber-100`}>
               <button

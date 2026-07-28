@@ -53,6 +53,13 @@ export type MobilePdfPageProps = {
    *  never blocking it. No text-selection layer is built from this; it
    *  only feeds AI Companion / Read Aloud's existing pageTexts state. */
   onTextExtracted?: (texts: Record<number, string>) => void;
+  /** Premium landscape redesign: shrinks the decorative outer frame
+   *  (section padding, card border/radius/shadow) so the book itself
+   *  claims nearly the full screen — visual-only, touches no rendering
+   *  logic, no measurement math, no pdf.js calls. Card's own internal
+   *  padding (CARD_PADDING_PX, tied to the width/height fit math below)
+   *  is deliberately left untouched by this flag. */
+  landscape?: boolean;
 };
 
 // Matches PdfBookSpread's own render-timeout contract (see that file's
@@ -90,7 +97,7 @@ function isCancelledError(err: unknown): boolean {
 
 export default function MobilePdfPage({
   pdfPath, pageNumber, totalPages, zoom = 100, pan = { x: 0, y: 0 }, isPanning = false,
-  getPdfDocument, onTextExtracted,
+  getPdfDocument, onTextExtracted, landscape = false,
 }: MobilePdfPageProps) {
   const { language } = useLanguage();
   const t = UI_TEXT[language];
@@ -296,8 +303,32 @@ export default function MobilePdfPage({
 
   const zoomTransform = `translate(${pan.x}px, ${pan.y}px) scale(${zoom / 100})`;
 
+  // Premium landscape redesign: shrinks the decorative chrome around the
+  // page (outer section padding/background, card border/radius/shadow)
+  // so the book fills nearly the whole screen — visual only. Card's own
+  // CARD_PADDING_PX (tied to the width/height fit math above) is
+  // deliberately untouched, so this never changes what the canvas
+  // actually renders, only how much frame surrounds it. Portrait is
+  // byte-for-byte the original classes.
+  const sectionCls = landscape
+    ? "flex h-full flex-col bg-[#0c0a08] py-1"
+    : "flex h-full flex-col bg-[radial-gradient(circle_at_center,#fff8e8_0%,#ead2a6_50%,#c18a3f_100%)] px-3 py-3";
+  // Landscape's notch/home-indicator sit on the SIDE, not top/bottom — the
+  // floating header/dock (parent component) already handle top/bottom
+  // safe areas; this handles left/right so the page itself never sits
+  // under a physical notch cutout.
+  const sectionStyle: React.CSSProperties | undefined = landscape
+    ? { paddingLeft: "max(0.25rem, env(safe-area-inset-left))", paddingRight: "max(0.25rem, env(safe-area-inset-right))" }
+    : undefined;
+  const cardCls = landscape
+    ? "relative z-10 flex h-full w-full items-center justify-center rounded-lg border bg-[#fffaf0] p-2"
+    : "relative z-10 flex h-full w-full items-center justify-center rounded-[1.75rem] border border-amber-200 bg-[#fffaf0] p-2 shadow-[0_20px_50px_rgba(75,45,12,0.25)]";
+  const cardStyle: React.CSSProperties = landscape
+    ? { overflow: zoom > 100 ? "auto" : "hidden", touchAction: "none", borderColor: "rgba(212,175,110,0.22)" }
+    : { overflow: zoom > 100 ? "auto" : "hidden", touchAction: "none" };
+
   return (
-    <section className="flex h-full flex-col bg-[radial-gradient(circle_at_center,#fff8e8_0%,#ead2a6_50%,#c18a3f_100%)] px-3 py-3">
+    <section className={sectionCls} style={sectionStyle}>
       {/* RC1 P2: cap raised from 720px — that was a portrait-era number
           that quietly wasted width in landscape (the page still only
           rendered as wide as 720px allowed, even when the phone had far
@@ -311,7 +342,7 @@ export default function MobilePdfPage({
       <main className="relative mx-auto flex w-full max-w-[1400px] flex-1 min-h-0 items-center justify-center">
         <div
           ref={cardRef}
-          className="relative z-10 flex h-full w-full items-center justify-center rounded-[1.75rem] border border-amber-200 bg-[#fffaf0] p-2 shadow-[0_20px_50px_rgba(75,45,12,0.25)]"
+          className={cardCls}
           // Real-device gesture fix: panning at zoom>100 is fully owned by
           // the parent reader surface's pointer-event handlers (CSS
           // transform, never native scrollLeft/Top) — `overflow:auto`
@@ -319,7 +350,7 @@ export default function MobilePdfPage({
           // its own `touch-action: none` this div's default touch-action
           // (`auto`) let the browser's native scroll compete with our
           // custom pinch/pan for the same touch on real iOS Safari.
-          style={{ overflow: zoom > 100 ? "auto" : "hidden", touchAction: "none" }}
+          style={cardStyle}
         >
           {failed ? (
             <div className="flex max-w-[260px] flex-col items-center gap-3 px-4 text-center">
@@ -335,7 +366,7 @@ export default function MobilePdfPage({
             </div>
           ) : (
             <div style={{ transform: zoomTransform, transformOrigin: "center center", position: "relative" }}>
-              <div className="relative flex items-center justify-center rounded-2xl bg-white p-1">
+              <div className={landscape ? "relative flex items-center justify-center rounded-md bg-white" : "relative flex items-center justify-center rounded-2xl bg-white p-1"}>
                 {!visible && (
                   <div className="flex flex-col items-center gap-3 py-10">
                     <div className="ndl-skeleton h-[380px] w-[260px] rounded-2xl shadow-lg" />
