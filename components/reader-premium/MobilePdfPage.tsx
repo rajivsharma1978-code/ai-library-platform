@@ -312,7 +312,14 @@ export default function MobilePdfPage({
         <div
           ref={cardRef}
           className="relative z-10 flex h-full w-full items-center justify-center rounded-[1.75rem] border border-amber-200 bg-[#fffaf0] p-2 shadow-[0_20px_50px_rgba(75,45,12,0.25)]"
-          style={{ overflow: zoom > 100 ? "auto" : "hidden" }}
+          // Real-device gesture fix: panning at zoom>100 is fully owned by
+          // the parent reader surface's pointer-event handlers (CSS
+          // transform, never native scrollLeft/Top) — `overflow:auto`
+          // still helps non-touch fallbacks (e.g. a trackpad), but without
+          // its own `touch-action: none` this div's default touch-action
+          // (`auto`) let the browser's native scroll compete with our
+          // custom pinch/pan for the same touch on real iOS Safari.
+          style={{ overflow: zoom > 100 ? "auto" : "hidden", touchAction: "none" }}
         >
           {failed ? (
             <div className="flex max-w-[260px] flex-col items-center gap-3 px-4 text-center">

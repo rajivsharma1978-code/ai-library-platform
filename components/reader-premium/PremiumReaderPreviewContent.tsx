@@ -575,6 +575,20 @@ export default function PremiumReaderPreviewContent() {
   const [isPanning, setIsPanning] = useState(false);
   const panStart = useRef({ mx: 0, my: 0, px: 0, py: 0 });
   const bookAreaRef = useRef<HTMLDivElement>(null);
+  // Real-device gesture fix: tracks whether the div carrying
+  // `bookAreaRef` is actually mounted right now — this div only exists
+  // in the JSX once the book cover animation has finished (see the
+  // `bookOpening`/`!bookOpened` early returns further down), so a plain
+  // `useRef` gives no signal for "the element just appeared." Wiring
+  // this from a ref CALLBACK (see `setBookAreaNode` below, used as the
+  // div's `ref` prop instead of `bookAreaRef` directly) lets the
+  // pointer-listener effect re-run at the exact moment the real element
+  // mounts, instead of inferring mount timing from an unrelated value.
+  const [bookAreaMounted, setBookAreaMounted] = useState(false);
+  const setBookAreaNode = useCallback((node: HTMLDivElement | null) => {
+    bookAreaRef.current = node;
+    setBookAreaMounted(!!node);
+  }, []);
   const autoFitDone = useRef(false);
 
   // ── Phase C3: layout state (visual/interaction redesign only — none
@@ -833,11 +847,14 @@ export default function PremiumReaderPreviewContent() {
     }
   }
 
-  // RC1 P0 fix #2/#4: pulled out of handleGestureDown so the new native-
-  // touch path (handleTouchStart below) can arm the exact same gesture —
-  // zone detection, long-press timer, everything — from a plain {x,y}
-  // instead of a React.MouseEvent, without duplicating the logic.
-  function startGesture(x: number, y: number, onControl: boolean) {
+  // Pulled out of handleGestureDown so the pointer-event path
+  // (handlePointerDown below) can arm the exact same gesture — zone
+  // detection, long-press timer, everything — from a plain {x,y} instead
+  // of a React.MouseEvent, without duplicating the logic. `onFire` is an
+  // optional hook the pointer path uses to update the temporary gesture
+  // debug overlay when the long-press timer actually fires; the mouse
+  // path below doesn't pass one.
+  function startGesture(x: number, y: number, onControl: boolean, onFire?: () => void) {
     const vh = window.innerHeight;
     const zone: "top" | "bottom" | null =
       y < vh * SWIPE_ZONE_FRACTION ? "top"
@@ -849,6 +866,7 @@ export default function PremiumReaderPreviewContent() {
     if (onControl) return;
     longPressTimerRef.current = setTimeout(() => {
       longPressFiredRef.current = true;
+      onFire?.();
       if (activeSelection?.type === "text") { handleSelectionAction("explain"); return; }
       if (!activeSelection) tryLongPressSelection(x, y);
     }, GESTURE_LONGPRESS_MS);
@@ -938,29 +956,83 @@ export default function PremiumReaderPreviewContent() {
     finishTapOrSwipe(start, e.clientX, e.clientY);
   }
 
-  // ── RC1 P0 fixes #2/#3/#4: native touch-event gesture system ──────────
-  // The mouse-based layer above (handleGestureDown/Move/Up, driven by the
-  // browser's synthetic mouse-compat events from touches) is unreliable
-  // for swipe/long-press on real iOS Safari, and mouse events cannot
-  // represent a second finger at all, so pinch-to-zoom is impossible on
-  // that path. This is a second, real listener on the same element,
-  // attached with addEventListener(..., { passive: false }) via the
-  // useEffect below rather than JSX onTouchStart/Move/End props — React
-  // registers JSX touch handlers as passive by default, which silently
-  // no-ops preventDefault() and was the actual reason swipes/long-press
-  // felt unreliable on-device. A real touchstart's preventDefault() here
-  // suppresses the synthetic mouse cascade on genuine touchscreens, so
-  // this system and the mouse-based one above never double-fire; the
-  // mouse-based path is left untouched as the fallback for non-touch
-  // input (a real mouse, or this session's own testing tools).
-  const pinchRef = useRef<{ startDist: number; startZoom: number } | null>(null);
+  // ── Real-device gesture fix: Pointer Events, correctly-mounted target ──
+  //
+  // WHY THE PREVIOUS (touch-event) IMPLEMENTATION NEVER FIRED ON A REAL
+  // IPHONE: the listener-attach effect keyed off `[isMobileViewport]`
+  // alone. `isMobileViewport` is derived purely from viewport size and is
+  // already `true` the moment the reader route mounts — well before the
+  // user has tapped to open the book. But the div carrying
+  // `ref={bookAreaRef}` doesn't exist in the tree yet at that point:
+  // `bookOpening`/`!bookOpened` both early-return `<BookOpeningAnimation>`
+  // / `<BookCover>` instead (see below, near the component's final
+  // return). So the effect ran exactly once, read `bookAreaRef.current`
+  // as `null`, and bailed out. Once the user tapped the cover and the
+  // real element mounted, `isMobileViewport` hadn't changed value, so the
+  // effect's dependency array gave React no reason to re-run it — the
+  // listeners were simply never attached, on every real session. (The
+  // Explore-agent investigation this round also checked: no competing
+  // global touch-action rule, no viewport-meta restriction, no stray
+  // pointer-events:auto overlay sitting over the book area, and no
+  // passive/non-passive mismatch anywhere else — this was the sole
+  // cause.) Fixed by tracking actual DOM mount/unmount via a ref
+  // callback (`setBookAreaNode` below, wired to `bookAreaMounted` state)
+  // instead of inferring it from an unrelated value.
+  //
+  // Also switched the event source from raw touchstart/move/end/cancel to
+  // Pointer Events (pointerdown/move/up/cancel), as requested: one
+  // consistent model (supported on iOS Safari 13+) with built-in
+  // pointerId tracking, so "how many fingers are down right now" is a
+  // plain Map instead of re-deriving it from a TouchList every time.
+  // Filtered to pointerType "touch"/"pen" only — real mouse input still
+  // goes through the separate onCenterMouseDown/Move/Up + handleGesture
+  // Down/Move/Up path below unchanged, so the two systems never
+  // double-fire for the same input device.
+  const activePointersRef = useRef<Map<number, { x: number; y: number }>>(new Map());
+  const pinchRef = useRef<{
+    startDist: number; startZoom: number;
+    // Practical stand-in for the zoom transform's `transform-origin:
+    // center center` (see MobilePdfPage's zoomTransform) — the element's
+    // own bounding-box center, measured once at pinch start — plus the
+    // content-space point that was under the fingers' midpoint at that
+    // moment, so subsequent moves can keep that same content point under
+    // the fingers ("zoom remains centered around the pinch midpoint
+    // where practical").
+    cardCenterX: number; cardCenterY: number;
+    contentX: number; contentY: number;
+  } | null>(null);
   const touchPanRef = useRef<{ x: number; y: number; px: number; py: number } | null>(null);
 
-  function touchDistance(a: Touch, b: Touch): number {
-    return Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+  function pointerDistance(a: { x: number; y: number }, b: { x: number; y: number }): number {
+    return Math.hypot(a.x - b.x, a.y - b.y);
   }
 
-  function handleTouchStart(e: TouchEvent) {
+  // ── Temporary real-device diagnostics (?gestureDebug=1 only) ──────────
+  type GestureDebugState = {
+    pointerDownCount: number; activePointerCount: number; lastEventType: string;
+    startX: number; startY: number; curX: number; curY: number; distance: number;
+    gestureState: "idle" | "tap" | "swipe" | "pinch" | "pan" | "longpress";
+    zoom: number; listenerMounted: boolean; preventDefaultCalled: boolean;
+  };
+  // Captured once at mount (lazy initializer), not read reactively from
+  // `searchParams` on every render: the reader's own URL-sync effect
+  // (further down) rewrites the query string to just `?book=&page=` as
+  // soon as the book opens, which would otherwise silently strip
+  // `gestureDebug=1` moments after a real device navigated in with it.
+  const [gestureDebugEnabled] = useState(() => searchParams.get("gestureDebug") === "1");
+  const [debugInfo, setDebugInfo] = useState<GestureDebugState>({
+    pointerDownCount: 0, activePointerCount: 0, lastEventType: "none",
+    startX: 0, startY: 0, curX: 0, curY: 0, distance: 0,
+    gestureState: "idle", zoom: 100, listenerMounted: false, preventDefaultCalled: false,
+  });
+  const pointerDownCountRef = useRef(0);
+  function updateDebug(patch: Partial<GestureDebugState>) {
+    if (!gestureDebugEnabled) return;
+    setDebugInfo((d) => ({ ...d, ...patch }));
+  }
+
+  function handlePointerDown(e: PointerEvent) {
+    if (e.pointerType !== "touch" && e.pointerType !== "pen") return;
     if (mobileMoreOpen || contentsOpen || pageStripOpen) return;
     // Explicit text/image select mode: leave this untouched, exactly as
     // before — it's still driven by the mouse-compat path via
@@ -968,121 +1040,216 @@ export default function PremiumReaderPreviewContent() {
     // feed as long as this handler doesn't preventDefault them away.
     if (interactionMode !== "none") return;
 
-    if (e.touches.length === 2) {
+    const el = e.currentTarget as HTMLElement;
+    pointerDownCountRef.current += 1;
+    activePointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    try { el.setPointerCapture(e.pointerId); } catch { /* not critical */ }
+
+    if (activePointersRef.current.size === 2) {
       e.preventDefault();
       if (longPressTimerRef.current) { clearTimeout(longPressTimerRef.current); longPressTimerRef.current = null; }
       gestureStartRef.current = null;
       touchPanRef.current = null;
-      pinchRef.current = { startDist: touchDistance(e.touches[0], e.touches[1]), startZoom: zoom };
+      const pts = Array.from(activePointersRef.current.values());
+      const rect = el.getBoundingClientRect();
+      const cardCenterX = rect.left + rect.width / 2;
+      const cardCenterY = rect.top + rect.height / 2;
+      const midX = (pts[0].x + pts[1].x) / 2;
+      const midY = (pts[0].y + pts[1].y) / 2;
+      const scale = zoom / 100;
+      pinchRef.current = {
+        startDist: pointerDistance(pts[0], pts[1]), startZoom: zoom,
+        cardCenterX, cardCenterY,
+        contentX: (midX - cardCenterX - pan.x) / scale,
+        contentY: (midY - cardCenterY - pan.y) / scale,
+      };
+      updateDebug({
+        lastEventType: "pointerdown(2)", gestureState: "pinch", activePointerCount: 2,
+        pointerDownCount: pointerDownCountRef.current, zoom, preventDefaultCalled: true,
+      });
       return;
     }
-    if (e.touches.length !== 1) return;
-    pinchRef.current = null;
+    if (activePointersRef.current.size !== 1) return; // 3rd+ finger — ignore entirely
 
-    const touch = e.touches[0];
+    pinchRef.current = null;
     const onControl = isInteractiveTarget(e.target);
-    if (onControl) return; // never swallow a real tap on a button/input
+    if (onControl) {
+      updateDebug({ lastEventType: "pointerdown(control)", pointerDownCount: pointerDownCountRef.current, activePointerCount: 1 });
+      return; // never swallow a real tap on a button/input
+    }
 
     if (zoom > 100) {
       e.preventDefault();
       gestureStartRef.current = null;
       if (longPressTimerRef.current) { clearTimeout(longPressTimerRef.current); longPressTimerRef.current = null; }
-      touchPanRef.current = { x: touch.clientX, y: touch.clientY, px: pan.x, py: pan.y };
+      touchPanRef.current = { x: e.clientX, y: e.clientY, px: pan.x, py: pan.y };
+      updateDebug({
+        lastEventType: "pointerdown(pan)", gestureState: "pan",
+        startX: e.clientX, startY: e.clientY, curX: e.clientX, curY: e.clientY, distance: 0,
+        pointerDownCount: pointerDownCountRef.current, activePointerCount: 1, preventDefaultCalled: true,
+      });
       return;
     }
 
     e.preventDefault();
-    startGesture(touch.clientX, touch.clientY, onControl);
+    startGesture(e.clientX, e.clientY, onControl, () => updateDebug({ gestureState: "longpress" }));
+    updateDebug({
+      lastEventType: "pointerdown", gestureState: "tap",
+      startX: e.clientX, startY: e.clientY, curX: e.clientX, curY: e.clientY, distance: 0,
+      pointerDownCount: pointerDownCountRef.current, activePointerCount: 1, preventDefaultCalled: true,
+    });
   }
 
-  function handleTouchMove(e: TouchEvent) {
-    // One finger lifted mid-pinch: hand off to one-finger panning (if
-    // still zoomed) instead of just going dead until the next touchstart.
-    if (pinchRef.current && e.touches.length < 2) {
-      pinchRef.current = null;
-      if (e.touches.length === 1 && zoom > 100) {
-        const touch = e.touches[0];
-        touchPanRef.current = { x: touch.clientX, y: touch.clientY, px: pan.x, py: pan.y };
-      }
-    }
+  function handlePointerMove(e: PointerEvent) {
+    if (e.pointerType !== "touch" && e.pointerType !== "pen") return;
+    if (!activePointersRef.current.has(e.pointerId)) return;
+    activePointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
 
-    if (pinchRef.current && e.touches.length === 2) {
+    if (pinchRef.current && activePointersRef.current.size === 2) {
       e.preventDefault();
-      const dist = touchDistance(e.touches[0], e.touches[1]);
+      const pts = Array.from(activePointersRef.current.values());
+      const dist = pointerDistance(pts[0], pts[1]);
       const ratio = dist / pinchRef.current.startDist;
       const nextZoom = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Math.round(pinchRef.current.startZoom * ratio)));
+      const scale = nextZoom / 100;
+      const midX = (pts[0].x + pts[1].x) / 2;
+      const midY = (pts[0].y + pts[1].y) / 2;
       setZoom(nextZoom);
+      setPan({
+        x: midX - pinchRef.current.cardCenterX - pinchRef.current.contentX * scale,
+        y: midY - pinchRef.current.cardCenterY - pinchRef.current.contentY * scale,
+      });
+      updateDebug({
+        lastEventType: "pointermove(pinch)", gestureState: "pinch", activePointerCount: 2,
+        zoom: nextZoom, curX: midX, curY: midY, distance: dist, preventDefaultCalled: true,
+      });
       return;
     }
 
-    if (touchPanRef.current && e.touches.length === 1) {
+    if (touchPanRef.current) {
       e.preventDefault();
-      const touch = e.touches[0];
       const start = touchPanRef.current;
-      setPan({ x: start.px + (touch.clientX - start.x), y: start.py + (touch.clientY - start.y) });
+      setPan({ x: start.px + (e.clientX - start.x), y: start.py + (e.clientY - start.y) });
+      updateDebug({
+        lastEventType: "pointermove(pan)", gestureState: "pan",
+        curX: e.clientX, curY: e.clientY,
+        distance: Math.hypot(e.clientX - start.x, e.clientY - start.y), preventDefaultCalled: true,
+      });
       return;
     }
 
     const start = gestureStartRef.current;
-    if (!start || longPressFiredRef.current || !longPressTimerRef.current) return;
-    const touch = e.touches[0];
-    if (!touch) return;
-    const dx = Math.abs(touch.clientX - start.x);
-    const dy = Math.abs(touch.clientY - start.y);
+    if (!start) return;
+    const dx = Math.abs(e.clientX - start.x);
+    const dy = Math.abs(e.clientY - start.y);
+    updateDebug({
+      lastEventType: "pointermove", curX: e.clientX, curY: e.clientY, distance: Math.hypot(dx, dy),
+      gestureState: longPressFiredRef.current ? "longpress" : (Math.hypot(dx, dy) > GESTURE_TAP_MAX_MOVE ? "swipe" : "tap"),
+    });
+    if (longPressFiredRef.current || !longPressTimerRef.current) return;
     if (dx > GESTURE_LONGPRESS_MAX_MOVE || dy > GESTURE_LONGPRESS_MAX_MOVE) {
       clearTimeout(longPressTimerRef.current);
       longPressTimerRef.current = null;
     }
   }
 
-  function handleTouchEnd(e: TouchEvent) {
+  function handlePointerUp(e: PointerEvent) {
+    if (e.pointerType !== "touch" && e.pointerType !== "pen") return;
+    const wasTracked = activePointersRef.current.has(e.pointerId);
+    activePointersRef.current.delete(e.pointerId);
+    try { (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId); } catch { /* already released */ }
+
     if (pinchRef.current) {
-      if (e.touches.length < 2) pinchRef.current = null;
+      if (activePointersRef.current.size < 2) {
+        pinchRef.current = null;
+        // One finger lifted mid-pinch: hand off to one-finger panning (if
+        // still zoomed) instead of just going dead until the next
+        // pointerdown — "after pinch, one-finger drag pans."
+        if (activePointersRef.current.size === 1 && zoom > 100) {
+          const remaining = Array.from(activePointersRef.current.values())[0];
+          touchPanRef.current = { x: remaining.x, y: remaining.y, px: pan.x, py: pan.y };
+          updateDebug({ lastEventType: "pointerup(pinch->pan)", gestureState: "pan", activePointerCount: 1 });
+        } else {
+          updateDebug({ lastEventType: "pointerup(pinch-end)", gestureState: "idle", activePointerCount: activePointersRef.current.size });
+        }
+      }
       return;
     }
+
     if (touchPanRef.current) {
-      if (e.touches.length === 0) touchPanRef.current = null;
+      touchPanRef.current = null;
+      updateDebug({ lastEventType: "pointerup(pan-end)", gestureState: "idle", activePointerCount: activePointersRef.current.size });
       return;
     }
+
+    if (!wasTracked) return; // was on a control (or a 3rd+ finger) — never started a gesture
 
     if (longPressTimerRef.current) { clearTimeout(longPressTimerRef.current); longPressTimerRef.current = null; }
     const start = gestureStartRef.current;
     gestureStartRef.current = null;
-    if (!start || start.onControl || longPressFiredRef.current || interactionMode !== "none") return;
-    const touch = e.changedTouches[0];
-    if (!touch) return;
-    finishTapOrSwipe(start, touch.clientX, touch.clientY);
+    if (!start || start.onControl || longPressFiredRef.current || interactionMode !== "none") {
+      updateDebug({ lastEventType: "pointerup(suppressed)", gestureState: "idle", activePointerCount: activePointersRef.current.size });
+      return;
+    }
+    updateDebug({ lastEventType: "pointerup", gestureState: "idle", activePointerCount: activePointersRef.current.size });
+    finishTapOrSwipe(start, e.clientX, e.clientY);
   }
 
-  // Native listeners, not JSX onTouchStart/Move/End props — see the
-  // block comment above for why. Attached via a ref-indirection wrapper
-  // so the actual DOM listeners are only added/removed once (or when
-  // isMobileViewport flips), not on every render — a pinch or pan
-  // updates zoom/pan state on every touchmove tick, and reattaching
-  // real listeners that often would risk jank during exactly the
-  // "smooth animation" the pinch-zoom spec asks for. The wrapper always
-  // calls through to the latest handler closures, so state is never
-  // stale despite the stable listener identity.
-  const touchHandlersRef = useRef({ handleTouchStart, handleTouchMove, handleTouchEnd });
-  touchHandlersRef.current = { handleTouchStart, handleTouchMove, handleTouchEnd };
+  function handlePointerCancel(e: PointerEvent) {
+    if (e.pointerType !== "touch" && e.pointerType !== "pen") return;
+    activePointersRef.current.delete(e.pointerId);
+    pinchRef.current = null;
+    touchPanRef.current = null;
+    gestureStartRef.current = null;
+    if (longPressTimerRef.current) { clearTimeout(longPressTimerRef.current); longPressTimerRef.current = null; }
+    updateDebug({ lastEventType: "pointercancel", gestureState: "idle", activePointerCount: activePointersRef.current.size });
+  }
+
+  // iOS Safari's long-press callout ("Copy" / save-image menu) would
+  // otherwise fight the reader's own long-press selection — suppressed
+  // only on this element (the reader surface), never globally.
+  function handleContextMenu(e: Event) {
+    if (isMobileViewport) e.preventDefault();
+  }
+
+  // Attached via a ref-indirection wrapper so the actual DOM listeners
+  // are only added/removed when the target element or mobile-mode
+  // actually changes, not on every render — a pinch or pan updates zoom/
+  // pan state on every pointermove tick, and reattaching real listeners
+  // that often would risk jank during exactly the "smooth animation" the
+  // pinch-zoom spec asks for. The wrapper always calls through to the
+  // latest handler closures, so state is never stale despite the stable
+  // listener identity. Dependency array includes `bookAreaMounted` (see
+  // the `setBookAreaNode` ref-callback below) — THIS is the fix for the
+  // real-device bug: it re-runs at the exact moment the element actually
+  // exists in the DOM, instead of relying on `isMobileViewport` (which
+  // never changes at that moment) to infer it.
+  const pointerHandlersRef = useRef({ handlePointerDown, handlePointerMove, handlePointerUp, handlePointerCancel, handleContextMenu });
+  pointerHandlersRef.current = { handlePointerDown, handlePointerMove, handlePointerUp, handlePointerCancel, handleContextMenu };
 
   useEffect(() => {
     const el = bookAreaRef.current;
-    if (!el || !isMobileViewport) return;
-    const onStart = (e: TouchEvent) => touchHandlersRef.current.handleTouchStart(e);
-    const onMove = (e: TouchEvent) => touchHandlersRef.current.handleTouchMove(e);
-    const onEnd = (e: TouchEvent) => touchHandlersRef.current.handleTouchEnd(e);
-    el.addEventListener("touchstart", onStart, { passive: false });
-    el.addEventListener("touchmove", onMove, { passive: false });
-    el.addEventListener("touchend", onEnd, { passive: false });
-    el.addEventListener("touchcancel", onEnd, { passive: false });
+    if (!el || !isMobileViewport) { updateDebug({ listenerMounted: false }); return; }
+    const onDown = (e: PointerEvent) => pointerHandlersRef.current.handlePointerDown(e);
+    const onMove = (e: PointerEvent) => pointerHandlersRef.current.handlePointerMove(e);
+    const onUp = (e: PointerEvent) => pointerHandlersRef.current.handlePointerUp(e);
+    const onCancel = (e: PointerEvent) => pointerHandlersRef.current.handlePointerCancel(e);
+    const onContextMenu = (e: Event) => pointerHandlersRef.current.handleContextMenu(e);
+    el.addEventListener("pointerdown", onDown, { passive: false });
+    el.addEventListener("pointermove", onMove, { passive: false });
+    el.addEventListener("pointerup", onUp, { passive: false });
+    el.addEventListener("pointercancel", onCancel, { passive: false });
+    el.addEventListener("contextmenu", onContextMenu);
+    updateDebug({ listenerMounted: true });
     return () => {
-      el.removeEventListener("touchstart", onStart);
-      el.removeEventListener("touchmove", onMove);
-      el.removeEventListener("touchend", onEnd);
-      el.removeEventListener("touchcancel", onEnd);
+      el.removeEventListener("pointerdown", onDown);
+      el.removeEventListener("pointermove", onMove);
+      el.removeEventListener("pointerup", onUp);
+      el.removeEventListener("pointercancel", onCancel);
+      el.removeEventListener("contextmenu", onContextMenu);
     };
-  }, [isMobileViewport]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isMobileViewport, bookAreaMounted]);
 
   // AI panel starts compact on ENTERING fullscreen (per spec), same
   // "force once on the false→true edge" pattern as ReaderNav's own
@@ -3018,7 +3185,7 @@ export default function PremiumReaderPreviewContent() {
       onCloseAiPanel={() => setAiPanelCompact(true)}
       center={
         <div
-          ref={bookAreaRef}
+          ref={setBookAreaNode}
           onMouseDown={(e) => { onCenterMouseDown(e); if (isMobileViewport) handleGestureDown(e); }}
           onMouseMove={(e) => { onCenterMouseMove(e); if (isMobileViewport) handleGestureMove(e); }}
           onMouseUp={(e) => { onCenterMouseUp(); handleMouseUp(e); if (isMobileViewport) handleGestureUp(e); }}
@@ -3031,9 +3198,18 @@ export default function PremiumReaderPreviewContent() {
             // Prevent panning from ever turning into a full browser-page
             // scroll/touch gesture — panning moves the inner book content
             // via the pan.x/y transform only, never the page itself.
-            touchAction: "none",
+            // Scoped to the reader surface only (mobile gesture fix):
+            // desktop/tablet keep the browser's default touch-action so a
+            // touch-capable laptop/tablet in the desktop layout isn't
+            // stripped of native scroll/pinch it might still want.
+            touchAction: isMobileViewport ? "none" : "auto",
             overscrollBehavior: "contain",
-          }}
+            // Suppresses iOS Safari's long-press text/image callout only
+            // on this element — never globally — so it doesn't fight the
+            // reader's own long-press selection.
+            WebkitTouchCallout: isMobileViewport ? "none" : undefined,
+            WebkitUserSelect: isMobileViewport ? "none" : undefined,
+          } as React.CSSProperties}
         >
           {!isMobileViewport ? (
             <>
@@ -3896,6 +4072,33 @@ export default function PremiumReaderPreviewContent() {
       }
     />
     <AccessibilityToolbar hideTrigger={isMobileViewport} variant={isMobileViewport ? "glass" : "default"} />
+    {/* Temporary real-device gesture diagnostics — visible only with
+        ?gestureDebug=1 in the URL, never otherwise. Remove once the
+        real-iPhone gesture fix is confirmed and no longer needs
+        on-device instrumentation. pointer-events:none so it can never
+        itself intercept a gesture. */}
+    {gestureDebugEnabled && (
+      <div
+        style={{
+          position: "fixed", top: 8, left: 8, zIndex: 99999, pointerEvents: "none",
+          background: "rgba(0,0,0,0.82)", color: "#0f0", fontFamily: "monospace",
+          fontSize: 11, lineHeight: 1.5, padding: "8px 10px", borderRadius: 8,
+          maxWidth: 260, whiteSpace: "pre",
+        }}
+      >
+{`gestureDebug
+mounted:  ${bookAreaMounted}
+listener: ${debugInfo.listenerMounted}
+pointers: ${debugInfo.activePointerCount} (down x${debugInfo.pointerDownCount})
+event:    ${debugInfo.lastEventType}
+state:    ${debugInfo.gestureState}
+start:    ${debugInfo.startX.toFixed(0)}, ${debugInfo.startY.toFixed(0)}
+cur:      ${debugInfo.curX.toFixed(0)}, ${debugInfo.curY.toFixed(0)}
+dist:     ${debugInfo.distance.toFixed(1)}
+zoom:     ${debugInfo.zoom}%
+pdefault: ${debugInfo.preventDefaultCalled}`}
+      </div>
+    )}
     </>
   );
 }
