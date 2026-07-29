@@ -252,6 +252,19 @@ html[data-a11y-dyslexia="true"] p {
   cursor: grab;
 }
 
+/* True immersive landscape reader: PremiumReaderPreviewContent toggles
+   this attribute on <html> to match its own chrome (header/dock/
+   chevrons) visibility — presentation-only (opacity/pointer-events,
+   same pattern the reader's own controls already use), never touches
+   FloatingControlsDock/VoiceAssistant/AccessibilityToolbar logic, so
+   accessibility functionality itself is unchanged, only WHEN these
+   triggers are shown. */
+html[data-ndl-immersive-hidden="true"] [data-dock-handle] {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease;
+}
+
 /* ── Paper Mode (Phase B3) ────────────────────────────────────────────
    A warm, low-glare page tint — distinct from Dark Mode/Sepia, styled
    after e-reader "paper white" themes. CSS-only, same pattern as Reading

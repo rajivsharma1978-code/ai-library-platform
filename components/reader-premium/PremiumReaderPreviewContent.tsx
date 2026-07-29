@@ -719,11 +719,15 @@ export default function PremiumReaderPreviewContent() {
       setMobileChromeVisible(true);
       return;
     }
+    // True immersive landscape: "no controls visible initially" — starts
+    // hidden immediately rather than visible-then-fade-after-3s. A tap
+    // (finishTapOrSwipe's plain-tap branch) reveals them; this timer's
+    // job from then on is only to re-hide after a further idle period.
+    setMobileChromeVisible(false);
     function resetIdleTimer() {
       if (landscapeIdleTimerRef.current) clearTimeout(landscapeIdleTimerRef.current);
       landscapeIdleTimerRef.current = setTimeout(() => setMobileChromeVisible(false), LANDSCAPE_AUTOHIDE_MS);
     }
-    resetIdleTimer();
     // touchstart/touchmove cover real devices; mousedown/mousemove keep
     // this working under mouse-only testing/input, same dual-path
     // reasoning as the gesture system above.
@@ -739,6 +743,66 @@ export default function PremiumReaderPreviewContent() {
       if (landscapeIdleTimerRef.current) { clearTimeout(landscapeIdleTimerRef.current); landscapeIdleTimerRef.current = null; }
     };
   }, [isMobileLandscape]);
+
+  // True immersive landscape: mirrors mobileChromeCls onto <html> so the
+  // portaled FloatingControlsDock (Accessibility ♿ / Voice 🎙️ triggers —
+  // rendered outside this component's own subtree, see PremiumReader
+  // Layout's fullscreen comment for why it's portaled) hides on the same
+  // schedule as every other control here, without touching that
+  // component's own logic (see app/globals.css's
+  // html[data-ndl-immersive-hidden] rule — presentation-only).
+  useEffect(() => {
+    const hidden = isMobileLandscape && !mobileChromeVisible;
+    if (hidden) document.documentElement.setAttribute("data-ndl-immersive-hidden", "true");
+    else document.documentElement.removeAttribute("data-ndl-immersive-hidden");
+    return () => { document.documentElement.removeAttribute("data-ndl-immersive-hidden"); };
+  }, [isMobileLandscape, mobileChromeVisible]);
+
+  // ── True immersive landscape: best-effort Fullscreen API request ──────
+  // Browsers only grant Element.requestFullscreen() during a real user
+  // gesture — an orientationchange event does NOT count as one, so a
+  // page can't reliably go fullscreen automatically the instant it
+  // rotates. Real flow implemented here: the first genuine tap the user
+  // makes while in landscape (finishTapOrSwipe's plain-tap branch, which
+  // already reveals chrome) ALSO doubles as that required activation and
+  // triggers one fullscreen request for the whole session — never
+  // repeated automatically afterward (hasAutoRequestedFullscreenRef), so
+  // there's no repeated permission nagging. The explicit Fullscreen
+  // button in the More sheet (already existed) is untouched and can
+  // still be used any time by the user directly. requestFullscreen()
+  // returns a Promise that rejects (not throws) when activation/
+  // permission rules block it — every call site below is wrapped so a
+  // rejection is swallowed, never surfaced as an unhandled rejection.
+  const hasAutoRequestedFullscreenRef = useRef(false);
+  function requestImmersiveFullscreenOnce() {
+    if (!isMobileLandscape || !fullscreenSupported) return;
+    if (hasAutoRequestedFullscreenRef.current) return;
+    if (document.fullscreenElement) return;
+    hasAutoRequestedFullscreenRef.current = true;
+    try {
+      const maybePromise = document.documentElement.requestFullscreen();
+      if (maybePromise && typeof (maybePromise as Promise<void>).catch === "function") {
+        (maybePromise as Promise<void>).catch(() => { /* activation/permission denied — silently keep the CSS fallback */ });
+      }
+    } catch { /* synchronous throw on some older WebKit builds — same silent fallback */ }
+  }
+  useEffect(() => {
+    function onFullscreenError() { /* never surface — CSS fallback (fixed inset-0 root) already covers this */ }
+    // Best-effort re-attempt on rotation — most browsers will reject this
+    // one too (no fresh activation from an orientationchange), but iOS/
+    // Android occasionally still honor it within a short window after a
+    // real prior tap; rejection is swallowed the same way either way.
+    function onOrientationChange() {
+      hasAutoRequestedFullscreenRef.current = false;
+      requestImmersiveFullscreenOnce();
+    }
+    document.addEventListener("fullscreenerror", onFullscreenError);
+    window.addEventListener("orientationchange", onOrientationChange);
+    return () => {
+      document.removeEventListener("fullscreenerror", onFullscreenError);
+      window.removeEventListener("orientationchange", onOrientationChange);
+    };
+  }, []);
 
   // ── Phase D3: mobile-only tap/swipe/long-press gesture layer ─────────
   // Deliberately NOT a second set of onTouch* listeners — this app
@@ -937,6 +1001,10 @@ export default function PremiumReaderPreviewContent() {
     // closes any open glass panel (More sheet + Accessibility glass),
     // per spec point 1's "Glass panels close if open."
     if (absDx <= GESTURE_TAP_MAX_MOVE && absDy <= GESTURE_TAP_MAX_MOVE && dt <= GESTURE_TAP_MAX_MS) {
+      // This tap is a genuine user gesture — the one moment browsers will
+      // actually grant Element.requestFullscreen() — see the file-top
+      // comment on requestImmersiveFullscreenOnce for the full flow.
+      requestImmersiveFullscreenOnce();
       setMobileChromeVisible(v => {
         const next = !v;
         if (!next) {
@@ -1020,6 +1088,10 @@ export default function PremiumReaderPreviewContent() {
   // soon as the book opens, which would otherwise silently strip
   // `gestureDebug=1` moments after a real device navigated in with it.
   const [gestureDebugEnabled] = useState(() => searchParams.get("gestureDebug") === "1");
+  // Same sticky-capture reasoning as gestureDebugEnabled above — the
+  // reader's own URL-sync effect would otherwise strip this moments
+  // after the book opens.
+  const [renderDebugEnabled] = useState(() => searchParams.get("renderDebug") === "1");
   const [debugInfo, setDebugInfo] = useState<GestureDebugState>({
     pointerDownCount: 0, activePointerCount: 0, lastEventType: "none",
     startX: 0, startY: 0, curX: 0, curY: 0, distance: 0,
@@ -3095,6 +3167,11 @@ export default function PremiumReaderPreviewContent() {
     // above) so a plain cover-open can never be mistaken for one.
     hasEngagedRef.current = false;
     setBookOpening(true);
+    // A real click on the cover is itself a genuine user gesture — if the
+    // phone is already in landscape at this moment, this is the earliest
+    // legitimate opportunity to request fullscreen (see
+    // requestImmersiveFullscreenOnce's file-top comment).
+    requestImmersiveFullscreenOnce();
     setTimeout(() => { setBookOpened(true); setBookOpening(false); }, 900);
   }
 
@@ -3190,7 +3267,25 @@ export default function PremiumReaderPreviewContent() {
           onMouseUp={(e) => { onCenterMouseUp(); handleMouseUp(e); if (isMobileViewport) handleGestureUp(e); }}
           onWheel={onCenterWheel}
           style={{
-            height: "100%", display: "flex", flexDirection: "column",
+            // True immersive landscape: escapes PremiumReaderLayout's
+            // flex/section chrome entirely (fixed positioning is relative
+            // to the true viewport, not any ancestor's h-dvh/flex-1 box —
+            // no transformed ancestor sits between this div and <body>,
+            // confirmed by reading PremiumReaderLayout.tsx, so this
+            // anchors to the real screen, not a layout approximation of
+            // it). This is what the "black side strips" / "page doesn't
+            // fill the screen" reports were actually about — the old
+            // in-flow div was always exactly as accurate as its ancestors'
+            // box models, which drift slightly from the true visual
+            // viewport on Safari during address-bar show/hide. Portrait
+            // and desktop keep the original in-flow height:100% — same
+            // gesture handlers, same element, only its OWN CSS position
+            // changes, so swipe/pinch/long-press (attached to this exact
+            // node) are completely unaffected.
+            ...(isMobileLandscape
+              ? { position: "fixed" as const, inset: 0, width: "100vw", height: "100dvh", zIndex: 40 }
+              : { height: "100%" }),
+            display: "flex", flexDirection: "column",
             cursor: imageSelectMode ? "crosshair"
               : textSelectMode ? "text"
               : isPanning ? "grabbing" : "grab",
@@ -3946,6 +4041,7 @@ export default function PremiumReaderPreviewContent() {
                 getPdfDocument={getMobilePdfDocument}
                 onTextExtracted={handleTextExtracted}
                 landscape={isMobileLandscape}
+                renderDebug={renderDebugEnabled}
               />
             ) : (
               <PdfBookSpread
