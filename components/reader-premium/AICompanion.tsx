@@ -98,6 +98,10 @@ type AICompanionProps = {
   // parent bumps it on each voice command; this component just reacts by
   // switching to Study, same as clicking the tab itself.
   openStudyTabSignal?: number;
+  /** Mobile bottom-nav "Bookmarks": same counter pattern as above, but
+   *  also forwarded into StudyWorkspace so its own internal sub-tab
+   *  lands on "bookmarks" specifically, not just the outer Study tab. */
+  openBookmarksSignal?: number;
 };
 
 // Deliberately scope-agnostic — no "this page/spread" wording baked in.
@@ -228,7 +232,7 @@ export default function AICompanion({
   compact, onToggleCompact,
   studyHighlights, studyNotes, studyBookmarks, printedPageMap,
   onStudyJumpToPage, onStudyDeleteHighlight, onStudyDeleteNote, onStudyDeleteBookmark,
-  onStudyGenerateFromHighlight, studyGeneratingId, openStudyTabSignal,
+  onStudyGenerateFromHighlight, studyGeneratingId, openStudyTabSignal, openBookmarksSignal,
   mobileSheet = false,
 }: AICompanionProps) {
   const [outerTab, setOuterTab] = useState<"companion" | "study">("companion");
@@ -361,6 +365,7 @@ export default function AICompanion({
               onDeleteBookmark={onStudyDeleteBookmark}
               onGenerateFromHighlight={onStudyGenerateFromHighlight}
               generatingId={studyGeneratingId}
+              openBookmarksSignal={openBookmarksSignal}
             />
           </div>
         ) : showMoreCategories ? (
@@ -573,6 +578,7 @@ export default function AICompanion({
             onDeleteBookmark={onStudyDeleteBookmark}
             onGenerateFromHighlight={onStudyGenerateFromHighlight}
             generatingId={studyGeneratingId}
+            openBookmarksSignal={openBookmarksSignal}
           />
         </div>
       ) : (

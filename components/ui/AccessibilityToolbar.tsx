@@ -182,6 +182,17 @@ export default function AccessibilityToolbar({ hideTrigger = false, variant = "d
     return () => window.removeEventListener("ndl-close-accessibility-panel", onCloseRequest);
   }, []);
 
+  // Landscape reader fix: broadcasts the REAL open/close state on every
+  // transition, however it happened (this panel's own ✕, its backdrop
+  // tap, the events above, Escape) — the reader's own pointer-gesture
+  // layer (PremiumReaderPreviewContent) listens for this to suppress
+  // swipe/pinch/long-press while the panel is open, since the panel is
+  // portaled outside that component's own DOM subtree and has no other
+  // way to know the panel's current state.
+  useEffect(() => {
+    window.dispatchEvent(new CustomEvent("ndl-accessibility-panel-state", { detail: { open } }));
+  }, [open]);
+
   function toggleReadAloud() {
     if (speaking) {
       window.speechSynthesis.cancel();

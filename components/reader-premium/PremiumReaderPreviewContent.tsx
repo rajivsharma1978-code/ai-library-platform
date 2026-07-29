@@ -758,6 +758,21 @@ export default function PremiumReaderPreviewContent() {
     return () => { document.documentElement.removeAttribute("data-ndl-immersive-hidden"); };
   }, [isMobileLandscape, mobileChromeVisible]);
 
+  // Landscape accessibility fix: the Accessibility glass panel is
+  // portaled outside this component's own subtree (see
+  // AccessibilityToolbar's ndl-accessibility-panel-state comment), so
+  // this is the only way the gesture layer below can know it's open —
+  // needed so a drag/tap INSIDE the panel (e.g. a slider) can never also
+  // register as a swipe/page-turn/long-press on the reader underneath.
+  const accessibilityPanelOpenRef = useRef(false);
+  useEffect(() => {
+    function onState(e: Event) {
+      accessibilityPanelOpenRef.current = !!(e as CustomEvent<{ open: boolean }>).detail?.open;
+    }
+    window.addEventListener("ndl-accessibility-panel-state", onState);
+    return () => window.removeEventListener("ndl-accessibility-panel-state", onState);
+  }, []);
+
   // ── True immersive landscape: best-effort Fullscreen API request ──────
   // Browsers only grant Element.requestFullscreen() during a real user
   // gesture — an orientationchange event does NOT count as one, so a
@@ -774,6 +789,13 @@ export default function PremiumReaderPreviewContent() {
   // permission rules block it — every call site below is wrapped so a
   // rejection is swallowed, never surfaced as an unhandled rejection.
   const hasAutoRequestedFullscreenRef = useRef(false);
+  // Final mobile cleanup: feeds the Home Screen hint below — "Safari has
+  // rejected or cannot provide fullscreen" needs an actual signal, not
+  // just an assumption. Sets on either a rejected requestFullscreen()
+  // Promise or a `fullscreenerror` event; the hint's own visibility
+  // condition also checks `!fullscreenSupported` separately for the
+  // "cannot provide it at all" half of that same requirement.
+  const [fullscreenDenied, setFullscreenDenied] = useState(false);
   function requestImmersiveFullscreenOnce() {
     if (!isMobileLandscape || !fullscreenSupported) return;
     if (hasAutoRequestedFullscreenRef.current) return;
@@ -782,12 +804,12 @@ export default function PremiumReaderPreviewContent() {
     try {
       const maybePromise = document.documentElement.requestFullscreen();
       if (maybePromise && typeof (maybePromise as Promise<void>).catch === "function") {
-        (maybePromise as Promise<void>).catch(() => { /* activation/permission denied — silently keep the CSS fallback */ });
+        (maybePromise as Promise<void>).catch(() => setFullscreenDenied(true));
       }
-    } catch { /* synchronous throw on some older WebKit builds — same silent fallback */ }
+    } catch { setFullscreenDenied(true); }
   }
   useEffect(() => {
-    function onFullscreenError() { /* never surface — CSS fallback (fixed inset-0 root) already covers this */ }
+    function onFullscreenError() { setFullscreenDenied(true); }
     // Best-effort re-attempt on rotation — most browsers will reject this
     // one too (no fresh activation from an orientationchange), but iOS/
     // Android occasionally still honor it within a short window after a
@@ -803,6 +825,38 @@ export default function PremiumReaderPreviewContent() {
       window.removeEventListener("orientationchange", onOrientationChange);
     };
   }, []);
+
+  // ── Final mobile cleanup: honest "Add to Home Screen" hint ────────────
+  // Real Safari tabs/URL bar cannot be force-hidden by a web page — the
+  // Fullscreen API above is the best a normal tab visit can do, and even
+  // that needs a fresh user gesture Safari sometimes still declines. The
+  // ONLY way to get a truly chrome-free view is the user adding this app
+  // to their Home Screen (standalone launch, see app/layout.tsx's
+  // appleWebApp meta) — this hint says so honestly instead of implying
+  // rotation alone should have removed Safari's UI. Shown once, only
+  // when it's actually true (not fullscreen, not standalone, and either
+  // fullscreen isn't supported at all or a real attempt was rejected),
+  // and never again after the user dismisses it (localStorage, not just
+  // component state, so it survives navigating away and back).
+  const HOME_SCREEN_HINT_DISMISSED_KEY = "ndl-home-screen-hint-dismissed";
+  const [homeScreenHintDismissed, setHomeScreenHintDismissed] = useState(true);
+  const [standaloneMode, setStandaloneMode] = useState(false);
+  useEffect(() => {
+    try { setHomeScreenHintDismissed(localStorage.getItem(HOME_SCREEN_HINT_DISMISSED_KEY) === "true"); } catch { /* ignore */ }
+    if (typeof window === "undefined" || !window.matchMedia) return;
+    const mql = window.matchMedia("(display-mode: standalone)");
+    setStandaloneMode(mql.matches);
+    function onChange() { setStandaloneMode(mql.matches); }
+    mql.addEventListener("change", onChange);
+    return () => mql.removeEventListener("change", onChange);
+  }, []);
+  function dismissHomeScreenHint() {
+    setHomeScreenHintDismissed(true);
+    try { localStorage.setItem(HOME_SCREEN_HINT_DISMISSED_KEY, "true"); } catch { /* ignore */ }
+  }
+  const showHomeScreenHint =
+    isMobileLandscape && !isFullscreenLayout && !standaloneMode && !homeScreenHintDismissed &&
+    (!fullscreenSupported || fullscreenDenied);
 
   // ── Phase D3: mobile-only tap/swipe/long-press gesture layer ─────────
   // Deliberately NOT a second set of onTouch* listeners — this app
@@ -938,10 +992,12 @@ export default function PremiumReaderPreviewContent() {
 
   function handleGestureDown(e: React.MouseEvent) {
     // Real-device gesture safety: never arm a gesture while a locally-
-    // rendered sheet (More / Contents / page strip) is open — the AI
-    // sheet and Reading Options panel are both portaled outside this
-    // subtree already, so they were never reachable here to begin with.
-    if (mobileMoreOpen || contentsOpen || pageStripOpen) { gestureStartRef.current = null; return; }
+    // rendered sheet (More / Contents / page strip) is open, or while the
+    // Accessibility (Reading Options) panel is open — that panel is
+    // portaled outside this subtree, so accessibilityPanelOpenRef (fed by
+    // AccessibilityToolbar's ndl-accessibility-panel-state broadcast) is
+    // the only way this handler can know about it.
+    if (mobileMoreOpen || contentsOpen || pageStripOpen || accessibilityPanelOpenRef.current) { gestureStartRef.current = null; return; }
     if (interactionMode !== "none") { gestureStartRef.current = null; return; }
     startGesture(e.clientX, e.clientY, isInteractiveTarget(e.target));
   }
@@ -1105,7 +1161,7 @@ export default function PremiumReaderPreviewContent() {
 
   function handlePointerDown(e: PointerEvent) {
     if (e.pointerType !== "touch" && e.pointerType !== "pen") return;
-    if (mobileMoreOpen || contentsOpen || pageStripOpen) return;
+    if (mobileMoreOpen || contentsOpen || pageStripOpen || accessibilityPanelOpenRef.current) return;
     // Explicit text/image select mode: leave this untouched, exactly as
     // before — it's still driven by the mouse-compat path via
     // onCenterMouseDown/Move (drag-to-select), which real touches still
@@ -1547,6 +1603,20 @@ export default function PremiumReaderPreviewContent() {
   //    first voice command fires, so AICompanion's effect never forces
   //    the tab on initial mount. ────────────────────────────────────
   const [openStudyTabSignal, setOpenStudyTabSignal] = useState<number | undefined>(undefined);
+  // Mobile bottom-nav "Bookmarks" (replaces Contents — see the removal
+  // comment further down): opens the SAME Study tab as the signal above,
+  // but also needs Study Workspace's own internal sub-tab to land on
+  // "bookmarks" specifically, which openStudyTabSignal alone can't do
+  // (it only flips AICompanion's outer "companion"/"study" tab). A
+  // second counter, threaded down through AICompanion into
+  // StudyWorkspace, does that — same "increment to fire" pattern, so any
+  // repeat tap re-fires even if the value would otherwise be unchanged.
+  const [openBookmarksSignal, setOpenBookmarksSignal] = useState(0);
+  function openMobileBookmarks() {
+    setAiPanelCompact(false);
+    setOpenStudyTabSignal(s => (s || 0) + 1);
+    setOpenBookmarksSignal(s => s + 1);
+  }
 
   // ── Ask About Image — custom question UI state ────────────────────
   const [askImageInput, setAskImageInput] = useState("");
@@ -3541,6 +3611,29 @@ export default function PremiumReaderPreviewContent() {
                 </div>
               )}
 
+              {/* ── Honest "Add to Home Screen" hint — see
+                  showHomeScreenHint's own comment above for the full
+                  reasoning. Fades with the rest of the chrome (same tap-
+                  to-reveal/3s-idle schedule) since it only makes sense in
+                  the same moment fullscreen was actually attempted; its
+                  own dismissal is separate/permanent (localStorage), not
+                  tied to the idle timer. */}
+              {showHomeScreenHint && (
+                <div
+                  className={`pointer-events-none fixed inset-x-0 bottom-0 z-40 flex justify-center px-4 ndl-chrome-fade ${mobileChromeCls}`}
+                  style={{ paddingBottom: "max(3.5rem, calc(3rem + env(safe-area-inset-bottom)))" }}
+                >
+                  <div
+                    className="pointer-events-auto flex max-w-[92vw] items-center gap-2 rounded-full px-3 py-2 backdrop-blur-2xl"
+                    style={{ background: "rgba(15,13,11,0.82)", border: "1px solid rgba(212,175,110,0.2)", boxShadow: "0 10px 30px rgba(0,0,0,0.4)" }}
+                  >
+                    <span className="text-[11px] font-semibold leading-snug text-amber-50">{t.premiumReaderHomeScreenHint}</span>
+                    <button onClick={dismissHomeScreenHint} aria-label={t.commonClose} title={t.commonClose}
+                      className="ndl-press flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full bg-white/15 text-[10px] text-white/80 hover:bg-white/25">✕</button>
+                  </div>
+                </div>
+              )}
+
               {/* ── "More" sheet — secondary actions only (frequent
                   actions — Read Page, Zoom, Bookmark — live directly in
                   the header). Final mobile polish: Fit removed (mobile
@@ -3556,7 +3649,143 @@ export default function PremiumReaderPreviewContent() {
                   Opened from the bottom nav's "More" item. Deliberately
                   rendered outside the auto-hide wrapper so it's always
                   fully visible/interactive once opened. ────────────── */}
-              {mobileMoreOpen && (
+              {mobileMoreOpen && (isMobileLandscape ? (
+                // ── Final mobile cleanup: a completely separate landscape
+                // presentation — NOT the portrait bottom sheet resized. A
+                // compact centered floating panel (max ~520px/~75dvh,
+                // internally scrollable), dark translucent glass matching
+                // the landscape header/dock's own visual language, actions
+                // grouped into Reading/Study/Tools per spec. Same handlers
+                // as the portrait sheet throughout — nothing new is wired,
+                // only how it's presented. ─────────────────────────────
+                <>
+                  <div className="fixed inset-0 z-[160] bg-black/55" onClick={() => setMobileMoreOpen(false)} />
+                  <div className="fixed inset-0 z-[161] flex items-center justify-center p-4" onClick={() => setMobileMoreOpen(false)}>
+                    <div
+                      onClick={(e) => e.stopPropagation()}
+                      className="flex w-full flex-col overflow-hidden rounded-2xl backdrop-blur-2xl"
+                      style={{
+                        maxWidth: 520, maxHeight: "75dvh",
+                        background: "rgba(15,13,11,0.86)",
+                        border: "1px solid rgba(212,175,110,0.18)",
+                        boxShadow: "0 24px 70px rgba(0,0,0,0.5)",
+                      }}
+                    >
+                      <div className="flex flex-shrink-0 items-center justify-between border-b border-white/10 px-4 py-3">
+                        <h2 className="text-sm font-black text-amber-50">{t.premiumReaderMoreTools}</h2>
+                        <button onClick={() => setMobileMoreOpen(false)} aria-label={t.commonClose} title={t.commonClose}
+                          className="ndl-press flex h-7 w-7 items-center justify-center rounded-full bg-white/10 text-white/70 hover:bg-white/20">✕</button>
+                      </div>
+
+                      <div className="flex-1 overflow-y-auto px-4 py-3">
+                        <div className="flex flex-col gap-4">
+                          {/* ── Reading ───────────────────────────────── */}
+                          <section>
+                            <h3 className="mb-2 px-0.5 text-[10px] font-black uppercase tracking-wider text-amber-200/60">{t.premiumReaderReadingTab}</h3>
+                            <div className="flex flex-col gap-2">
+                              <div className="flex items-center justify-between rounded-xl bg-white/8 px-3 py-2 ring-1 ring-white/10">
+                                <span className="text-xs font-bold text-white/80">🔍 {t.premiumReaderZoomLabel}</span>
+                                <div className="flex items-center gap-2">
+                                  <button onClick={() => setZoom(z => Math.max(z - ZOOM_STEP, ZOOM_MIN))} disabled={zoom <= ZOOM_MIN}
+                                    title={t.premiumReaderZoomOutTitle} aria-label={t.premiumReaderZoomOutTitle}
+                                    className="ndl-press inline-flex h-8 w-8 items-center justify-center rounded-full bg-white/10 text-sm font-bold text-white/85 hover:bg-white/20 disabled:opacity-30">−</button>
+                                  <span className="min-w-[32px] text-center text-xs font-bold tabular-nums text-white/70">{zoom}%</span>
+                                  <button onClick={() => setZoom(z => Math.min(z + ZOOM_STEP, ZOOM_MAX))} disabled={zoom >= ZOOM_MAX}
+                                    title={t.premiumReaderZoomInTitle} aria-label={t.premiumReaderZoomInTitle}
+                                    className="ndl-press inline-flex h-8 w-8 items-center justify-center rounded-full bg-white/10 text-sm font-bold text-white/85 hover:bg-white/20 disabled:opacity-30">+</button>
+                                  <button onClick={fitScreen}
+                                    title={t.premiumReaderFit} aria-label={t.premiumReaderFit}
+                                    className="ndl-press inline-flex h-8 items-center rounded-full bg-white/10 px-3 text-[11px] font-bold text-white/85 hover:bg-white/20">{t.premiumReaderFit}</button>
+                                </div>
+                              </div>
+
+                              <form onSubmit={(e) => { e.preventDefault(); goToPage(goToInput); setMobileMoreOpen(false); }}
+                                className="flex items-center gap-2">
+                                <input type="number" min={1}
+                                  value={goToInput}
+                                  onChange={(e) => setGoToInput(e.target.value)}
+                                  placeholder={t.premiumReaderGoToPagePlaceholder}
+                                  title={t.premiumReaderGoToPageTitle}
+                                  className="h-9 flex-1 min-w-0 rounded-xl bg-white/8 px-3 text-xs text-white/90 ring-1 ring-white/10 outline-none placeholder:text-white/30 focus:ring-2 focus:ring-amber-400/60" />
+                                <button type="submit"
+                                  className="ndl-press flex h-9 flex-shrink-0 items-center rounded-xl bg-white/10 px-3 text-xs font-bold text-white/85 hover:bg-white/20">{t.premiumReaderGo}</button>
+                              </form>
+
+                              <div className="flex items-center justify-between rounded-xl bg-white/8 px-3 py-2 ring-1 ring-white/10">
+                                <span className="text-xs font-bold text-white/80">🌐 {t.navLanguages}</span>
+                                <LanguagePopover language={language} onLanguageChange={setLanguage} availableLanguages={availableToolbarLanguages} />
+                              </div>
+
+                              {fullscreenSupported && (
+                                <button onClick={() => { layoutRef.current?.toggleFullscreen(); setMobileMoreOpen(false); }}
+                                  title={isFullscreenLayout ? t.readerExitFullscreen : t.readerFullscreen}
+                                  className="ndl-press flex h-9 items-center justify-center gap-1.5 rounded-xl bg-white/8 text-xs font-bold text-white/85 ring-1 ring-white/10 hover:bg-white/15">
+                                  ⛶ {isFullscreenLayout ? t.readerExitFullscreen : t.readerFullscreen}
+                                </button>
+                              )}
+                            </div>
+                          </section>
+
+                          {/* ── Study ─────────────────────────────────── */}
+                          <section>
+                            <h3 className="mb-2 px-0.5 text-[10px] font-black uppercase tracking-wider text-amber-200/60">{t.premiumReaderMoreSectionStudy}</h3>
+                            <div className="grid justify-center gap-2" style={{ gridTemplateColumns: "repeat(auto-fit, 84px)" }}>
+                              {[
+                                { href: "/notes", icon: "📝", label: t.navNotes },
+                                { href: "/revision", icon: "🔄", label: t.navRevision },
+                                { href: "/flashcards", icon: "🃏", label: t.commonFlashcards },
+                                { href: "/quiz", icon: "❓", label: t.quizPageTitle },
+                              ].map((link) => (
+                                <Link key={link.href} href={link.href} onClick={() => setMobileMoreOpen(false)}
+                                  className="ndl-press flex flex-col items-center gap-1 rounded-xl bg-white/8 px-1 py-2.5 text-center text-[10px] font-bold text-white/75 ring-1 ring-white/10 hover:bg-white/15">
+                                  <span className="text-base leading-none">{link.icon}</span>
+                                  <span className="truncate w-full">{link.label}</span>
+                                </Link>
+                              ))}
+                            </div>
+                          </section>
+
+                          {/* ── Tools ─────────────────────────────────── */}
+                          <section>
+                            <h3 className="mb-2 px-0.5 text-[10px] font-black uppercase tracking-wider text-amber-200/60">{t.premiumReaderMoreSectionTools}</h3>
+                            <div className="grid justify-center gap-2" style={{ gridTemplateColumns: "repeat(auto-fit, 84px)" }}>
+                              <button onClick={() => { setContentsOpen(true); setMobileMoreOpen(false); }}
+                                className="ndl-press flex flex-col items-center gap-1 rounded-xl bg-white/8 px-1 py-2.5 text-center text-[10px] font-bold text-white/75 ring-1 ring-white/10 hover:bg-white/15">
+                                <span className="text-base leading-none">ℹ️</span>
+                                <span className="truncate w-full">{t.premiumReaderBookDetails}</span>
+                              </button>
+                              {[
+                                { href: "/analytics", icon: "📊", label: t.navAnalytics },
+                                { href: "/ai-tutor", icon: "🤖", label: t.navAiTutor },
+                                { href: "/my-space", icon: "🧠", label: t.navMySpace },
+                              ].map((link) => (
+                                <Link key={link.href} href={link.href} onClick={() => setMobileMoreOpen(false)}
+                                  className="ndl-press flex flex-col items-center gap-1 rounded-xl bg-white/8 px-1 py-2.5 text-center text-[10px] font-bold text-white/75 ring-1 ring-white/10 hover:bg-white/15">
+                                  <span className="text-base leading-none">{link.icon}</span>
+                                  <span className="truncate w-full">{link.label}</span>
+                                </Link>
+                              ))}
+                              {isUploadedBook && (
+                                <Link href={`/read?source=upload&id=${bookId}&page=${readerPage}`}
+                                  onClick={() => setMobileMoreOpen(false)}
+                                  className="ndl-press flex flex-col items-center gap-1 rounded-xl bg-white/8 px-1 py-2.5 text-center text-[10px] font-bold text-white/75 ring-1 ring-white/10 hover:bg-white/15">
+                                  <span className="text-base leading-none">📖</span>
+                                  <span className="truncate w-full">{t.readerReadNormally}</span>
+                                </Link>
+                              )}
+                              <Link href="/" onClick={() => setMobileMoreOpen(false)}
+                                className="ndl-press flex flex-col items-center gap-1 rounded-xl bg-white/8 px-1 py-2.5 text-center text-[10px] font-bold text-white/75 ring-1 ring-white/10 hover:bg-white/15">
+                                <span className="text-base leading-none">🏠</span>
+                                <span className="truncate w-full">{t.commonHome}</span>
+                              </Link>
+                            </div>
+                          </section>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </>
+              ) : (
                 <>
                   <div className="fixed inset-0 z-[160] bg-black/40" onClick={() => setMobileMoreOpen(false)} />
                   <div className="fixed inset-x-0 bottom-0 z-[161] max-h-[70vh] overflow-y-auto rounded-t-3xl bg-white p-4 shadow-[0_-10px_40px_rgba(0,0,0,0.25)]" style={{ paddingBottom: "max(1rem, env(safe-area-inset-bottom))" }}>
@@ -3653,7 +3882,16 @@ export default function PremiumReaderPreviewContent() {
                           the rail's remaining destinations. ─────────── */}
                       <div>
                         <div className="mb-2 h-px bg-amber-100" />
-                        <div className="grid grid-cols-4 gap-2">
+                        {/* Final mobile cleanup: fixed grid-cols-4 left a
+                            dangling empty cell under this list's 7 items
+                            (3,3,1 — the last row's lone tile wasn't
+                            centered). auto-fit with a FIXED track width
+                            (not 1fr) collapses unused tracks instead of
+                            stretching them, and justify-center centers
+                            whatever's left in the last row — works for
+                            any item count, not just this one, and needs
+                            no breakpoint-specific overrides. */}
+                        <div className="grid justify-center gap-2" style={{ gridTemplateColumns: "repeat(auto-fit, 84px)" }}>
                           {[
                             { href: "/notes", icon: "📝", label: t.navNotes },
                             { href: "/revision", icon: "🔄", label: t.navRevision },
@@ -3674,7 +3912,7 @@ export default function PremiumReaderPreviewContent() {
                     </div>
                   </div>
                 </>
-              )}
+              ))}
             </>
           )}
 
@@ -4062,19 +4300,25 @@ export default function PremiumReaderPreviewContent() {
             )}
           </div>
 
-          {/* ── Mobile-only 4-item bottom navigation — AI, Contents,
+          {/* ── Mobile-only 4-item bottom navigation — AI, Bookmarks,
               Reading, More. Real-device fix 4 dropped "Study" from this
               row: the AI sheet's own "Ask AI / Study" tab pill is one
               tap inside the AI entry already, so a separate bottom-nav
               Study button was pure duplication. setOpenStudyTabSignal
               itself is untouched — the "studyTab" voice command still
-              uses it, only this nav entry point is gone. Every
-              remaining button is still just an entry point into
-              something that already exists:
+              uses it, only this nav entry point is gone. Final mobile
+              cleanup replaced Contents (raw page-number list — no real
+              chapter/TOC data exists anywhere in this app) with
+              Bookmarks, since Go to Page in More already covers the same
+              job Contents did. Every remaining button is still just an
+              entry point into something that already exists:
                 AI            → toggleAiPanelCompact, same fn the old
                                 floating 🤖 trigger used (retired in D1
                                 since this button covers the same job).
-                Contents      → setContentsOpen (same modal as before).
+                Bookmarks     → openMobileBookmarks: opens the AI panel's
+                                EXISTING Study Workspace bookmarks view
+                                (same persistence, same jump-to-page,
+                                same delete — no new implementation).
                 Reading       → dispatches "ndl-open-accessibility-panel"
                                 (unchanged from D1); AccessibilityToolbar
                                 renders its glass variant for this call
@@ -4086,7 +4330,10 @@ export default function PremiumReaderPreviewContent() {
                                 item instead of a header sub-menu.
               Desktop/tablet keep the exact original bottom reading bar
               (Contents, page label, progress slider, fullscreen toggle)
-              below, byte-for-byte unchanged. ─────────────────────────── */}
+              below, byte-for-byte unchanged — Contents is a genuine,
+              still-used desktop feature (More → Book Information on
+              mobile opens the identical modal), only its MOBILE bottom-
+              nav entry point moved. ──────────────────────────────────── */}
           {isMobileViewport ? (
             isMobileLandscape ? (
               // ── Premium landscape redesign: compact centered floating
@@ -4109,9 +4356,9 @@ export default function PremiumReaderPreviewContent() {
                   <button onClick={toggleAiPanelCompact}
                     title={t.aiCompanionExpand} aria-label={t.aiCompanionExpand}
                     className="ndl-press flex h-9 w-9 items-center justify-center rounded-full text-[15px] text-amber-100/80 hover:bg-white/10">🤖</button>
-                  <button onClick={() => setPageStripOpen(true)}
-                    title={t.premiumReaderContents} aria-label={t.premiumReaderContents}
-                    className="ndl-press flex h-9 w-9 items-center justify-center rounded-full text-[15px] text-amber-100/80 hover:bg-white/10">📚</button>
+                  <button onClick={openMobileBookmarks}
+                    title={t.myLibraryBookmarks} aria-label={t.myLibraryBookmarks}
+                    className="ndl-press flex h-9 w-9 items-center justify-center rounded-full text-[15px] text-amber-100/80 hover:bg-white/10">🔖</button>
                   <button onClick={() => window.dispatchEvent(new Event("ndl-open-accessibility-panel"))}
                     title={t.a11yReadingOptions} aria-label={t.settingsAccessibility}
                     className="ndl-press flex h-9 w-9 items-center justify-center rounded-full text-[15px] text-amber-100/80 hover:bg-white/10">♿</button>
@@ -4132,21 +4379,22 @@ export default function PremiumReaderPreviewContent() {
                 <span className="text-base leading-none" aria-hidden="true">🤖</span>
                 {t.premiumReaderAiTab}
               </button>
-              {/* Final mobile polish point 5: "Contents" now opens the
-                  real page list (pageStripOpen — the same sheet the
-                  header's page badge already opens) instead of the book
-                  metadata popup. No chapter/table-of-contents data
-                  exists anywhere in this app for any book (checked
-                  lib/printedPageMap.ts — it's a page-number map, not a
-                  chapter structure), so a genuine page list is the
-                  honest "contents" here rather than inventing chapter
-                  names. The metadata dialog this used to open moved to
-                  More → Book Information instead of being removed. */}
-              <button onClick={() => setPageStripOpen(true)}
-                title={t.premiumReaderContents} aria-label={t.premiumReaderContents}
+              {/* Final mobile cleanup: "Contents" replaced with
+                  "Bookmarks" — Contents only ever listed raw page
+                  numbers (no chapter/TOC data exists anywhere in this
+                  app, see lib/printedPageMap.ts), and Go to Page already
+                  covers that same job from More, making the page-list
+                  sheet redundant as a primary nav destination. Opens the
+                  EXISTING Study Workspace bookmarks view (openMobileBookmarks
+                  above) rather than a new implementation — same
+                  persistence, same jump-to-page, same delete. The
+                  page-strip sheet itself isn't deleted: the header's page
+                  badge still opens it directly. */}
+              <button onClick={openMobileBookmarks}
+                title={t.myLibraryBookmarks} aria-label={t.myLibraryBookmarks}
                 className={`ndl-press flex flex-1 items-center justify-center rounded-xl text-[10px] font-bold text-slate-600 hover:bg-amber-50 ${mobileNavBtnCls}`}>
-                <span className="text-base leading-none" aria-hidden="true">📚</span>
-                {t.premiumReaderContents}
+                <span className="text-base leading-none" aria-hidden="true">🔖</span>
+                {t.myLibraryBookmarks}
               </button>
               {/* Real-device fix 4: "Study" removed from the bottom nav —
                   it duplicated the AI sheet's own "Ask AI / Study" tabs
@@ -4261,6 +4509,7 @@ export default function PremiumReaderPreviewContent() {
           compact={aiPanelCompact}
           onToggleCompact={toggleAiPanelCompact}
           openStudyTabSignal={openStudyTabSignal}
+          openBookmarksSignal={openBookmarksSignal}
           studyHighlights={highlights.filter(h => h.bookId === bookId)}
           studyNotes={notes.filter(n => n.bookId === bookId)}
           studyBookmarks={bookmarks.filter(b => b.bookId === bookId)}
