@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { StoredHighlight, StoredNote, StoredBookmark, HIGHLIGHT_COLOR_HEX } from "./studyData";
 import { getDisplayLabel, type PrintedPageMap } from "@/lib/printedPageMap";
 import { UI_TEXT } from "@/lib/i18n";
@@ -37,7 +37,7 @@ export default function StudyWorkspace({
   highlights, notes, bookmarks,
   printedPageMap,
   onJumpToPage, onDeleteHighlight, onDeleteNote, onDeleteBookmark,
-  onGenerateFromHighlight, generatingId,
+  onGenerateFromHighlight, generatingId, openBookmarksSignal,
 }: {
   /** Current book's display title, shown on each highlight card. */
   bookTitle?: string;
@@ -61,11 +61,23 @@ export default function StudyWorkspace({
    */
   onGenerateFromHighlight?: (highlight: StoredHighlight, action: RevisionAction) => void;
   generatingId?: string | null;
+  /** Mobile bottom-nav "Bookmarks": a monotonically increasing counter
+   *  (same pattern as AICompanion's own openStudyTabSignal) — every
+   *  increment jumps this component's own sub-tab to "bookmarks",
+   *  regardless of what it was showing before. undefined/0 means no
+   *  request has fired yet, so mounting never forces the tab away from
+   *  its normal default. */
+  openBookmarksSignal?: number;
 }) {
   const [subTab, setSubTab] = useState<StudySubTab>("highlights");
   const [query, setQuery] = useState("");
   const { language } = useLanguage();
   const t = UI_TEXT[language];
+
+  useEffect(() => {
+    if (openBookmarksSignal) setSubTab("bookmarks");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openBookmarksSignal]);
 
   // Printed page number only (e.g. "184", or "38–39" for a scanned
   // two-up spread) — the internal PDF page index is never shown, even as

@@ -182,6 +182,17 @@ export default function AccessibilityToolbar({ hideTrigger = false, variant = "d
     return () => window.removeEventListener("ndl-close-accessibility-panel", onCloseRequest);
   }, []);
 
+  // Landscape reader fix: broadcasts the REAL open/close state on every
+  // transition, however it happened (this panel's own ✕, its backdrop
+  // tap, the events above, Escape) — the reader's own pointer-gesture
+  // layer (PremiumReaderPreviewContent) listens for this to suppress
+  // swipe/pinch/long-press while the panel is open, since the panel is
+  // portaled outside that component's own DOM subtree and has no other
+  // way to know the panel's current state.
+  useEffect(() => {
+    window.dispatchEvent(new CustomEvent("ndl-accessibility-panel-state", { detail: { open } }));
+  }, [open]);
+
   function toggleReadAloud() {
     if (speaking) {
       window.speechSynthesis.cancel();
@@ -258,9 +269,18 @@ export default function AccessibilityToolbar({ hideTrigger = false, variant = "d
     <div
       ref={panelRef}
       data-a11y-no-invert
-      className="fixed inset-x-0 bottom-0 z-[161] max-h-[80vh] w-full overflow-y-auto rounded-t-[1.75rem] border-t border-white/30 p-5 text-slate-900 shadow-[0_-10px_60px_rgba(0,0,0,0.35)] backdrop-blur-2xl backdrop-saturate-150"
+      // RC1 P1 fix #7: pushed a second notch toward Apple Books/iPadOS
+      // Control Center — real-device feedback was this still read as too
+      // opaque even at 0.14/0.18. Alpha dropped again (0.14/0.18 →
+      // 0.07/0.10) and blur/saturation raised (56px/150% → 64px/180%) so
+      // the book underneath is clearly visible through the sheet, not
+      // just technically translucent. Row backgrounds bumped a matching
+      // notch (bg-white/55 → /62, bg-white/20 → /26 below) so controls
+      // stay legible even though the surrounding sheet is now much more
+      // see-through.
+      className="fixed inset-x-0 bottom-0 z-[161] max-h-[58vh] w-full overflow-y-auto rounded-t-[1.75rem] border-t border-white/40 p-5 text-slate-900 shadow-[0_-10px_60px_rgba(0,0,0,0.35)] backdrop-blur-[64px] backdrop-saturate-[1.8]"
       style={{
-        backgroundColor: settings.darkMode ? "rgba(15,23,42,0.32)" : "rgba(255,255,255,0.28)",
+        backgroundColor: settings.darkMode ? "rgba(15,23,42,0.10)" : "rgba(255,255,255,0.07)",
         color: settings.darkMode ? "#fff" : undefined,
         // Phase D3.1 point 8: iPhone Safari's home-indicator safe area —
         // every other mobile sheet in the reader already accounts for
@@ -334,7 +354,7 @@ export default function AccessibilityToolbar({ hideTrigger = false, variant = "d
             {toggleRow(ut.rulerLabel, settings.rulerEnabled, () => toggle("rulerEnabled"), "📏")}
             {settings.rulerEnabled && sliderRow(ut.rulerThickness, settings.rulerThickness, 4, 40, 2, v => setNumber("rulerThickness", v), "px")}
             {settings.rulerEnabled && (
-              <div className={`flex items-center justify-between rounded-2xl px-4 py-3 backdrop-blur-sm ${settings.darkMode ? "bg-white/10" : "bg-white/40"}`}>
+              <div className={`flex items-center justify-between rounded-2xl px-4 py-3 backdrop-blur-sm ${settings.darkMode ? "bg-white/26" : "bg-white/62"}`}>
                 <span className="text-sm font-bold">{ut.rulerColor}</span>
                 <input
                   type="color"
@@ -362,7 +382,7 @@ export default function AccessibilityToolbar({ hideTrigger = false, variant = "d
             faked or silently dropped. */}
         <p className={`mt-1 px-1 text-[10px] font-black uppercase tracking-widest ${settings.darkMode ? "text-white/50" : "text-slate-500"}`}>{ut.a11yTextReadingMode}</p>
         <div aria-disabled className="flex flex-col gap-2.5 opacity-45">
-          <div className={`flex items-center justify-between rounded-2xl px-4 py-3 backdrop-blur-sm ${settings.darkMode ? "bg-white/10" : "bg-white/40"}`}>
+          <div className={`flex items-center justify-between rounded-2xl px-4 py-3 backdrop-blur-sm ${settings.darkMode ? "bg-white/26" : "bg-white/62"}`}>
             <span className="flex items-center gap-2 text-sm font-bold">
               <span aria-hidden>🔤</span>{t.fontSize}
             </span>
@@ -372,13 +392,13 @@ export default function AccessibilityToolbar({ hideTrigger = false, variant = "d
               <button disabled aria-label={t.fontIncrease} className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-400 text-white font-black">+</button>
             </div>
           </div>
-          <div className={`flex items-center justify-between rounded-2xl px-4 py-3 backdrop-blur-sm ${settings.darkMode ? "bg-white/10" : "bg-white/40"}`}>
+          <div className={`flex items-center justify-between rounded-2xl px-4 py-3 backdrop-blur-sm ${settings.darkMode ? "bg-white/26" : "bg-white/62"}`}>
             <span className="flex items-center gap-2 text-sm font-bold">
               <span aria-hidden>🔠</span>{ut.dyslexiaLabel}
             </span>
             <span className={`rounded-full px-2.5 py-0.5 text-[10px] font-black uppercase tracking-wide ${settings.darkMode ? "bg-white/20" : "bg-slate-200 text-slate-500"}`}>{t.off}</span>
           </div>
-          <div className={`rounded-2xl px-4 py-3 backdrop-blur-sm ${settings.darkMode ? "bg-white/10" : "bg-white/40"}`}>
+          <div className={`rounded-2xl px-4 py-3 backdrop-blur-sm ${settings.darkMode ? "bg-white/26" : "bg-white/62"}`}>
             <div className="mb-1.5 flex items-center justify-between text-sm font-bold">
               <span>{ut.lineSpacing}</span>
               <span className="text-xs font-bold opacity-70">{settings.lineSpacing.toFixed(1)}×</span>

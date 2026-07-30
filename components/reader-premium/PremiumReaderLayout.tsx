@@ -103,8 +103,21 @@ const PremiumReaderLayout = forwardRef<PremiumReaderLayoutHandle, PremiumReaderL
   // portal root in the same fullscreen subtree, so every floating control
   // keeps working exactly as in normal mode.
   function toggleFullscreen() {
-    if (!document.fullscreenElement) document.documentElement.requestFullscreen();
-    else document.exitFullscreen();
+    // Real-device follow-up: requestFullscreen()/exitFullscreen() both
+    // return Promises that REJECT (never throw) when the browser denies
+    // the request — e.g. no user-activation window left, or the platform
+    // doesn't support it at all. Neither call was awaited/caught before,
+    // which is exactly the kind of unhandled-rejection the immersive-
+    // landscape work was asked to eliminate. Swallowing it here is
+    // correct either way: on failure the CSS fallback (bookAreaRef's own
+    // fixed-inset-0 positioning in landscape) already covers the same
+    // "reader root fills the screen" goal, so there's nothing further to
+    // do or surface to the user.
+    if (!document.fullscreenElement) {
+      document.documentElement.requestFullscreen().catch(() => { /* denied — CSS fallback already covers this */ });
+    } else {
+      document.exitFullscreen().catch(() => { /* already left fullscreen some other way */ });
+    }
   }
 
   useImperativeHandle(ref, () => ({ toggleFullscreen }), []);
