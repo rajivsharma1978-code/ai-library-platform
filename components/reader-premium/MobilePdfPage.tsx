@@ -64,6 +64,13 @@ export type MobilePdfPageProps = {
    *  render stats when ?renderDebug=1 is in the URL. Never rendered
    *  otherwise. */
   renderDebug?: boolean;
+  /** Landscape fit-width + duplicate-control cleanup: fired after every
+   *  successful render with the rendered CSS height and the measured
+   *  container height, so the PARENT (which owns pan/gesture state) can
+   *  clamp vertical panning to the page's real bounds instead of letting
+   *  it scroll into blank space. Not called in portrait — portrait's
+   *  contain-fit never needs vertical panning at zoom<=100. */
+  onContentMetrics?: (info: { cssHeight: number; containerHeight: number }) => void;
 };
 
 // Matches PdfBookSpread's own render-timeout contract (see that file's
@@ -138,7 +145,7 @@ function isCancelledError(err: unknown): boolean {
 
 export default function MobilePdfPage({
   pdfPath, pageNumber, totalPages, zoom = 100, pan = { x: 0, y: 0 }, isPanning = false,
-  getPdfDocument, onTextExtracted, landscape = false, renderDebug = false,
+  getPdfDocument, onTextExtracted, landscape = false, renderDebug = false, onContentMetrics,
 }: MobilePdfPageProps) {
   const { language } = useLanguage();
   const t = UI_TEXT[language];
@@ -283,17 +290,27 @@ export default function MobilePdfPage({
         if (isCancelled()) return;
 
         const nativeVp = page.getViewport({ scale: 1 });
-        // RC1 P2: contain-fit against BOTH dimensions, not width alone —
-        // width-only was fine while the card's max-width kept it
-        // narrower than the phone was tall (portrait), but landscape
-        // mode now lets the card grow much wider than the phone is
-        // tall, where a portrait-oriented page sized by width alone
-        // would render taller than the available height and get
-        // clipped by the card's `overflow:hidden`. Falls back to width-
-        // only if height hasn't measured yet (never blocks first paint).
+        // Landscape fit-width follow-up: landscape now fits by WIDTH
+        // ONLY, deliberately NOT the min(width,height) contain-fit below
+        // — contain-fit was exactly what produced the "huge black side
+        // areas" real-device report: it shrinks the page until BOTH
+        // dimensions fit inside a short landscape viewport, which for a
+        // portrait-oriented page means the page's rendered WIDTH ends up
+        // far short of the container's actual width (bounded by height
+        // long before width becomes the limit), leaving the unused
+        // horizontal space as gutters on both sides. Fit-width instead
+        // always uses the full available width — the page's rendered
+        // height is whatever that implies (often taller than the
+        // viewport), which the parent's vertical-pan handling (see
+        // onContentMetrics below) lets the user scroll through, exactly
+        // as a landscape reading view should behave. Portrait keeps the
+        // original contain-fit untouched (both dimensions, capped at 4x)
+        // — this branch never runs there.
         const scaleForWidth = width / nativeVp.width;
         const scaleForHeight = height != null && height > 0 ? height / nativeVp.height : scaleForWidth;
-        const baseFitScale = Math.max(0.1, Math.min(scaleForWidth, scaleForHeight, 4));
+        const baseFitScale = landscape
+          ? Math.max(0.1, Math.min(scaleForWidth, 4))
+          : Math.max(0.1, Math.min(scaleForWidth, scaleForHeight, 4));
         // Real-device follow-up: the SETTLED zoom is baked into the
         // render itself now (not applied afterward via CSS scale — see
         // zoomTransform below), so a "100%" page and a "180%" page both
@@ -359,6 +376,7 @@ export default function MobilePdfPage({
         clearRenderTimeout();
         setVisible(true);
         setResharpening(false);
+        if (landscape) onContentMetrics?.({ cssHeight: cssH, containerHeight: height ?? 0 });
         if (renderDebug) {
           setDebugStats({
             cssW: Math.floor(cssW), cssH: Math.floor(cssH),
@@ -457,11 +475,25 @@ export default function MobilePdfPage({
   const sectionStyle: React.CSSProperties | undefined = landscape
     ? { paddingLeft: "env(safe-area-inset-left)", paddingRight: "env(safe-area-inset-right)" }
     : undefined;
+  // Landscape fit-width follow-up: top-aligned (not centered) vertically —
+  // "start at the top of the page" when a fit-width page is taller than
+  // the viewport. Centering would crop equal amounts off both the top
+  // AND bottom by default, which reads as content missing rather than
+  // "scroll down for more." Horizontal stays centered — fit-width means
+  // there's no horizontal slack to begin with at 100%, and once zoomed
+  // past that the existing pan system already expects a centered
+  // starting point (matches how portrait's zoom-pan already behaves).
   const cardCls = landscape
-    ? "relative z-10 flex h-full w-full items-center justify-center"
+    ? "relative z-10 flex h-full w-full items-start justify-center"
     : "relative z-10 flex h-full w-full items-center justify-center rounded-[1.75rem] border border-amber-200 bg-[#fffaf0] p-2 shadow-[0_20px_50px_rgba(75,45,12,0.25)]";
+  // Landscape: overflow always hidden, never "auto" — panning (both the
+  // vertical scroll-through-the-page at rest and the existing zoom-pan)
+  // is 100% CSS-transform-driven now (see PremiumReaderPreviewContent's
+  // pointer handlers), so a native scrollbar/scroll-into-view would only
+  // ever fight that, never help it. Portrait's existing zoom-dependent
+  // overflow is untouched.
   const cardStyle: React.CSSProperties = landscape
-    ? { overflow: zoom > 100 ? "auto" : "hidden", touchAction: "none" }
+    ? { overflow: "hidden", touchAction: "none" }
     : { overflow: zoom > 100 ? "auto" : "hidden", touchAction: "none" };
 
   return (
@@ -469,7 +501,7 @@ export default function MobilePdfPage({
       {/* No max-width in landscape — "no max-width, page should touch or
           nearly touch the limiting screen edges." Portrait's 1400px cap
           (a portrait-era number, see history below) is untouched. */}
-      <main className={landscape ? "relative flex w-full flex-1 min-h-0 items-center justify-center" : "relative mx-auto flex w-full max-w-[1400px] flex-1 min-h-0 items-center justify-center"}>
+      <main className={landscape ? "relative flex w-full flex-1 min-h-0 items-start justify-center" : "relative mx-auto flex w-full max-w-[1400px] flex-1 min-h-0 items-center justify-center"}>
         <div
           ref={cardRef}
           className={cardCls}

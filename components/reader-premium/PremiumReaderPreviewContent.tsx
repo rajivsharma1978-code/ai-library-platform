@@ -225,6 +225,17 @@ function cropCanvasRegion(
 
 type SpeechState = "idle" | "loading" | "speaking" | "paused";
 const ZOOM_MIN = 50, ZOOM_MAX = 200, ZOOM_STEP = 20;
+// Landscape fit-width follow-up: landscape's "100%" now MEANS fit-width
+// (see MobilePdfPage's baseFitScale), so zooming below 100 there would
+// just re-introduce the gutters this whole task removes — the floor
+// moves up to 100. The ceiling is raised too (200 → 300) since fit-width
+// starts from a taller effective baseline than portrait's contain-fit
+// did, and the existing canvas safety budget (MobilePdfPage's
+// MAX_CANVAS_PIXELS/MAX_CANVAS_DIMENSION_PX) still bounds how far a
+// real device can actually render sharply regardless of this ceiling.
+// Portrait/desktop keep the original ZOOM_MIN/MAX untouched everywhere
+// they're already used.
+const ZOOM_MIN_LANDSCAPE = 100, ZOOM_MAX_LANDSCAPE = 300;
 // Minimum pointer travel (px) before a mouse-down/up pair counts as a real
 // drag. Anything below this is a plain click and must never produce a
 // selection, a crop, a highlight, or the floating toolbar.
@@ -668,6 +679,25 @@ export default function PremiumReaderPreviewContent() {
   // check on top of isMobileViewport identifies "phone, rotated
   // sideways" without touching the short-edge classification above.
   const isMobileLandscape = isMobileViewport && viewportWidth > viewportHeight;
+  // Landscape fit-width follow-up: which zoom range is actually in
+  // effect right now — read at every call site that clamps/steps zoom
+  // (the pinch handler, the landscape More panel's +/− buttons) instead
+  // of the raw ZOOM_MIN/MAX constants, which stay the portrait/desktop
+  // values unchanged.
+  const effectiveZoomMin = isMobileLandscape ? ZOOM_MIN_LANDSCAPE : ZOOM_MIN;
+  const effectiveZoomMax = isMobileLandscape ? ZOOM_MAX_LANDSCAPE : ZOOM_MAX;
+
+  // Landscape fit-width follow-up: "start at the top of the page… when
+  // entering landscape" plus keeping `zoom` (shared with portrait) from
+  // ever landing below landscape's new 100% floor — e.g. a user at 70%
+  // in portrait who then rotates would otherwise render BELOW fit-width
+  // and reintroduce the exact gutters this task removes.
+  useEffect(() => {
+    if (!isMobileLandscape) return;
+    setPan({ x: 0, y: 0 });
+    setZoom((z) => (z < ZOOM_MIN_LANDSCAPE ? ZOOM_MIN_LANDSCAPE : z));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isMobileLandscape]);
 
   // ── Phase C1: mobile toolbar "More" sheet ────────────────────────────
   // Below 640px the top chrome collapses from 2 flex-wrap rows (5 visual
@@ -1125,7 +1155,32 @@ export default function PremiumReaderPreviewContent() {
     cardCenterX: number; cardCenterY: number;
     contentX: number; contentY: number;
   } | null>(null);
-  const touchPanRef = useRef<{ x: number; y: number; px: number; py: number } | null>(null);
+  const touchPanRef = useRef<{
+    x: number; y: number; px: number; py: number;
+    // Landscape fit-width follow-up: true while panning at fit-width
+    // (zoom<=105) — the horizontal axis stays pinned (there's no
+    // horizontal slack to pan into at fit-width, only vertical), while
+    // the EXISTING zoom>100 pan (portrait or landscape) always leaves
+    // this false/undefined, panning freely on both axes exactly as
+    // before.
+    lockX?: boolean;
+  } | null>(null);
+  // Landscape fit-width follow-up: last known {cssHeight, containerHeight}
+  // from MobilePdfPage's onContentMetrics — lets the vertical-pan-at-rest
+  // mechanism below clamp to the page's REAL bounds instead of letting
+  // the user scroll into blank space past either end. A ref (not state):
+  // this is read only during a live gesture, never needs to trigger a
+  // render on its own.
+  const landscapeContentMetricsRef = useRef<{ cssHeight: number; containerHeight: number } | null>(null);
+  const handleLandscapeContentMetrics = useCallback((info: { cssHeight: number; containerHeight: number }) => {
+    landscapeContentMetricsRef.current = info;
+  }, []);
+  function clampLandscapePanY(y: number): number {
+    const metrics = landscapeContentMetricsRef.current;
+    if (!metrics) return y;
+    const maxScroll = Math.max(0, metrics.cssHeight - metrics.containerHeight);
+    return Math.min(0, Math.max(-maxScroll, y));
+  }
 
   function pointerDistance(a: { x: number; y: number }, b: { x: number; y: number }): number {
     return Math.hypot(a.x - b.x, a.y - b.y);
@@ -1238,7 +1293,7 @@ export default function PremiumReaderPreviewContent() {
       const pts = Array.from(activePointersRef.current.values());
       const dist = pointerDistance(pts[0], pts[1]);
       const ratio = dist / pinchRef.current.startDist;
-      const nextZoom = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Math.round(pinchRef.current.startZoom * ratio)));
+      const nextZoom = Math.min(effectiveZoomMax, Math.max(effectiveZoomMin, Math.round(pinchRef.current.startZoom * ratio)));
       const scale = nextZoom / 100;
       const midX = (pts[0].x + pts[1].x) / 2;
       const midY = (pts[0].y + pts[1].y) / 2;
@@ -1254,10 +1309,38 @@ export default function PremiumReaderPreviewContent() {
       return;
     }
 
+    // Landscape fit-width follow-up: a fit-width page is very often
+    // taller than the landscape viewport, so a vertical drag needs to
+    // pan/scroll through it even at 100% (=fit-width) zoom — a state
+    // horizontal swipe-to-turn-page and the existing zoom>100 pan (below)
+    // never had to share before. Direction-locks the first ~14px of a
+    // still-unclassified single-finger gesture: once it's clearly
+    // vertical-dominant, hand off to the SAME live-pan mechanism zoom>100
+    // already uses (touchPanRef), locked to the vertical axis only
+    // (there's no horizontal slack to pan into at fit-width). A genuinely
+    // horizontal gesture (page-turn swipe) or a small movement (tap/
+    // long-press) is left completely alone, still classified by
+    // finishTapOrSwipe at pointerup exactly as before. Portrait/desktop
+    // never reach this branch.
+    if (isMobileLandscape && zoom <= 105 && gestureStartRef.current && !touchPanRef.current) {
+      const gstart = gestureStartRef.current;
+      const gdx = Math.abs(e.clientX - gstart.x);
+      const gdy = Math.abs(e.clientY - gstart.y);
+      if (gdy > 14 && gdy > gdx * 1.3) {
+        if (longPressTimerRef.current) { clearTimeout(longPressTimerRef.current); longPressTimerRef.current = null; }
+        gestureStartRef.current = null;
+        touchPanRef.current = { x: e.clientX, y: e.clientY, px: pan.x, py: clampLandscapePanY(pan.y), lockX: true };
+        updateDebug({ lastEventType: "pointermove(vscroll-start)", gestureState: "pan" });
+      }
+    }
+
     if (touchPanRef.current) {
       e.preventDefault();
       const start = touchPanRef.current;
-      setPan({ x: start.px + (e.clientX - start.x), y: start.py + (e.clientY - start.y) });
+      const nextX = start.lockX ? start.px : start.px + (e.clientX - start.x);
+      let nextY = start.py + (e.clientY - start.y);
+      if (start.lockX) nextY = clampLandscapePanY(nextY);
+      setPan({ x: nextX, y: nextY });
       updateDebug({
         lastEventType: "pointermove(pan)", gestureState: "pan",
         curX: e.clientX, curY: e.clientY,
@@ -3590,22 +3673,23 @@ export default function PremiumReaderPreviewContent() {
                       </button>
                     )}
                     <span className="h-4 w-px flex-shrink-0 bg-white/10" />
+                    {/* Landscape fit-width follow-up: Bookmark and More
+                        DROPPED from this bar — both already exist in the
+                        bottom dock (Bookmarks, More), and having both a
+                        top-bar AND a dock entry point for the same two
+                        actions was the "two Bookmark controls" / "two
+                        More controls" real-device report. Bookmark
+                        functionality itself is untouched — still reachable
+                        via the dock's Bookmarks button (opens Study
+                        Workspace, same as before) and via
+                        toggleBookmarkCurrentPage's other existing call
+                        sites (portrait header, desktop toolbar). Top bar
+                        is now exactly Back / title / page / Read Page —
+                        "extremely slim," per spec. */}
                     <button onClick={handleReadPage} disabled={speechState === "loading"}
                       title={t.premiumReaderReadPageTitle} aria-label={t.premiumReaderReadPageTitle}
                       className="ndl-press flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full text-[13px] text-amber-100/80 hover:bg-white/10 disabled:opacity-40">
                       {speechState === "loading" ? "⏳" : speechState === "speaking" ? "⏸" : speechState === "paused" ? "▶" : "🔊"}
-                    </button>
-                    <button onClick={toggleBookmarkCurrentPage}
-                      title={isCurrentPageBookmarked ? t.premiumReaderBookmarked : t.premiumReaderBookmark}
-                      aria-label={isCurrentPageBookmarked ? t.premiumReaderBookmarked : t.premiumReaderBookmark}
-                      className={`ndl-press flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full text-[13px] ${
-                        isCurrentPageBookmarked ? "text-amber-300" : "text-amber-100/80 hover:bg-white/10"}`}>
-                      🔖
-                    </button>
-                    <button onClick={() => setMobileMoreOpen(true)}
-                      title={t.premiumReaderMoreTools} aria-label={t.premiumReaderMoreTools}
-                      className="ndl-press flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full text-[13px] text-amber-100/80 hover:bg-white/10">
-                      ⋯
                     </button>
                   </div>
                 </div>
@@ -3686,11 +3770,11 @@ export default function PremiumReaderPreviewContent() {
                               <div className="flex items-center justify-between rounded-xl bg-white/8 px-3 py-2 ring-1 ring-white/10">
                                 <span className="text-xs font-bold text-white/80">🔍 {t.premiumReaderZoomLabel}</span>
                                 <div className="flex items-center gap-2">
-                                  <button onClick={() => setZoom(z => Math.max(z - ZOOM_STEP, ZOOM_MIN))} disabled={zoom <= ZOOM_MIN}
+                                  <button onClick={() => setZoom(z => Math.max(z - ZOOM_STEP, effectiveZoomMin))} disabled={zoom <= effectiveZoomMin}
                                     title={t.premiumReaderZoomOutTitle} aria-label={t.premiumReaderZoomOutTitle}
                                     className="ndl-press inline-flex h-8 w-8 items-center justify-center rounded-full bg-white/10 text-sm font-bold text-white/85 hover:bg-white/20 disabled:opacity-30">−</button>
                                   <span className="min-w-[32px] text-center text-xs font-bold tabular-nums text-white/70">{zoom}%</span>
-                                  <button onClick={() => setZoom(z => Math.min(z + ZOOM_STEP, ZOOM_MAX))} disabled={zoom >= ZOOM_MAX}
+                                  <button onClick={() => setZoom(z => Math.min(z + ZOOM_STEP, effectiveZoomMax))} disabled={zoom >= effectiveZoomMax}
                                     title={t.premiumReaderZoomInTitle} aria-label={t.premiumReaderZoomInTitle}
                                     className="ndl-press inline-flex h-8 w-8 items-center justify-center rounded-full bg-white/10 text-sm font-bold text-white/85 hover:bg-white/20 disabled:opacity-30">+</button>
                                   <button onClick={fitScreen}
@@ -4280,6 +4364,7 @@ export default function PremiumReaderPreviewContent() {
                 onTextExtracted={handleTextExtracted}
                 landscape={isMobileLandscape}
                 renderDebug={renderDebugEnabled}
+                onContentMetrics={handleLandscapeContentMetrics}
               />
             ) : (
               <PdfBookSpread
@@ -4353,18 +4438,23 @@ export default function PremiumReaderPreviewContent() {
                   className="pointer-events-auto flex items-center gap-1 rounded-full px-2 py-1.5 backdrop-blur-2xl"
                   style={{ background: "rgba(15,13,11,0.6)", border: "1px solid rgba(212,175,110,0.16)", boxShadow: "0 10px 28px rgba(0,0,0,0.35)" }}
                 >
+                  {/* Landscape fit-width follow-up: icons ~20% larger
+                      (15px → 18px) and the tap target grown to the
+                      40-44px minimum (h-9/36px → h-10/40px) — "slightly
+                      too small" on real devices. Dock itself stays just
+                      as compact (same px-2 py-1.5 pill, same gap-1). */}
                   <button onClick={toggleAiPanelCompact}
                     title={t.aiCompanionExpand} aria-label={t.aiCompanionExpand}
-                    className="ndl-press flex h-9 w-9 items-center justify-center rounded-full text-[15px] text-amber-100/80 hover:bg-white/10">🤖</button>
+                    className="ndl-press flex h-10 w-10 items-center justify-center rounded-full text-[18px] text-amber-100/80 hover:bg-white/10">🤖</button>
                   <button onClick={openMobileBookmarks}
                     title={t.myLibraryBookmarks} aria-label={t.myLibraryBookmarks}
-                    className="ndl-press flex h-9 w-9 items-center justify-center rounded-full text-[15px] text-amber-100/80 hover:bg-white/10">🔖</button>
+                    className="ndl-press flex h-10 w-10 items-center justify-center rounded-full text-[18px] text-amber-100/80 hover:bg-white/10">🔖</button>
                   <button onClick={() => window.dispatchEvent(new Event("ndl-open-accessibility-panel"))}
                     title={t.a11yReadingOptions} aria-label={t.settingsAccessibility}
-                    className="ndl-press flex h-9 w-9 items-center justify-center rounded-full text-[15px] text-amber-100/80 hover:bg-white/10">♿</button>
+                    className="ndl-press flex h-10 w-10 items-center justify-center rounded-full text-[18px] text-amber-100/80 hover:bg-white/10">♿</button>
                   <button onClick={() => setMobileMoreOpen(true)}
                     title={t.premiumReaderMoreTools} aria-label={t.premiumReaderMoreTools}
-                    className="ndl-press flex h-9 w-9 items-center justify-center rounded-full text-[15px] text-amber-100/80 hover:bg-white/10">⋯</button>
+                    className="ndl-press flex h-10 w-10 items-center justify-center rounded-full text-[18px] text-amber-100/80 hover:bg-white/10">⋯</button>
                 </div>
               </div>
             ) : (
