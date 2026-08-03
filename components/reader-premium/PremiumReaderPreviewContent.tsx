@@ -223,18 +223,30 @@ function cropCanvasRegion(
   };
 }
 
+// Only used by "Read AI Response" now (handleReadAiResponse) — a
+// genuinely separate, one-off "player" (reads the AI Companion's current
+// output, never part of Read Page/Chapter/Book) that this unification
+// task explicitly does not touch.
 type SpeechState = "idle" | "loading" | "speaking" | "paused";
 
-// ── Enhanced Read Aloud: Read Book / Read Chapter ──────────────────────
-// "Read Page" (handleReadPage, below) is completely unchanged. These add
-// a CONTINUOUS mode that auto-turns pages and keeps speaking — its own
-// state machine (continuousReadScope/continuousReadState), separate from
-// speechState, so Read Page and continuous reading can never fight over
-// the same flags (they DO share the one browser speechSynthesis queue,
-// so starting either one cancels the other — see the top of
-// runContinuousRead/handleReadPage).
-type ContinuousReadScope = "chapter" | "book";
+// ── Unified Reading Engine ──────────────────────────────────────────────
+// Read Page, Read Chapter and Read Book (previously three loosely-related
+// implementations — a standalone handleReadPage using a DIFFERENT, OCR-
+// blind text source than Read Chapter/Book's own pipeline) now share ONE
+// engine: one page-text resolver (resolveReadingPageText), one chunking/
+// speech path (speakChunksContinuous), one cancellation token
+// (readerTokenRef), and one player state machine below. "page" mode is
+// simply a session whose start and end page are the same, so the engine
+// never special-cases it beyond that.
+type ReadMode = "page" | "chapter" | "book";
+type ReaderStatus = "idle" | "starting" | "playing" | "paused" | "completed" | "error";
 type SleepTimerOption = "off" | "15" | "30" | "45" | "60" | "endOfChapter" | "endOfBook";
+// Typed result of the shared page-text resolver (resolveReadingPageText)
+// — "source" makes it possible to tell a genuine "no text anywhere"
+// result apart from one that just hasn't been checked yet, instead of
+// overloading an empty string for both.
+type PageTextSource = "cache" | "selectable" | "ocr" | "none";
+interface PageTextResolution { text: string; source: PageTextSource; }
 
 // Page-level resume — deliberately the ONLY thing persisted (per spec:
 // no sentence position, no speech timestamps). Keyed by bookId inside one
@@ -1724,28 +1736,27 @@ export default function PremiumReaderPreviewContent() {
   const [selectionRects, setSelectionRects] = useState<ScreenRect[]>([]);
   const [capturedImageRect, setCapturedImageRect] = useState<ScreenRect | null>(null);
 
-  // ── Speech — TWO independent players sharing the one browser
-  // speechSynthesis queue: "page" reads the visible book page verbatim,
-  // "aiResponse" reads the AI Companion's current output. Starting
-  // either one stops the other (see stopPageSpeech/stopAiSpeech) since
-  // only one can ever really be speaking at a time. ────────────────────
-  const [speechState, setSpeechState] = useState<SpeechState>("idle");
+  // ── Read AI Response — a separate, one-off player untouched by this
+  // unification (reads the AI Companion's current output, never Read
+  // Page/Chapter/Book text). Starting it pauses the unified reader (see
+  // handleReadAiResponse) since only one can really be speaking at a
+  // time — they still share the one browser speechSynthesis queue.
   const [aiSpeechState, setAiSpeechState] = useState<SpeechState>("idle");
   // Set only when the AI response's language has no closely-matching
   // installed voice — shown next to the Read AI Response button so a
   // fallback voice/accent is never silently substituted without
   // explanation (Phase C2 fix — Hindi/Indic read-aloud).
   const [aiVoiceNotice, setAiVoiceNotice] = useState<string | null>(null);
-  const pageSpeechStoppedRef = useRef(false);
   const aiSpeechStoppedRef = useRef(false);
 
-  // ── Enhanced Read Aloud: continuous (Chapter/Book) reading state ──────
-  // Mobile-only (see the Read menu's render site below) — desktop keeps
-  // its single Read Page button/behavior completely unchanged. A THIRD
-  // independent "player" alongside page/AI speech above: starting it
-  // stops the other two (and vice versa — handleReadPage/
-  // handleReadAiResponse both call stopContinuousRead()), same
-  // one-speaker-at-a-time rule.
+  // ── Unified Reading Engine: Read Page / Read Chapter / Read Book ──────
+  // Mobile-only for the PLAYER UI (see the Read menu's render site below)
+  // — desktop keeps its own single Read Page button, driven by this exact
+  // same engine/state so the text-resolution fix applies everywhere, just
+  // without the rich player card (established "desktop reader unchanged"
+  // precedent from earlier rounds). One state machine for all three
+  // modes: playerMode identifies which one is active, playerStatus is
+  // idle/starting/playing/paused/completed/error.
   const [readMenuOpen, setReadMenuOpen] = useState(false);
   // P0 regression fix: wraps the Read menu's trigger + dropdown (both
   // portrait and landscape headers share this one ref/effect — only one
@@ -1755,39 +1766,47 @@ export default function PremiumReaderPreviewContent() {
   // (non-control) tap target and swallowed via preventDefault before the
   // backdrop's onClick could ever fire on a real touch device.
   const readMenuRef = useRef<HTMLDivElement>(null);
-  const [continuousReadScope, setContinuousReadScope] = useState<ContinuousReadScope | null>(null);
-  const [continuousReadState, setContinuousReadState] = useState<SpeechState>("idle");
-  const [continuousReadSpeed, setContinuousReadSpeed] = useState(1);
-  const [continuousReadEndPage, setContinuousReadEndPage] = useState<number | null>(null);
+  const [playerMode, setPlayerMode] = useState<ReadMode | null>(null);
+  const [playerStatus, setPlayerStatus] = useState<ReaderStatus>("idle");
+  const [playerSpeed, setPlayerSpeed] = useState(1);
+  const [playerEndPage, setPlayerEndPage] = useState<number | null>(null);
+  // Set only in the "error" status — the reason shown in the player's
+  // inline error state (Retry/Close, +Skip Page for Read Book).
+  const [playerErrorMessage, setPlayerErrorMessage] = useState<string | null>(null);
+  // Minimize/expand — playback is completely unaffected by this; it only
+  // changes which of the two player layouts renders (see the JSX below).
+  const [playerMinimized, setPlayerMinimized] = useState(false);
   const [chapterUnavailableOpen, setChapterUnavailableOpen] = useState(false);
   const [resumePromptPage, setResumePromptPage] = useState<number | null>(null);
   const [sleepTimerOption, setSleepTimerOption] = useState<SleepTimerOption>("off");
-  const continuousReadStoppedRef = useRef(false);
-  const continuousReadTokenRef = useRef(0);
-  // Kept in sync with continuousReadScope via the effect below — read
-  // from the accessibility-panel-state window listener, which is
-  // registered once on mount and would otherwise close over a stale
-  // (always-null) value.
-  const continuousReadScopeRef = useRef<ContinuousReadScope | null>(null);
-  useEffect(() => { continuousReadScopeRef.current = continuousReadScope; }, [continuousReadScope]);
-  // The page the continuous engine itself is about to navigate TO, set
-  // immediately before every auto-turn — the "manual page change"
-  // interruption effect below treats any OTHER readerPage change as user-
-  // driven (swipe, Prev/Next, page strip, voice command) and stops.
-  const continuousExpectedPageRef = useRef<number | null>(null);
+  const readerStoppedRef = useRef(false);
+  const readerTokenRef = useRef(0);
+  // Kept in sync with playerMode via the effect below — read from the
+  // accessibility-panel-state window listener, which is registered once
+  // on mount and would otherwise close over a stale (always-null) value.
+  const playerModeRef = useRef<ReadMode | null>(null);
+  useEffect(() => { playerModeRef.current = playerMode; }, [playerMode]);
+  // The page the engine itself is about to navigate TO, set immediately
+  // before every auto-turn — the "manual page change" interruption
+  // effect below treats any OTHER readerPage change as user-driven
+  // (swipe, Prev/Next, page strip, voice command) and stops.
+  const readerExpectedPageRef = useRef<number | null>(null);
   // Preloads the NEXT page's text while the current one is still
   // speaking — {page, promise}, consumed (and cleared) by
   // getPageTextWithPreload once the engine actually reaches that page.
-  const nextPageTextCacheRef = useRef<{ page: number; promise: Promise<string> } | null>(null);
+  // Only ever armed AFTER the current page's first utterance has
+  // actually started (see speakChunksContinuous's onFirstAudibleStart),
+  // never before — preload must never compete with/delay current speech.
+  const nextPageTextCacheRef = useRef<{ page: number; promise: Promise<PageTextResolution> } | null>(null);
   const sleepTimerHandleRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const sleepTimerEndPageRef = useRef<number | null>(null);
-  // UX polish: live playback-speed ref (always current, unlike a value
-  // captured once when a page's chunk sequence started) plus the chunk-
-  // level restart machinery below, so changing speed while actively
-  // speaking takes effect on the very next utterance instead of waiting
-  // for the current page to finish.
-  const continuousReadSpeedRef = useRef(1);
-  useEffect(() => { continuousReadSpeedRef.current = continuousReadSpeed; }, [continuousReadSpeed]);
+  // Live playback-speed ref (always current, unlike a value captured
+  // once when a page's chunk sequence started) plus the chunk-level
+  // restart machinery below, so changing speed while actively speaking
+  // takes effect on the very next utterance instead of waiting for the
+  // current page to finish.
+  const playerSpeedRef = useRef(1);
+  useEffect(() => { playerSpeedRef.current = playerSpeed; }, [playerSpeed]);
   // { chunks, index } for whichever page is currently being spoken —
   // read/written by speakChunksContinuous below and by
   // restartCurrentChunkAtNewSpeed (triggered from the speed <select>).
@@ -1803,6 +1822,29 @@ export default function PremiumReaderPreviewContent() {
   // no-op instead of either double-advancing or prematurely resolving
   // the whole page's speech promise.
   const chunkSessionRef = useRef(0);
+  // Remembers the last startReading(...) call so Retry (from the error
+  // state) can re-run the exact same request without the caller having
+  // to re-derive mode/startPage/endPage.
+  const lastReadingRequestRef = useRef<{ mode: ReadMode; startPage: number; endPage: number } | null>(null);
+  // One-time speech-engine warm-up — see the effect near the bottom of
+  // this state block.
+  const voiceWarmupRef = useRef(false);
+
+  // Speech engine warm-up (mobile Safari especially): fires once on
+  // mount, purely to prime speechSynthesis.getVoices()/voiceschanged
+  // well before the user's first tap — loadVoices() already implements
+  // "listen once for voiceschanged, fall back after a short timeout"
+  // (lib/premium-reader/speech.ts). No audible dummy utterance is ever
+  // spoken, and this never blocks a later speak() call — the unified
+  // engine's own utterances never await this promise, they just use
+  // whichever default voice is available at speak() time; this only
+  // reduces the odds that the FIRST real speak() call is also the one
+  // that has to wait for the voice list to populate.
+  useEffect(() => {
+    if (voiceWarmupRef.current) return;
+    voiceWarmupRef.current = true;
+    loadVoices();
+  }, []);
 
   // ── Go To Page ────────────────────────────────────────────────────
   // Input always means the PRINTED page number — there is no PDF-page
@@ -1941,18 +1983,13 @@ export default function PremiumReaderPreviewContent() {
   // selection once the new page has rendered and the mouse next moves,
   // with no new mousedown/drag having happened on the new page at all.
   useEffect(() => {
-    // Only the PAGE speech player is tied to page content, so only it
-    // gets stopped here — the AI response player keeps narrating across
-    // a page turn since aiResponse itself doesn't change until a new AI
-    // call completes. Cancelling the shared synth queue is still safe
-    // even while AI speech is mid-chunk: onend simply won't fire for
-    // the cancelled utterance, so speakSequence's chain stops there —
-    // exactly like an explicit Stop.
-    if (speechState !== "idle") {
-      window.speechSynthesis?.cancel();
-      pageSpeechStoppedRef.current = true;
-      setSpeechState("idle");
-    }
+    // Read Page/Chapter/Book (the unified reader) is stopped by the
+    // dedicated "manual page change" interruption effect right below —
+    // it correctly tells an engine-driven auto-turn (Chapter/Book) apart
+    // from a genuinely manual one (which Read Page's own single-page
+    // session always counts as, once it's done). The AI response player
+    // keeps narrating across a page turn since aiResponse itself doesn't
+    // change until a new AI call completes.
     clearActiveSelection();   // activeSelection, highlights, ask-input, floating toolbar
     resetInteractionState();  // isPanning
     dragStartRef.current = null; // drag anchor — never carry a stale one to the new page
@@ -1965,27 +2002,28 @@ export default function PremiumReaderPreviewContent() {
     setReadMenuOpen(false);
   }, [readerPage, bookId]); // eslint-disable-line
 
-  // Enhanced Read Aloud — interrupt continuous reading on a MANUAL page
-  // change. The continuous engine records the page it's about to auto-
-  // turn TO in continuousExpectedPageRef immediately before navigating;
-  // any readerPage change that doesn't match that expectation (swipe,
-  // Prev/Next tap, page-strip jump, voice command, Go to Page) is
-  // necessarily user-driven and stops continuous reading, per spec.
+  // Unified reading engine — interrupt on a MANUAL page change. The
+  // engine records the page it's about to navigate TO in
+  // readerExpectedPageRef immediately before every navigation (including
+  // Read Page's own single-page jump, if it needed one); any readerPage
+  // change that doesn't match that expectation (swipe, Prev/Next tap,
+  // page-strip jump, voice command, Go to Page) is necessarily
+  // user-driven and closes the reader, per spec.
   useEffect(() => {
-    if (continuousReadScope && continuousExpectedPageRef.current !== null && readerPage !== continuousExpectedPageRef.current) {
-      stopContinuousRead();
+    if (playerMode && readerExpectedPageRef.current !== null && readerPage !== readerExpectedPageRef.current) {
+      closeReader();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [readerPage]);
 
-  // Interrupt continuous reading when the AI Companion panel opens —
+  // Interrupt the reader when the AI Companion panel opens —
   // openMobileBookmarks (Bookmarks) and the "Notes" tab both open this
   // same panel (just on a different starting tab), so watching
   // aiPanelCompact covers "opens AI" / "opens Notes" / "opens Bookmarks"
   // in one place.
   useEffect(() => {
     if (!aiPanelCompact) {
-      if (continuousReadScope) stopContinuousRead();
+      if (playerMode) closeReader();
       setReadMenuOpen(false); // P0 regression fix: opening AI/Notes/Bookmarks closes the Read menu too
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -2001,7 +2039,7 @@ export default function PremiumReaderPreviewContent() {
       // Notes/Bookmarks as an interruption trigger — extended to
       // Contents/page-strip too since they're the same class of local
       // full-attention sheet.
-      if (continuousReadScope) stopContinuousRead();
+      if (playerMode) closeReader();
     }
   }, [mobileMoreOpen, contentsOpen, pageStripOpen]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -2043,16 +2081,16 @@ export default function PremiumReaderPreviewContent() {
     return () => document.removeEventListener("pointerdown", onPointerDown);
   }, [readMenuOpen]);
 
-  // Interrupt continuous reading when the Accessibility panel opens —
-  // same ndl-accessibility-panel-state broadcast the gesture layer
-  // already listens to (see accessibilityPanelOpenRef above). Registered
-  // once on mount, so it reads continuousReadScopeRef (kept fresh by the
-  // effect declared alongside it) rather than the state directly.
+  // Interrupt the reader when the Accessibility panel opens — same
+  // ndl-accessibility-panel-state broadcast the gesture layer already
+  // listens to (see accessibilityPanelOpenRef above). Registered once on
+  // mount, so it reads playerModeRef (kept fresh by the effect declared
+  // alongside it) rather than the state directly.
   useEffect(() => {
     function onA11yPanelState(e: Event) {
       const open = !!(e as CustomEvent<{ open: boolean }>).detail?.open;
       if (open) {
-        if (continuousReadScopeRef.current) stopContinuousRead();
+        if (playerModeRef.current) closeReader();
         setReadMenuOpen(false); // P0 regression fix: opening Accessibility closes the Read menu too
       }
     }
@@ -2061,13 +2099,13 @@ export default function PremiumReaderPreviewContent() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Interrupt continuous reading (and cancel any pending speech) when
-  // the reader itself unmounts — leaving the reader page entirely
-  // (Back, browser navigation, closing the tab).
+  // Interrupt the reader (and cancel any pending speech) when the reader
+  // itself unmounts — leaving the reader page entirely (Back, browser
+  // navigation, closing the tab).
   useEffect(() => {
     return () => {
-      continuousReadStoppedRef.current = true;
-      continuousReadTokenRef.current += 1;
+      readerStoppedRef.current = true;
+      readerTokenRef.current += 1;
       window.speechSynthesis?.cancel();
     };
   }, []);
@@ -2121,18 +2159,15 @@ export default function PremiumReaderPreviewContent() {
     setAiHistory([]);
     setScope("page");
     setAiFailed(false);
-    // Unlike a plain page turn, a book change invalidates BOTH speech
-    // players — the AI response about to be cleared, and whatever page
-    // was playing, both belonged to the book being left. Continuous
-    // reading (Chapter/Book) belonged to that same book too — "changes
-    // book" is one of the spec's explicit interruption triggers.
+    // A book change invalidates both "players" — the AI response about
+    // to be cleared, and the unified reader (Read Page/Chapter/Book),
+    // which belonged to the book being left. "Changes book" is one of
+    // the spec's explicit interruption triggers.
     window.speechSynthesis?.cancel();
-    pageSpeechStoppedRef.current = true;
-    setSpeechState("idle");
     aiSpeechStoppedRef.current = true;
     setAiSpeechState("idle");
     setAiVoiceNotice(null);
-    if (continuousReadScope) stopContinuousRead();
+    if (playerMode) closeReader();
 
     const urlPage = Number(searchParams.get("page"));
     let resolvedPage = 1;
@@ -2843,51 +2878,20 @@ export default function PremiumReaderPreviewContent() {
     speakNext();
   }
 
-  // "Read Page" — reads the VISIBLE BOOK PAGE verbatim (cleaned of OCR
-  // noise/math-symbol junk via sanitizeForSpeech), never an AI-generated
-  // summary and never the AI Companion's response — see "Read AI
-  // Response" below for that. Starting this stops any AI-response
-  // speech first, since only one can really be speaking at a time.
-  function stopPageSpeech() {
-    pageSpeechStoppedRef.current = true;
-    setSpeechState("idle");
-  }
+  // "Read AI Response" (below) is a separate, one-off player untouched
+  // by this unification — stopAiSpeech is still what the unified reading
+  // engine calls before it starts speaking, since both ultimately share
+  // the one browser speechSynthesis queue.
   function stopAiSpeech() {
     aiSpeechStoppedRef.current = true;
     setAiSpeechState("idle");
-  }
-  function handleReadPage() {
-    if (typeof window === "undefined") return;
-    const synth = window.speechSynthesis;
-    if (speechState === "speaking") { synth.pause(); setSpeechState("paused"); return; }
-    if (speechState === "paused")  { synth.resume(); setSpeechState("speaking"); return; }
-
-    if (continuousReadScope) stopContinuousRead();
-    stopAiSpeech();
-    synth.cancel();
-    setSpeechState("loading");
-
-    // Read ONLY the extracted page text — never the book title, header,
-    // printed page number, or any other UI label. If extraction genuinely
-    // found nothing, say exactly this and nothing else.
-    const rawText = getVisiblePageText();
-    const spokenText = rawText.trim().length > 0
-      ? sanitizeForSpeech(cleanOcrTextForAi(rawText))
-      : t.premiumReaderNoReadableText;
-    const chunks = splitIntoSpeechChunks(spokenText);
-    if (chunks.length === 0) { setSpeechState("idle"); return; }
-
-    speakSequence(chunks, null, undefined, setSpeechState, pageSpeechStoppedRef);
-  }
-  function handleStopReadAloud() {
-    stopPageSpeech();
-    window.speechSynthesis?.cancel();
   }
 
   // "Read AI Response" — reads ONLY the AI Companion's current output
   // (markdown stripped first), in the response's own language via the
   // existing response-language selector, with proper Hindi/Indic voice
-  // selection (Phase C2 fix). Starting this stops page speech first.
+  // selection (Phase C2 fix). Starting this pauses the unified reader
+  // (Read Page/Chapter/Book) first — same one-speaker-at-a-time rule.
   async function handleReadAiResponse() {
     if (typeof window === "undefined") return;
     const synth = window.speechSynthesis;
@@ -2895,8 +2899,7 @@ export default function PremiumReaderPreviewContent() {
     if (aiSpeechState === "paused")  { synth.resume(); setAiSpeechState("speaking"); return; }
     if (!aiResponse.trim() || aiLoading) return;
 
-    if (continuousReadScope) stopContinuousRead();
-    stopPageSpeech();
+    if (playerMode) pauseReader();
     synth.cancel();
     setAiVoiceNotice(null);
     setAiSpeechState("loading");
@@ -2934,67 +2937,91 @@ export default function PremiumReaderPreviewContent() {
   // splitIntoSpeechChunks. No new PDF pipeline.
   // ══════════════════════════════════════════════════════════════════
 
-  // Per-page text for reading aloud: pageTexts cache first (free/
-  // instant — the same cache AI scope and Read Page already read from),
-  // then resolvePageText's own text-layer+OCR extraction (which has its
-  // own internal cache, shared with everything else that's already
-  // OCR'd a page) for a page the user hasn't viewed yet. Populates
-  // pageTexts on a successful extraction so a later AI question or
-  // Read Page on the same page is instant too.
-  async function getPageTextForRead(pageNum: number): Promise<string> {
+  // ── Shared page-text resolution pipeline ─────────────────────────────
+  // The ONE resolver ALL THREE modes (Page/Chapter/Book) call — this is
+  // the actual fix for "Read Page says no text while Read Book reads the
+  // same page fine": Read Page used to read only from the passive
+  // pageTexts cache (embedded-text-only, populated by the page renderer
+  // as it draws pages), with no OCR fallback at all. Order, per spec:
+  //   1. Valid cached text (pageTexts) — free/instant.
+  //   2. Embedded PDF text (resolvePageText's own getSelectableText).
+  //   3. OCR fallback, ONLY if embedded text was empty — resolvePageText
+  //      already sequences this correctly and cleans the OCR result
+  //      (cleanOcrText) before caching it.
+  //   4. A typed "none" result if both genuinely failed — callers must
+  //      treat this as "no text," never speak an empty string silently.
+  // Caching is book-scoped: resolvePageText's own cache key is
+  // `${pdfPath}::${page}` (lib/premium-reader/pageTextExtractor.ts), and
+  // pageTexts itself is fully cleared on every book change (see the
+  // page/book-change effect), so neither cache can ever leak text from
+  // one book into another.
+  async function resolveReadingPageText(pageNum: number): Promise<PageTextResolution> {
     const cached = pageTexts[pageNum];
-    if (cached && cached.trim().length > 0) return cached;
+    if (cached && cached.trim().length > 0) return { text: cached, source: "cache" };
     try {
       const pdf = await getSharedPdfDocument();
-      const { text } = await resolvePageText(pdf, currentBook.pdf, pageNum);
+      const { text, source } = await resolvePageText(pdf, currentBook.pdf, pageNum);
       if (text && text.trim().length > 0) {
         setPageTexts(prev => (prev[pageNum] ? prev : { ...prev, [pageNum]: text }));
+        return { text, source };
       }
-      return text || "";
+      return { text: "", source: "none" };
     } catch {
-      return "";
+      return { text: "", source: "none" };
     }
   }
-  // Kicks off extraction for the NEXT page in the background while the
-  // current one is still speaking, so by the time the engine actually
-  // reaches it there's no extraction delay between the auto page-turn
-  // and speech continuing.
+  // Kicks off extraction for the NEXT page in the background — but only
+  // ever called AFTER the current page's first utterance has actually
+  // started (see startReading's onFirstAudibleStart below), never
+  // before, so preload can never compete with or delay current speech.
   function preloadPageText(pageNum: number) {
     if (nextPageTextCacheRef.current?.page === pageNum) return;
-    nextPageTextCacheRef.current = { page: pageNum, promise: getPageTextForRead(pageNum) };
+    nextPageTextCacheRef.current = { page: pageNum, promise: resolveReadingPageText(pageNum) };
   }
-  async function getPageTextWithPreload(pageNum: number): Promise<string> {
+  async function getPageTextWithPreload(pageNum: number): Promise<PageTextResolution> {
     if (nextPageTextCacheRef.current?.page === pageNum) {
       const { promise } = nextPageTextCacheRef.current;
       nextPageTextCacheRef.current = null;
       return promise;
     }
-    return getPageTextForRead(pageNum);
+    return resolveReadingPageText(pageNum);
   }
 
   // Promise-based chunk speaker (speakSequence above is callback/state-
   // driven only, no way to await completion) — resolves once every
   // chunk has finished, OR immediately once stopped/superseded (checked
   // via BOTH the stoppedRef flag and a generation token, since a brand
-  // new continuous-read session bumping the token is exactly as valid a
-  // "stop the old one" signal as an explicit Stop tap).
+  // new reading session bumping the token is exactly as valid a "stop
+  // the old one" signal as an explicit Close tap).
   //
-  // UX polish: reads continuousReadSpeedRef.current (not a `speed`
-  // parameter captured once at call time) for EVERY utterance, and
-  // stashes its own speakCurrent closure in speakCurrentChunkFnRef so
-  // restartCurrentChunkAtNewSpeed (below) can re-invoke the EXACT SAME
-  // continuation — same chunk index, same eventual `resolve` — instead
-  // of running a second, parallel chain that would never settle this
-  // promise. The chosen restart granularity is "current sentence," not
-  // word-level (not recoverable from the Web Speech API once an
-  // utterance is cancelled) — the task's own spec allows "where possible".
+  // Reads playerSpeedRef.current (not a `speed` parameter captured once
+  // at call time) for EVERY utterance, and stashes its own speakCurrent
+  // closure in speakCurrentChunkFnRef so restartCurrentChunkAtNewSpeed
+  // (below) can re-invoke the EXACT SAME continuation — same chunk
+  // index, same eventual `resolve` — instead of running a second,
+  // parallel chain that would never settle this promise. The chosen
+  // restart granularity is "current sentence," not word-level (not
+  // recoverable from the Web Speech API once an utterance is cancelled).
+  //
+  // onFirstAudibleStart fires once, for chunk index 0 of THIS call only
+  // — on the browser's real 'start' event when available (fires once
+  // audio genuinely begins), with a short fallback timer in case a
+  // browser/environment never fires it, so playerStatus can never get
+  // stuck on "starting" and next-page preload always eventually arms.
   function speakChunksContinuous(
     chunks: string[], stoppedRef: { current: boolean },
-    token: number, tokenRef: { current: number }
+    token: number, tokenRef: { current: number },
+    onFirstAudibleStart?: () => void
   ): Promise<void> {
     return new Promise((resolve) => {
       const synth = window.speechSynthesis;
       chunkStateRef.current = { chunks, index: 0 };
+      let firstStartFired = false;
+      function fireFirstStartOnce() {
+        if (firstStartFired) return;
+        firstStartFired = true;
+        onFirstAudibleStart?.();
+      }
       function speakCurrent() {
         const state = chunkStateRef.current;
         if (!state || stoppedRef.current || tokenRef.current !== token) {
@@ -3011,7 +3038,17 @@ export default function PremiumReaderPreviewContent() {
         }
         const mySession = ++chunkSessionRef.current;
         const utt = new SpeechSynthesisUtterance(state.chunks[state.index]);
-        utt.rate = continuousReadSpeedRef.current;
+        utt.rate = playerSpeedRef.current;
+        if (state.index === 0) {
+          utt.onstart = fireFirstStartOnce;
+          // Fallback: not every browser/environment reliably fires
+          // 'start' — this guarantees playerStatus still advances
+          // "starting" → "playing" (and next-page preload still arms)
+          // within a bounded time even then, while still preferring the
+          // real event when it does fire (fires within a few ms on a
+          // real device).
+          setTimeout(fireFirstStartOnce, 150);
+        }
         utt.onend = () => {
           // A speed-triggered restart bumps chunkSessionRef and starts a
           // fresh utterance before this one's onend/onerror can fire —
@@ -3038,16 +3075,16 @@ export default function PremiumReaderPreviewContent() {
     });
   }
 
-  // UX polish: called from the speed <select>'s onChange while actively
-  // speaking — cancels the currently-playing utterance and immediately
-  // re-invokes the SAME speakCurrent closure speakChunksContinuous is
-  // already running (same chunk index, same continuation/resolve), just
-  // with a fresh utterance built from the new continuousReadSpeedRef
-  // value. While paused/loading/idle there's nothing in-flight to
-  // restart; the new rate simply applies to whichever utterance starts
-  // next (resume, or the next chunk/page).
+  // Called from the speed <select>'s onChange while actively playing —
+  // cancels the currently-playing utterance and immediately re-invokes
+  // the SAME speakCurrent closure speakChunksContinuous is already
+  // running (same chunk index, same continuation/resolve), just with a
+  // fresh utterance built from the new playerSpeedRef value. While
+  // paused/starting/idle there's nothing in-flight to restart; the new
+  // rate simply applies to whichever utterance starts next (resume, or
+  // the next chunk/page).
   function restartCurrentChunkAtNewSpeed() {
-    if (continuousReadState !== "speaking" || !chunkStateRef.current || !speakCurrentChunkFnRef.current) return;
+    if (playerStatus !== "playing" || !chunkStateRef.current || !speakCurrentChunkFnRef.current) return;
     chunkSessionRef.current += 1; // invalidate the outgoing utterance's handlers before cancelling it
     window.speechSynthesis.cancel();
     speakCurrentChunkFnRef.current();
@@ -3119,61 +3156,102 @@ export default function PremiumReaderPreviewContent() {
       // page. If that scan also can't find a boundary, the timer simply
       // has nothing to trigger on (never invents one) — reading
       // continues normally to the end of the book.
-      const target = continuousReadScope === "chapter" && continuousReadEndPage != null
-        ? continuousReadEndPage
+      const target = playerMode === "chapter" && playerEndPage != null
+        ? playerEndPage
         : await findChapterEndPage(readerPage);
       sleepTimerEndPageRef.current = target;
       return;
     }
     const minutes = Number(option);
-    sleepTimerHandleRef.current = setTimeout(() => stopContinuousRead(), minutes * 60 * 1000);
+    sleepTimerHandleRef.current = setTimeout(() => closeReader(), minutes * 60 * 1000);
   }
 
-  // ── Core engine ───────────────────────────────────────────────────
-  function stopContinuousRead() {
-    // Guards on the REF, not the continuousReadScope state directly —
-    // this function is called from the accessibility-panel-state window
+  // ── Unified reading engine core ────────────────────────────────────
+  // Close ends the session entirely: cancels speech, hides the player,
+  // clears transient error/menu state. Page-level Read Book progress is
+  // DELIBERATELY left alone here (only a natural full-book completion
+  // clears it, below) — per spec, Close must preserve it for later
+  // resume, exactly like every other interruption already does.
+  function closeReader() {
+    // Guards on the REF, not the playerMode state directly — this
+    // function is called from the accessibility-panel-state window
     // listener, which is registered once on mount ([] deps) and so
     // always invokes whichever closure existed at that first render.
-    // continuousReadScopeRef is kept fresh independently (see the effect
-    // by its declaration) specifically so a state check here can't ever
-    // read a permanently-stale "null" and silently no-op.
-    if (continuousReadScopeRef.current === null) return;
-    continuousReadStoppedRef.current = true;
-    continuousReadTokenRef.current += 1;
+    // playerModeRef is kept fresh independently (see the effect by its
+    // declaration) specifically so a state check here can't ever read a
+    // permanently-stale "null" and silently no-op.
+    if (playerModeRef.current === null) return;
+    readerStoppedRef.current = true;
+    readerTokenRef.current += 1;
     window.speechSynthesis?.cancel();
-    setContinuousReadState("idle");
-    setContinuousReadScope(null);
-    setContinuousReadEndPage(null);
-    continuousExpectedPageRef.current = null;
+    setPlayerStatus("idle");
+    setPlayerMode(null);
+    setPlayerEndPage(null);
+    setPlayerErrorMessage(null);
+    setPlayerMinimized(false);
+    readerExpectedPageRef.current = null;
     nextPageTextCacheRef.current = null;
     chunkStateRef.current = null;
     speakCurrentChunkFnRef.current = null;
     clearSleepTimer();
     setSleepTimerOption("off");
   }
-  function pauseContinuousRead() {
+  // Pause/Resume use the browser's own most direct pause/resume — no
+  // extraction, no OCR, no rebuilt speech pipeline, so Resume is instant
+  // and continues from the exact same utterance (mobile Safari's own
+  // limits on how long a pause can be held aside — outside this app's
+  // control, and the chunk-level restart machinery above already covers
+  // the one case genuinely within it: a live SPEED change).
+  function pauseReader() {
     window.speechSynthesis?.pause();
-    setContinuousReadState("paused");
+    setPlayerStatus("paused");
   }
-  function resumeContinuousReadPlayback() {
+  function resumeReader() {
     window.speechSynthesis?.resume();
-    setContinuousReadState("speaking");
+    setPlayerStatus("playing");
+  }
+  function togglePlayerMinimized() {
+    setPlayerMinimized((v) => !v);
   }
 
-  async function runContinuousRead(scopeKind: ContinuousReadScope, startPage: number, endPage: number) {
-    // Only one "player" speaks at a time — starting continuous read
-    // stops Read Page and Read AI Response exactly like starting either
-    // of those already stops the other.
-    stopPageSpeech();
+  // Mobile shows the full inline error state (message + Retry + Close,
+  // +Skip Page for Read Book); desktop has no player card to show that
+  // in, so it falls back to speaking the same honest fallback message
+  // Read Page always used to, then returns to idle — unchanged desktop
+  // behavior, just routed through the same engine/token machinery.
+  function enterReadingError(token: number) {
+    if (readerTokenRef.current !== token) return;
+    if (!isMobileViewport) {
+      const chunks = splitIntoSpeechChunks(t.premiumReaderNoReadableText);
+      const finish = () => { if (readerTokenRef.current === token) { setPlayerStatus("idle"); setPlayerMode(null); setPlayerEndPage(null); } };
+      if (chunks.length > 0) speakChunksContinuous(chunks, readerStoppedRef, token, readerTokenRef).then(finish);
+      else finish();
+      return;
+    }
+    window.speechSynthesis?.cancel();
+    setPlayerStatus("error");
+    setPlayerErrorMessage(t.premiumReaderNoReadableTextOnPage);
+  }
+
+  // The ONE entry point Read Page, Read Chapter and Read Book all call.
+  // mode "page" is simply startPage === endPage — no other special-
+  // casing exists anywhere below; the loop naturally speaks one page and
+  // stops. Player appears (playerMode/playerStatus "starting") the
+  // instant this is called, per spec — never after extraction completes.
+  async function startReading({ mode, startPage, endPage }: { mode: ReadMode; startPage: number; endPage: number }) {
+    // Only one "player" speaks at a time — starting a reading session
+    // pauses Read AI Response exactly like starting that already pauses
+    // this (see handleReadAiResponse above).
     stopAiSpeech();
     window.speechSynthesis?.cancel();
 
-    const token = ++continuousReadTokenRef.current;
-    continuousReadStoppedRef.current = false;
-    setContinuousReadScope(scopeKind);
-    setContinuousReadEndPage(endPage);
-    setContinuousReadState("loading");
+    lastReadingRequestRef.current = { mode, startPage, endPage };
+    const token = ++readerTokenRef.current;
+    readerStoppedRef.current = false;
+    setPlayerMode(mode);
+    setPlayerEndPage(endPage);
+    setPlayerStatus("starting");
+    setPlayerErrorMessage(null);
     setReadMenuOpen(false);
 
     let page = startPage;
@@ -3182,69 +3260,110 @@ export default function PremiumReaderPreviewContent() {
     // the first auto-turn meant a manual page change made BEFORE that
     // first turn went undetected, since the interruption effect only
     // checks readerPage against this ref when it's non-null.
-    continuousExpectedPageRef.current = page;
+    readerExpectedPageRef.current = page;
     if (page !== readerPage) {
       navigateToPdfPage(page);
       await new Promise((r) => setTimeout(r, 250)); // let the jump settle before extracting/speaking
     }
 
     while (page <= endPage) {
-      if (continuousReadStoppedRef.current || continuousReadTokenRef.current !== token) return;
-      setContinuousReadState("loading");
-      const rawText = await getPageTextWithPreload(page);
-      if (continuousReadTokenRef.current !== token) return;
+      if (readerStoppedRef.current || readerTokenRef.current !== token) return;
+      setPlayerStatus("starting");
+      const resolution = await getPageTextWithPreload(page);
+      if (readerTokenRef.current !== token) return;
 
       // Page-level resume, persisted BEFORE speaking starts — so even if
       // the tab closes mid-page, resume lands on this page, never a
       // half-read one silently skipped.
-      if (scopeKind === "book") saveReadBookResume(bookId, page);
+      if (mode === "book") saveReadBookResume(bookId, page);
 
-      const spoken = rawText.trim().length > 0 ? sanitizeForSpeech(cleanOcrTextForAi(rawText)) : "";
-      const chunks = spoken ? splitIntoSpeechChunks(spoken) : [];
-      if (page < endPage) preloadPageText(page + 1);
+      if (resolution.text.trim().length === 0) { enterReadingError(token); return; }
+      const spoken = sanitizeForSpeech(cleanOcrTextForAi(resolution.text));
+      const chunks = splitIntoSpeechChunks(spoken);
+      if (chunks.length === 0) { enterReadingError(token); return; }
 
-      setContinuousReadState("speaking");
-      if (chunks.length > 0) {
-        await speakChunksContinuous(chunks, continuousReadStoppedRef, token, continuousReadTokenRef);
-      }
-      if (continuousReadStoppedRef.current || continuousReadTokenRef.current !== token) return;
+      await speakChunksContinuous(chunks, readerStoppedRef, token, readerTokenRef, () => {
+        // Fires once, right as this page's speech genuinely becomes
+        // audible — never before. Only NOW does status flip to
+        // "playing" and next-page preload arm, per spec: preload must
+        // never compete with or delay the current page's speech start.
+        if (readerTokenRef.current !== token) return;
+        setPlayerStatus("playing");
+        if (page < endPage) preloadPageText(page + 1);
+      });
+      if (readerStoppedRef.current || readerTokenRef.current !== token) return;
 
-      if (sleepTimerEndPageRef.current !== null && page >= sleepTimerEndPageRef.current) { stopContinuousRead(); return; }
+      if (sleepTimerEndPageRef.current !== null && page >= sleepTimerEndPageRef.current) { closeReader(); return; }
       if (page >= endPage) break;
 
       page += 1;
-      continuousExpectedPageRef.current = page;
+      readerExpectedPageRef.current = page;
       navigateToPdfPage(page);
       await new Promise((r) => setTimeout(r, 200)); // brief settle before the next page's text/render
     }
 
-    if (continuousReadTokenRef.current === token) {
-      if (scopeKind === "book") clearReadBookResume(bookId);
-      setContinuousReadState("idle");
-      setContinuousReadScope(null);
-      setContinuousReadEndPage(null);
-      continuousExpectedPageRef.current = null;
+    if (readerTokenRef.current === token) {
+      if (mode === "book") clearReadBookResume(bookId);
+      readerExpectedPageRef.current = null;
       clearSleepTimer();
       setSleepTimerOption("off");
+      if (mode === "page") {
+        // A single page read is a quick one-shot action, not an ongoing
+        // session — return fully to idle rather than lingering as
+        // "completed" (that status is for Chapter/Book reaching their
+        // own natural end, where the player stays up so the user can
+        // see it finished and decide what's next).
+        setPlayerStatus("idle");
+        setPlayerMode(null);
+        setPlayerEndPage(null);
+      } else {
+        setPlayerStatus("completed");
+      }
     }
+  }
+
+  // Re-runs the exact last startReading(...) request — used by the
+  // error state's Retry action.
+  function retryReader() {
+    const req = lastReadingRequestRef.current;
+    if (!req) { closeReader(); return; }
+    startReading(req);
+  }
+  // Read Book only, from the error state: skips past whatever page just
+  // failed and restarts the engine fresh from the next one. readerPage
+  // already reflects the failed page — the engine always navigates to a
+  // page before attempting to resolve its text.
+  function skipFailedPageInBook() {
+    const req = lastReadingRequestRef.current;
+    if (!req || req.mode !== "book") return;
+    const nextPage = readerPage + 1;
+    if (nextPage > req.endPage) { closeReader(); return; }
+    startReading({ mode: "book", startPage: nextPage, endPage: req.endPage });
   }
 
   // ── Read menu actions ────────────────────────────────────────────
   function startReadPageFromMenu() {
     setReadMenuOpen(false);
-    handleReadPage();
+    startReading({ mode: "page", startPage: readerPage, endPage: readerPage });
   }
   async function startReadChapter() {
     setReadMenuOpen(false);
-    if (continuousReadScope) stopContinuousRead();
-    setContinuousReadState("loading");
+    if (playerMode) closeReader();
+    // Player appears immediately, even during the heading scan below —
+    // per spec, the user should never stare at an unresponsive screen
+    // while chapter-boundary detection (up to CHAPTER_HEADING_SCAN_CAP
+    // pages) runs.
+    setPlayerMode("chapter");
+    setPlayerStatus("starting");
+    setPlayerErrorMessage(null);
     const endPage = await findChapterEndPage(readerPage);
     if (endPage === null || endPage <= readerPage) {
-      setContinuousReadState("idle");
+      setPlayerStatus("idle");
+      setPlayerMode(null);
       setChapterUnavailableOpen(true);
       return;
     }
-    runContinuousRead("chapter", readerPage, endPage);
+    startReading({ mode: "chapter", startPage: readerPage, endPage });
   }
   function startReadBook() {
     setReadMenuOpen(false);
@@ -3253,28 +3372,30 @@ export default function PremiumReaderPreviewContent() {
       setResumePromptPage(resume.page);
       return;
     }
-    runContinuousRead("book", readerPage, totalPages);
+    startReading({ mode: "book", startPage: readerPage, endPage: totalPages });
   }
   function confirmResumeFromSaved() {
     const p = resumePromptPage;
     setResumePromptPage(null);
-    if (p) runContinuousRead("book", p, totalPages);
+    if (p) startReading({ mode: "book", startPage: p, endPage: totalPages });
   }
   function confirmStartFromCurrentPage() {
     setResumePromptPage(null);
-    runContinuousRead("book", readerPage, totalPages);
+    startReading({ mode: "book", startPage: readerPage, endPage: totalPages });
   }
   function continueBookAfterChapterUnavailable() {
+    // Closes the dialog, then invokes the SAME startReadBook() Read Book
+    // itself uses — same function, no second menu interaction, player
+    // appears immediately (or the resume prompt does, exactly as if the
+    // user had picked Read Book directly).
     setChapterUnavailableOpen(false);
     startReadBook();
   }
+  // Header's quick-access red button (portrait/landscape/desktop) —
+  // pauses the active session without destroying it, mirroring the
+  // player's own Pause control.
   function handleStopAnyReadAloud() {
-    // UX polish: the header's Stop button mirrors the floating player's
-    // own Stop (which now pauses, not tears down — see the player's ⏹
-    // button comment). Read Page's own Stop is untouched — it has no
-    // "player" to keep alive, so it stays a true stop.
-    if (continuousReadScope) pauseContinuousRead();
-    else handleStopReadAloud();
+    pauseReader();
   }
 
   // ── Voice Assistant integration ─────────────────────────────────────
@@ -3282,23 +3403,28 @@ export default function PremiumReaderPreviewContent() {
   // imports anything from this file — it only ever broadcasts a
   // "ndl-voice-command" CustomEvent on window. This is the ONLY place
   // that turns that event into calls to this reader's OWN existing
-  // functions (goNext, fitScreen, handleReadPage, runQuickAction, …).
-  // Nothing about page rendering or the page-turn engine itself changes.
+  // functions (goNext, fitScreen, startReadPageFromMenu, runQuickAction,
+  // …). Nothing about page rendering or the page-turn engine itself
+  // changes. Voice "read"/"pause"/"resume"/"stop" now drive the SAME
+  // unified reading engine everything else does — "read" always means
+  // Read Page (a single explicit voice phrase never implies Chapter/
+  // Book's multi-page scope), "stop" fully closes (matching the literal
+  // word), "pause"/"resume" mirror the player's own controls.
   //
   // A ref kept fresh every render (rather than depending on these
   // functions directly) means the listener below can be registered ONCE
   // on mount without ever acting on stale state — the same stale-closure
   // pitfall already fixed in AccessibilityToolbar's font-size buttons.
   const voiceStateRef = useRef({
-    speechState, language,
+    playerMode, playerStatus, language,
     goNext, goPrev, goToPage, setZoom, fitScreen,
-    handleReadPage, handleStopReadAloud, runQuickAction, setLanguage,
+    startReadPageFromMenu, pauseReader, resumeReader, closeReader, runQuickAction, setLanguage,
   });
   useEffect(() => {
     voiceStateRef.current = {
-      speechState, language,
+      playerMode, playerStatus, language,
       goNext, goPrev, goToPage, setZoom, fitScreen,
-      handleReadPage, handleStopReadAloud, runQuickAction, setLanguage,
+      startReadPageFromMenu, pauseReader, resumeReader, closeReader, runQuickAction, setLanguage,
     };
   });
 
@@ -3320,10 +3446,10 @@ export default function PremiumReaderPreviewContent() {
           case "fitPage": v.fitScreen(); break;
           case "fullscreen": if (!document.fullscreenElement) document.documentElement.requestFullscreen?.(); break;
           case "exitFullscreen": if (document.fullscreenElement) document.exitFullscreen(); break;
-          case "read": if (v.speechState === "idle") v.handleReadPage(); break;
-          case "pause": if (v.speechState === "speaking") v.handleReadPage(); break;
-          case "resume": if (v.speechState === "paused") v.handleReadPage(); break;
-          case "stop": v.handleStopReadAloud(); break;
+          case "read": if (v.playerMode === null) v.startReadPageFromMenu(); break;
+          case "pause": if (v.playerStatus === "playing") v.pauseReader(); break;
+          case "resume": if (v.playerStatus === "paused") v.resumeReader(); break;
+          case "stop": v.closeReader(); break;
         }
       } else if (detail.kind === "ai") {
         const lang = v.language;
@@ -3955,10 +4081,23 @@ export default function PremiumReaderPreviewContent() {
     );
   }
 
-  const readLabel = speechState === "loading" ? `⏳ ${t.readerPreparing}`
-    : speechState === "speaking" ? `⏸ ${t.premiumReaderPause}`
-    : speechState === "paused"   ? `▶ ${t.premiumReaderResume}`
+  // Desktop's single button doubles as "start" and "toggle pause/resume"
+  // — only meaningful for its OWN mode ("page"); if Chapter/Book were
+  // ever started some other way while on desktop, this button still
+  // reads as idle/ready rather than misreporting a different mode's
+  // state as its own.
+  const isDesktopReaderOnPage = playerMode === "page";
+  const readLabel = isDesktopReaderOnPage && playerStatus === "starting" ? `⏳ ${t.readerPreparing}`
+    : isDesktopReaderOnPage && playerStatus === "playing" ? `⏸ ${t.premiumReaderPause}`
+    : isDesktopReaderOnPage && playerStatus === "paused"  ? `▶ ${t.premiumReaderResume}`
     : `🔊 ${t.premiumReaderReadPage}`;
+  function handleDesktopReadPageClick() {
+    if (isDesktopReaderOnPage) {
+      if (playerStatus === "playing") { pauseReader(); return; }
+      if (playerStatus === "paused") { resumeReader(); return; }
+    }
+    startReading({ mode: "page", startPage: readerPage, endPage: readerPage });
+  }
 
   // Printed-page label — the SAME pure lookup PdfBookSpread used to do
   // internally (Phase C3 moved the surrounding chrome, not the lookup
@@ -4099,13 +4238,13 @@ export default function PremiumReaderPreviewContent() {
                   no control is removed. ──────────────────────────────────── */}
               <div className={`mx-auto ${fsBarGapY} flex w-full max-w-[1340px] flex-shrink-0 flex-wrap items-center ${fsGroupGap} px-1`}>
                 <div className="flex items-center gap-1.5">
-                  <button onClick={handleReadPage} disabled={speechState === "loading"}
+                  <button onClick={handleDesktopReadPageClick} disabled={isDesktopReaderOnPage && playerStatus === "starting"}
                     title={t.premiumReaderReadPageTitle}
                     className={`ndl-press inline-flex ${fsBtnH} items-center gap-1.5 rounded-full bg-slate-900 px-4 ${fsBtnText} font-bold text-white shadow hover:bg-slate-800 disabled:opacity-50`}>
                     {readLabel}
                   </button>
-                  {(speechState === "speaking" || speechState === "paused") && (
-                    <button onClick={handleStopReadAloud}
+                  {isDesktopReaderOnPage && (playerStatus === "playing" || playerStatus === "paused") && (
+                    <button onClick={closeReader}
                       className={`ndl-press inline-flex ${fsBtnH} items-center gap-1.5 rounded-full bg-red-600 px-4 ${fsBtnText} font-bold text-white shadow hover:bg-red-700`}>⏹ {t.premiumReaderStop}</button>
                   )}
                 </div>
@@ -4214,12 +4353,13 @@ export default function PremiumReaderPreviewContent() {
                     </button>
                   )}
                   {/* Enhanced Read Aloud: "Read Page" replaced with a Read
-                      menu (Page/Chapter/Book) per spec — Read Page itself
-                      is byte-for-byte unchanged (startReadPageFromMenu just
-                      closes the menu and calls the original handleReadPage).
-                      The icon reflects whichever of the three "players"
-                      (page speech, AI speech is separate, continuous read)
-                      is currently active. */}
+                      menu (Page/Chapter/Book) per spec — all three now
+                      call the SAME unified startReading engine
+                      (startReadPageFromMenu just closes the menu and
+                      calls it with mode "page"). The icon reflects
+                      playerStatus, whichever of the three modes is
+                      currently active (Read AI Response is separate,
+                      untouched). */}
                   {/* P0 regression fix: right-anchored (not left-anchored)
                       since this trigger sits in the right portion of the
                       header (title has flex-1, pushing everything after
@@ -4230,13 +4370,13 @@ export default function PremiumReaderPreviewContent() {
                       the outside-click/Escape/rotation/panel-open effects
                       above, all of which close this via plain state. */}
                   <div ref={readMenuRef} className="relative flex-shrink-0">
-                    <button onClick={() => setReadMenuOpen((v) => !v)} disabled={speechState === "loading"}
+                    <button onClick={() => setReadMenuOpen((v) => !v)} disabled={playerStatus === "starting"}
                       title={t.premiumReaderReadMenu} aria-label={t.premiumReaderReadMenu}
                       aria-haspopup="menu" aria-expanded={readMenuOpen}
                       className="ndl-press inline-flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-slate-900 text-sm text-white shadow hover:bg-slate-800 disabled:opacity-50">
-                      {speechState === "loading" || continuousReadState === "loading" ? "⏳"
-                        : speechState === "speaking" || continuousReadState === "speaking" ? "⏸"
-                        : speechState === "paused" || continuousReadState === "paused" ? "▶" : "🔊"}
+                      {playerStatus === "starting" ? "⏳"
+                        : playerStatus === "playing" ? "⏸"
+                        : playerStatus === "paused" ? "▶" : "🔊"}
                     </button>
                     {readMenuOpen && (
                       <div
@@ -4258,10 +4398,10 @@ export default function PremiumReaderPreviewContent() {
                       </div>
                     )}
                   </div>
-                  {(speechState === "speaking" || speechState === "paused" || continuousReadScope) && (
+                  {(playerStatus === "playing" || playerStatus === "paused") && (
                     <button onClick={handleStopAnyReadAloud}
-                      title={continuousReadScope ? t.premiumReaderPause : t.premiumReaderStop}
-                      aria-label={continuousReadScope ? t.premiumReaderPause : t.premiumReaderStop}
+                      title={t.premiumReaderPause}
+                      aria-label={t.premiumReaderPause}
                       className="ndl-press inline-flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-red-600 text-xs font-bold text-white shadow hover:bg-red-700">⏹</button>
                   )}
                   <button onClick={toggleBookmarkCurrentPage}
@@ -4332,13 +4472,13 @@ export default function PremiumReaderPreviewContent() {
                         right-anchoring plus the viewport clamp keeps the
                         dropdown on-screen regardless. */}
                     <div ref={readMenuRef} className="relative flex-shrink-0">
-                      <button onClick={() => setReadMenuOpen((v) => !v)} disabled={speechState === "loading"}
+                      <button onClick={() => setReadMenuOpen((v) => !v)} disabled={playerStatus === "starting"}
                         title={t.premiumReaderReadMenu} aria-label={t.premiumReaderReadMenu}
                         aria-haspopup="menu" aria-expanded={readMenuOpen}
                         className="ndl-press flex h-7 w-7 items-center justify-center rounded-full text-[13px] text-amber-100/80 hover:bg-white/10 disabled:opacity-40">
-                        {speechState === "loading" || continuousReadState === "loading" ? "⏳"
-                          : speechState === "speaking" || continuousReadState === "speaking" ? "⏸"
-                          : speechState === "paused" || continuousReadState === "paused" ? "▶" : "🔊"}
+                        {playerStatus === "starting" ? "⏳"
+                          : playerStatus === "playing" ? "⏸"
+                          : playerStatus === "paused" ? "▶" : "🔊"}
                       </button>
                       {readMenuOpen && (
                         <div
@@ -4361,113 +4501,183 @@ export default function PremiumReaderPreviewContent() {
                         </div>
                       )}
                     </div>
-                    {(speechState === "speaking" || speechState === "paused" || continuousReadScope) && (
+                    {(playerStatus === "playing" || playerStatus === "paused") && (
                       <button onClick={handleStopAnyReadAloud}
-                        title={continuousReadScope ? t.premiumReaderPause : t.premiumReaderStop}
-                        aria-label={continuousReadScope ? t.premiumReaderPause : t.premiumReaderStop}
+                        title={t.premiumReaderPause}
+                        aria-label={t.premiumReaderPause}
                         className="ndl-press flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full text-[13px] text-amber-100/80 hover:bg-white/10">⏹</button>
                     )}
                   </div>
                 </div>
               )}
 
-              {/* ── Enhanced Read Aloud: compact floating Reading Player —
-                  only while Read Chapter/Read Book is active. Deliberately
-                  ALWAYS fully visible/interactive (not tied to
-                  mobileChromeCls's tap-to-reveal/auto-hide) — a control
-                  surface for a session already in progress shouldn't
-                  itself require finding it first. Sits above the bottom
-                  dock so it never overlaps those buttons.
-                  UX polish (information hierarchy): a two-row card — a
-                  primary Play/Pause + "Reading Book"/page-progress row,
-                  then a Speed/Sleep controls row — replacing the old
-                  single crowded pill. Same dark glass surface, same
-                  z-40/bottom offset/safe-area handling, same
-                  pause/resume/speed/sleep functions underneath (zero
-                  reading-logic changes, purely presentational). The old
-                  second red "Stop" button is dropped — it only ever
-                  called pauseContinuousRead too, identically to the
-                  toggle button beside it, so it was pure duplication;
-                  the reader header's own Stop button (unaffected by this
-                  task's scope) still offers that same action elsewhere. */}
-              {continuousReadScope && (
+              {/* ── Unified Reading Engine: persistent Reading Player —
+                  shown for ALL THREE modes (Page/Chapter/Book), not just
+                  Chapter/Book. Deliberately ALWAYS fully visible/
+                  interactive (not tied to mobileChromeCls's tap-to-
+                  reveal/auto-hide) — a control surface for a session
+                  already in progress shouldn't itself require finding it
+                  first. Sits above the bottom dock so it never overlaps
+                  those buttons. Three layouts share this one mount point:
+                  the full player, the compact mini-player (Minimize),
+                  and an inline error card (Retry/Skip Page/Close) — never
+                  three separate components, just conditional content
+                  inside the same shell, so playback state is never
+                  destroyed switching between them. */}
+              {playerMode && (
                 <div
                   className="pointer-events-none fixed inset-x-0 z-40 flex justify-center"
-                  // UX polish (responsive fix): the two-row card is taller
-                  // than the old single-row pill, and this wrapper's
-                  // `bottom` offset pins the CARD'S BOTTOM edge, not its
-                  // top — so a taller card needs MORE clearance from the
-                  // bottom dock here, not less. Verified against the
-                  // dock's real on-screen rect: 5rem leaves a clear gap
-                  // in both portrait and landscape.
+                  // The two-row full player is taller than a single-row
+                  // pill, and this wrapper's `bottom` offset pins the
+                  // CARD'S BOTTOM edge, not its top — so it needs real
+                  // clearance from the bottom dock here. Verified against
+                  // the dock's real on-screen rect: 5rem leaves a clear
+                  // gap in both portrait and landscape, and the (shorter)
+                  // mini-player only ever needs LESS room, never more.
                   style={{ bottom: "calc(5rem + env(safe-area-inset-bottom))" }}
                 >
-                  <div
-                    className="ndl-fade-in-scale pointer-events-auto flex w-[272px] max-w-[92vw] flex-col gap-2.5 rounded-[26px] px-4 py-3 backdrop-blur-2xl shadow-lg"
-                    style={{ background: "rgba(15,13,11,0.92)", border: "1px solid rgba(212,175,110,0.22)", boxShadow: "0 12px 32px rgba(0,0,0,0.4)" }}
-                  >
-                    <div className="flex items-center gap-3">
-                      <button
-                        onClick={() => (continuousReadState === "speaking" ? pauseContinuousRead() : resumeContinuousReadPlayback())}
-                        disabled={continuousReadState === "loading"}
-                        title={continuousReadState === "speaking" ? t.premiumReaderPause : t.premiumReaderResume}
-                        aria-label={continuousReadState === "speaking" ? t.premiumReaderPause : t.premiumReaderResume}
-                        className="ndl-press flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-full bg-white/15 text-lg text-amber-50 hover:bg-white/25 disabled:opacity-40"
-                      >
-                        {continuousReadState === "loading" ? "⏳" : continuousReadState === "speaking" ? "⏸" : "▶"}
-                      </button>
-                      <div className="min-w-0 flex-1">
-                        <div className="truncate text-[13px] font-bold leading-tight text-amber-50">
-                          {continuousReadScope === "book" ? t.premiumReaderReadingBook : t.premiumReaderReadingChapter}
-                        </div>
-                        <div className="truncate text-[11px] font-medium leading-tight text-amber-100/65 tabular-nums">
-                          {t.premiumReaderPageXofY
-                            .replace("{page}", String(displayLabel || readerPage))
-                            .replace("{total}", String(totalPages))}
-                        </div>
+                  {playerStatus === "error" ? (
+                    // ── Error state — "Do not silently hang": shown
+                    // inline in the SAME player shell so it survives no
+                    // matter how the failure was reached, with the exact
+                    // required message, Retry, Close, and — Read Book
+                    // only — Skip Page.
+                    <div
+                      className="ndl-fade-in-scale pointer-events-auto flex w-[272px] max-w-[92vw] flex-col gap-2.5 rounded-[26px] px-4 py-3 backdrop-blur-2xl shadow-lg"
+                      style={{ background: "rgba(15,13,11,0.92)", border: "1px solid rgba(212,175,110,0.22)", boxShadow: "0 12px 32px rgba(0,0,0,0.4)" }}
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <p className="text-[12px] font-semibold leading-snug text-amber-50">⚠️ {playerErrorMessage}</p>
+                        <button onClick={closeReader} title={t.commonClose} aria-label={t.commonClose}
+                          className="ndl-press flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full bg-white/15 text-xs text-amber-50 hover:bg-white/25">✕</button>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button onClick={retryReader}
+                          className="ndl-press flex-1 rounded-full bg-white/15 px-3 py-1.5 text-[11px] font-bold text-amber-50 hover:bg-white/25">
+                          {t.commonRetry}
+                        </button>
+                        {playerMode === "book" && (
+                          <button onClick={skipFailedPageInBook}
+                            className="ndl-press flex-1 rounded-full bg-white/15 px-3 py-1.5 text-[11px] font-bold text-amber-50 hover:bg-white/25">
+                            {t.premiumReaderSkipPage}
+                          </button>
+                        )}
+                        <button onClick={closeReader}
+                          className="ndl-press flex-1 rounded-full bg-red-600/90 px-3 py-1.5 text-[11px] font-bold text-white hover:bg-red-600">
+                          {t.commonClose}
+                        </button>
                       </div>
                     </div>
-                    <div className="flex items-center justify-between gap-2 border-t border-white/10 pt-2.5">
-                      <select
-                        value={continuousReadSpeed}
-                        onChange={(e) => {
-                          const next = Number(e.target.value);
-                          // Applied to the ref synchronously (not just via
-                          // setState, which only reaches continuousReadSpeedRef
-                          // a render later through its own effect) so the
-                          // restart below builds its new utterance at the
-                          // right rate immediately, not the stale one.
-                          continuousReadSpeedRef.current = next;
-                          setContinuousReadSpeed(next);
-                          restartCurrentChunkAtNewSpeed();
-                        }}
-                        aria-label={t.premiumReaderPlaybackSpeed} title={t.premiumReaderPlaybackSpeed}
-                        className="ndl-chrome-fade flex-shrink-0 rounded-full border-none bg-white/15 px-2.5 py-1 text-[11px] font-bold tabular-nums text-amber-50 hover:bg-white/20"
+                  ) : playerMinimized ? (
+                    // ── Mini-player — playback is completely unaffected
+                    // by minimizing (no state here at all, just less of
+                    // it rendered); tapping the label expands back.
+                    <div
+                      className="ndl-fade-in-scale pointer-events-auto flex max-w-[92vw] items-center gap-2 rounded-full px-3 py-2 backdrop-blur-2xl shadow-lg"
+                      style={{ background: "rgba(15,13,11,0.92)", border: "1px solid rgba(212,175,110,0.22)", boxShadow: "0 12px 32px rgba(0,0,0,0.4)" }}
+                    >
+                      <button
+                        onClick={() => (playerStatus === "playing" ? pauseReader() : resumeReader())}
+                        disabled={playerStatus === "starting"}
+                        title={playerStatus === "playing" ? t.premiumReaderPause : t.premiumReaderResume}
+                        aria-label={playerStatus === "playing" ? t.premiumReaderPause : t.premiumReaderResume}
+                        className="ndl-press flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-white/15 text-sm text-amber-50 hover:bg-white/25 disabled:opacity-40"
                       >
-                        <option value={0.75}>0.75×</option>
-                        <option value={1}>1.0×</option>
-                        <option value={1.25}>1.25×</option>
-                        <option value={1.5}>1.5×</option>
-                        <option value={2}>2.0×</option>
-                      </select>
-                      {/* Sleep Timer — optional per spec, kept intentionally
-                          minimal (one native <select>) to stay compact. */}
-                      <select
-                        value={sleepTimerOption}
-                        onChange={(e) => applySleepTimer(e.target.value as SleepTimerOption)}
-                        aria-label={t.premiumReaderSleepTimer} title={t.premiumReaderSleepTimer}
-                        className="ndl-chrome-fade flex-shrink-0 rounded-full border-none bg-white/15 px-2.5 py-1 text-[10px] font-bold text-amber-50 hover:bg-white/20"
-                      >
-                        <option value="off">⏰ {t.premiumReaderSleepOff}</option>
-                        <option value="15">15 min</option>
-                        <option value="30">30 min</option>
-                        <option value="45">45 min</option>
-                        <option value="60">60 min</option>
-                        <option value="endOfChapter">{t.premiumReaderSleepEndOfChapter}</option>
-                        <option value="endOfBook">{t.premiumReaderSleepEndOfBook}</option>
-                      </select>
+                        {playerStatus === "starting" ? "⏳" : playerStatus === "playing" ? "⏸" : "▶"}
+                      </button>
+                      <button onClick={togglePlayerMinimized} title={t.premiumReaderExpand} aria-label={t.premiumReaderExpand}
+                        className="ndl-press flex min-w-0 items-center gap-1 truncate text-[11px] font-semibold text-amber-50">
+                        <span className="min-w-0 max-w-[42vw] truncate">
+                          {(playerMode === "book" ? t.premiumReaderReadingBook : playerMode === "chapter" ? t.premiumReaderReadingChapter : t.premiumReaderReadingPage)}
+                          {" · "}
+                          {playerStatus === "starting" ? t.premiumReaderStarting
+                            : playerStatus === "completed" ? t.premiumReaderCompleted
+                            : t.premiumReaderPageXofY.replace("{page}", String(displayLabel || readerPage)).replace("{total}", String(totalPages))}
+                        </span>
+                        <span aria-hidden className="flex-shrink-0 text-amber-100/70">↑</span>
+                      </button>
+                      <button onClick={closeReader} title={t.commonClose} aria-label={t.commonClose}
+                        className="ndl-press flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-white/15 text-xs text-amber-50 hover:bg-white/25">✕</button>
                     </div>
-                  </div>
+                  ) : (
+                    // ── Full player
+                    <div
+                      className="ndl-fade-in-scale pointer-events-auto flex w-[272px] max-w-[92vw] flex-col gap-2.5 rounded-[26px] px-4 py-3 backdrop-blur-2xl shadow-lg"
+                      style={{ background: "rgba(15,13,11,0.92)", border: "1px solid rgba(212,175,110,0.22)", boxShadow: "0 12px 32px rgba(0,0,0,0.4)" }}
+                    >
+                      <div className="flex items-center gap-3">
+                        <button
+                          onClick={() => (playerStatus === "playing" ? pauseReader() : resumeReader())}
+                          disabled={playerStatus === "starting"}
+                          title={playerStatus === "playing" ? t.premiumReaderPause : t.premiumReaderResume}
+                          aria-label={playerStatus === "playing" ? t.premiumReaderPause : t.premiumReaderResume}
+                          className="ndl-press flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-full bg-white/15 text-lg text-amber-50 hover:bg-white/25 disabled:opacity-40"
+                        >
+                          {playerStatus === "starting" ? "⏳" : playerStatus === "playing" ? "⏸" : "▶"}
+                        </button>
+                        <div className="min-w-0 flex-1">
+                          <div className="truncate text-[13px] font-bold leading-tight text-amber-50">
+                            {playerMode === "book" ? t.premiumReaderReadingBook : playerMode === "chapter" ? t.premiumReaderReadingChapter : t.premiumReaderReadingPage}
+                          </div>
+                          <div className="truncate text-[11px] font-medium leading-tight text-amber-100/65 tabular-nums">
+                            {playerStatus === "starting" ? t.premiumReaderStarting
+                              : playerStatus === "completed" ? t.premiumReaderCompleted
+                              : t.premiumReaderPageXofY
+                                  .replace("{page}", String(displayLabel || readerPage))
+                                  .replace("{total}", String(totalPages))}
+                          </div>
+                        </div>
+                        <div className="flex flex-shrink-0 items-center gap-1">
+                          <button onClick={togglePlayerMinimized} title={t.premiumReaderMinimize} aria-label={t.premiumReaderMinimize}
+                            className="ndl-press flex h-7 w-7 items-center justify-center rounded-full bg-white/10 text-xs text-amber-50 hover:bg-white/20">−</button>
+                          <button onClick={closeReader} title={t.commonClose} aria-label={t.commonClose}
+                            className="ndl-press flex h-7 w-7 items-center justify-center rounded-full bg-white/10 text-xs text-amber-50 hover:bg-white/20">✕</button>
+                        </div>
+                      </div>
+                      <div className="flex items-center justify-between gap-2 border-t border-white/10 pt-2.5">
+                        <select
+                          value={playerSpeed}
+                          onChange={(e) => {
+                            const next = Number(e.target.value);
+                            // Applied to the ref synchronously (not just
+                            // via setState, which only reaches
+                            // playerSpeedRef a render later through its
+                            // own effect) so the restart below builds its
+                            // new utterance at the right rate
+                            // immediately, not the stale one.
+                            playerSpeedRef.current = next;
+                            setPlayerSpeed(next);
+                            restartCurrentChunkAtNewSpeed();
+                          }}
+                          aria-label={t.premiumReaderPlaybackSpeed} title={t.premiumReaderPlaybackSpeed}
+                          className="ndl-chrome-fade flex-shrink-0 rounded-full border-none bg-white/15 px-2.5 py-1 text-[11px] font-bold tabular-nums text-amber-50 hover:bg-white/20"
+                        >
+                          <option value={0.75}>0.75×</option>
+                          <option value={1}>1.0×</option>
+                          <option value={1.25}>1.25×</option>
+                          <option value={1.5}>1.5×</option>
+                          <option value={2}>2.0×</option>
+                        </select>
+                        {/* Sleep Timer — optional per spec, kept
+                            intentionally minimal (one native <select>) to
+                            stay compact. */}
+                        <select
+                          value={sleepTimerOption}
+                          onChange={(e) => applySleepTimer(e.target.value as SleepTimerOption)}
+                          aria-label={t.premiumReaderSleepTimer} title={t.premiumReaderSleepTimer}
+                          className="ndl-chrome-fade flex-shrink-0 rounded-full border-none bg-white/15 px-2.5 py-1 text-[10px] font-bold text-amber-50 hover:bg-white/20"
+                        >
+                          <option value="off">⏰ {t.premiumReaderSleepOff}</option>
+                          <option value="15">15 min</option>
+                          <option value="30">30 min</option>
+                          <option value="45">45 min</option>
+                          <option value="60">60 min</option>
+                          <option value="endOfChapter">{t.premiumReaderSleepEndOfChapter}</option>
+                          <option value="endOfBook">{t.premiumReaderSleepEndOfBook}</option>
+                        </select>
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
 
