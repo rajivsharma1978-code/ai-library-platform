@@ -234,7 +234,7 @@ type SpeechState = "idle" | "loading" | "speaking" | "paused";
 // so starting either one cancels the other — see the top of
 // runContinuousRead/handleReadPage).
 type ContinuousReadScope = "chapter" | "book";
-type SleepTimerOption = "off" | "10" | "20" | "30" | "45" | "60" | "endOfPage" | "endOfChapter";
+type SleepTimerOption = "off" | "15" | "30" | "45" | "60" | "endOfChapter" | "endOfBook";
 
 // Page-level resume — deliberately the ONLY thing persisted (per spec:
 // no sentence position, no speech timestamps). Keyed by bookId inside one
@@ -1780,7 +1780,6 @@ export default function PremiumReaderPreviewContent() {
   // getPageTextWithPreload once the engine actually reaches that page.
   const nextPageTextCacheRef = useRef<{ page: number; promise: Promise<string> } | null>(null);
   const sleepTimerHandleRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const sleepTimerEndOfUnitRef = useRef<"page" | null>(null);
   const sleepTimerEndPageRef = useRef<number | null>(null);
   // UX polish: live playback-speed ref (always current, unlike a value
   // captured once when a page's chunk sequence started) plus the chunk-
@@ -3103,14 +3102,17 @@ export default function PremiumReaderPreviewContent() {
   // ── Sleep timer (optional) ───────────────────────────────────────
   function clearSleepTimer() {
     if (sleepTimerHandleRef.current) { clearTimeout(sleepTimerHandleRef.current); sleepTimerHandleRef.current = null; }
-    sleepTimerEndOfUnitRef.current = null;
     sleepTimerEndPageRef.current = null;
   }
   async function applySleepTimer(option: SleepTimerOption) {
     clearSleepTimer();
     setSleepTimerOption(option);
-    if (option === "off") return;
-    if (option === "endOfPage") { sleepTimerEndOfUnitRef.current = "page"; return; }
+    // "off" and "End of Book" are functionally identical — no early
+    // cutoff, reading continues naturally to whatever this session's own
+    // end page already is (totalPages for Read Book, the detected
+    // chapter end for Read Chapter). Kept as a separate, clearly-labeled
+    // menu option rather than aliasing it away in the UI, per spec.
+    if (option === "off" || option === "endOfBook") return;
     if (option === "endOfChapter") {
       // Reuses the chapter-mode end page if already reading a chapter;
       // otherwise runs the same honest heading scan from the current
@@ -3207,7 +3209,6 @@ export default function PremiumReaderPreviewContent() {
       }
       if (continuousReadStoppedRef.current || continuousReadTokenRef.current !== token) return;
 
-      if (sleepTimerEndOfUnitRef.current === "page") { stopContinuousRead(); return; }
       if (sleepTimerEndPageRef.current !== null && page >= sleepTimerEndPageRef.current) { stopContinuousRead(); return; }
       if (page >= endPage) break;
 
@@ -4376,82 +4377,96 @@ export default function PremiumReaderPreviewContent() {
                   mobileChromeCls's tap-to-reveal/auto-hide) — a control
                   surface for a session already in progress shouldn't
                   itself require finding it first. Sits above the bottom
-                  dock so it never overlaps those buttons. ─────────────── */}
+                  dock so it never overlaps those buttons.
+                  UX polish (information hierarchy): a two-row card — a
+                  primary Play/Pause + "Reading Book"/page-progress row,
+                  then a Speed/Sleep controls row — replacing the old
+                  single crowded pill. Same dark glass surface, same
+                  z-40/bottom offset/safe-area handling, same
+                  pause/resume/speed/sleep functions underneath (zero
+                  reading-logic changes, purely presentational). The old
+                  second red "Stop" button is dropped — it only ever
+                  called pauseContinuousRead too, identically to the
+                  toggle button beside it, so it was pure duplication;
+                  the reader header's own Stop button (unaffected by this
+                  task's scope) still offers that same action elsewhere. */}
               {continuousReadScope && (
                 <div
                   className="pointer-events-none fixed inset-x-0 z-40 flex justify-center"
-                  style={{ bottom: "calc(4.25rem + env(safe-area-inset-bottom) - 24px)" }}
+                  // UX polish (responsive fix): the two-row card is taller
+                  // than the old single-row pill, and this wrapper's
+                  // `bottom` offset pins the CARD'S BOTTOM edge, not its
+                  // top — so a taller card needs MORE clearance from the
+                  // bottom dock here, not less. Verified against the
+                  // dock's real on-screen rect: 5rem leaves a clear gap
+                  // in both portrait and landscape.
+                  style={{ bottom: "calc(5rem + env(safe-area-inset-bottom))" }}
                 >
                   <div
-                    className="pointer-events-auto flex max-w-[94vw] items-center gap-2 rounded-full px-3 py-2 backdrop-blur-2xl shadow-lg"
-                    style={{ background: "rgba(15,13,11,0.9)", border: "1px solid rgba(212,175,110,0.22)", boxShadow: "0 12px 32px rgba(0,0,0,0.4)" }}
+                    className="ndl-fade-in-scale pointer-events-auto flex w-[272px] max-w-[92vw] flex-col gap-2.5 rounded-[26px] px-4 py-3 backdrop-blur-2xl shadow-lg"
+                    style={{ background: "rgba(15,13,11,0.92)", border: "1px solid rgba(212,175,110,0.22)", boxShadow: "0 12px 32px rgba(0,0,0,0.4)" }}
                   >
-                    <button
-                      onClick={() => (continuousReadState === "speaking" ? pauseContinuousRead() : resumeContinuousReadPlayback())}
-                      disabled={continuousReadState === "loading"}
-                      title={continuousReadState === "speaking" ? t.premiumReaderPause : t.premiumReaderResume}
-                      aria-label={continuousReadState === "speaking" ? t.premiumReaderPause : t.premiumReaderResume}
-                      className="ndl-press flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-white/15 text-sm text-amber-50 hover:bg-white/25 disabled:opacity-40"
-                    >
-                      {continuousReadState === "loading" ? "⏳" : continuousReadState === "speaking" ? "⏸" : "▶"}
-                    </button>
-                    {/* UX polish: this used to fully tear down the session
-                        (stopContinuousRead) — now it just pauses, same as
-                        the toggle button above, so the player stays on
-                        screen and Play resumes instantly. A true teardown
-                        still happens via the existing interruption paths
-                        (starting Read Page/another mode, opening AI/Notes/
-                        Bookmarks/Accessibility/More, changing page/book,
-                        or leaving the reader) — see stopContinuousRead's
-                        other call sites, all unchanged. */}
-                    <button onClick={pauseContinuousRead} title={t.premiumReaderPause} aria-label={t.premiumReaderPause}
-                      className="ndl-press flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-red-600/90 text-xs font-bold text-white hover:bg-red-600">
-                      ⏹
-                    </button>
-                    <select
-                      value={continuousReadSpeed}
-                      onChange={(e) => {
-                        const next = Number(e.target.value);
-                        // Applied to the ref synchronously (not just via
-                        // setState, which only reaches continuousReadSpeedRef
-                        // a render later through its own effect) so the
-                        // restart below builds its new utterance at the
-                        // right rate immediately, not the stale one.
-                        continuousReadSpeedRef.current = next;
-                        setContinuousReadSpeed(next);
-                        restartCurrentChunkAtNewSpeed();
-                      }}
-                      aria-label={t.premiumReaderPlaybackSpeed} title={t.premiumReaderPlaybackSpeed}
-                      className="flex-shrink-0 rounded-full border-none bg-white/15 px-2 py-1 text-[10px] font-bold text-amber-50"
-                    >
-                      <option value={0.75}>0.75x</option>
-                      <option value={1}>1x</option>
-                      <option value={1.25}>1.25x</option>
-                      <option value={1.5}>1.5x</option>
-                      <option value={2}>2x</option>
-                    </select>
-                    <span className="min-w-0 max-w-[30vw] truncate text-[10px] font-semibold text-amber-100/85">
-                      {continuousReadScope === "book" ? t.premiumReaderReadingBook : t.premiumReaderReadingChapter}
-                      {" · "}
-                      {displayLabel || `${readerPage} / ${totalPages}`}
-                    </span>
-                    {/* Sleep Timer — optional per spec, kept intentionally
-                        minimal (one native <select>) to stay compact. */}
-                    <select
-                      value={sleepTimerOption}
-                      onChange={(e) => applySleepTimer(e.target.value as SleepTimerOption)}
-                      aria-label={t.premiumReaderSleepTimer} title={t.premiumReaderSleepTimer}
-                      className="flex-shrink-0 rounded-full border-none bg-white/15 px-2 py-1 text-[10px] font-bold text-amber-50"
-                    >
-                      <option value="off">⏰ {t.premiumReaderSleepOff}</option>
-                      <option value="10">10 min</option>
-                      <option value="20">20 min</option>
-                      <option value="30">30 min</option>
-                      <option value="45">45 min</option>
-                      <option value="60">60 min</option>
-                      <option value="endOfPage">{t.premiumReaderSleepEndOfPage}</option>
-                      <option value="endOfChapter">{t.premiumReaderSleepEndOfChapter}</option>
-                    </select>
+                    <div className="flex items-center gap-3">
+                      <button
+                        onClick={() => (continuousReadState === "speaking" ? pauseContinuousRead() : resumeContinuousReadPlayback())}
+                        disabled={continuousReadState === "loading"}
+                        title={continuousReadState === "speaking" ? t.premiumReaderPause : t.premiumReaderResume}
+                        aria-label={continuousReadState === "speaking" ? t.premiumReaderPause : t.premiumReaderResume}
+                        className="ndl-press flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-full bg-white/15 text-lg text-amber-50 hover:bg-white/25 disabled:opacity-40"
+                      >
+                        {continuousReadState === "loading" ? "⏳" : continuousReadState === "speaking" ? "⏸" : "▶"}
+                      </button>
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate text-[13px] font-bold leading-tight text-amber-50">
+                          {continuousReadScope === "book" ? t.premiumReaderReadingBook : t.premiumReaderReadingChapter}
+                        </div>
+                        <div className="truncate text-[11px] font-medium leading-tight text-amber-100/65 tabular-nums">
+                          {t.premiumReaderPageXofY
+                            .replace("{page}", String(displayLabel || readerPage))
+                            .replace("{total}", String(totalPages))}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex items-center justify-between gap-2 border-t border-white/10 pt-2.5">
+                      <select
+                        value={continuousReadSpeed}
+                        onChange={(e) => {
+                          const next = Number(e.target.value);
+                          // Applied to the ref synchronously (not just via
+                          // setState, which only reaches continuousReadSpeedRef
+                          // a render later through its own effect) so the
+                          // restart below builds its new utterance at the
+                          // right rate immediately, not the stale one.
+                          continuousReadSpeedRef.current = next;
+                          setContinuousReadSpeed(next);
+                          restartCurrentChunkAtNewSpeed();
+                        }}
+                        aria-label={t.premiumReaderPlaybackSpeed} title={t.premiumReaderPlaybackSpeed}
+                        className="ndl-chrome-fade flex-shrink-0 rounded-full border-none bg-white/15 px-2.5 py-1 text-[11px] font-bold tabular-nums text-amber-50 hover:bg-white/20"
+                      >
+                        <option value={0.75}>0.75×</option>
+                        <option value={1}>1.0×</option>
+                        <option value={1.25}>1.25×</option>
+                        <option value={1.5}>1.5×</option>
+                        <option value={2}>2.0×</option>
+                      </select>
+                      {/* Sleep Timer — optional per spec, kept intentionally
+                          minimal (one native <select>) to stay compact. */}
+                      <select
+                        value={sleepTimerOption}
+                        onChange={(e) => applySleepTimer(e.target.value as SleepTimerOption)}
+                        aria-label={t.premiumReaderSleepTimer} title={t.premiumReaderSleepTimer}
+                        className="ndl-chrome-fade flex-shrink-0 rounded-full border-none bg-white/15 px-2.5 py-1 text-[10px] font-bold text-amber-50 hover:bg-white/20"
+                      >
+                        <option value="off">⏰ {t.premiumReaderSleepOff}</option>
+                        <option value="15">15 min</option>
+                        <option value="30">30 min</option>
+                        <option value="45">45 min</option>
+                        <option value="60">60 min</option>
+                        <option value="endOfChapter">{t.premiumReaderSleepEndOfChapter}</option>
+                        <option value="endOfBook">{t.premiumReaderSleepEndOfBook}</option>
+                      </select>
+                    </div>
                   </div>
                 </div>
               )}
