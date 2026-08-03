@@ -420,7 +420,28 @@ export default function AccessibilityToolbar({ hideTrigger = false, variant = "d
     </div>
   );
 
-  const isGlassMobile = variant === "glass" && isMobile;
+  // Landscape accessibility fix: `isMobile` above is a plain
+  // window.innerWidth<640 check, which is WRONG for a phone rotated to
+  // landscape — its innerWidth becomes the device's LONG edge (e.g.
+  // 812-926px on iPhone), so isMobile evaluates false even though the
+  // Premium Reader's own isMobileViewport (short-edge based, correctly
+  // stays true across rotation) said this IS a mobile session and hid
+  // the trigger button (hideTrigger prop below). With isGlassMobile
+  // false, this fell through to the desktop/tablet anchored-popover
+  // branch, which positions itself via useAdaptivePanelPlacement's
+  // `placement` — computed from triggerRef.current's bounding rect. But
+  // that trigger button never renders when hideTrigger is true, so
+  // triggerRef.current stayed null, placement stayed null forever, and
+  // the popover rendered with `visibility: hidden` (see the style prop
+  // below) — mounted in the DOM but permanently invisible and
+  // non-interactive. Portrait "worked" only because a portrait phone's
+  // innerWidth (its short edge) genuinely is <640. Since `hideTrigger`
+  // is only ever passed as `isMobileViewport` (this file's one Premium
+  // Reader call site) and defaults to false on every other page, using
+  // it here reliably covers landscape without touching the shared
+  // `isMobile` breakpoint that the (untouched) anchored-popover branch
+  // still relies on everywhere else.
+  const isGlassMobile = variant === "glass" && (isMobile || hideTrigger);
 
   return (
     <FloatingControlsDock>
