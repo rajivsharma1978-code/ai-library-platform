@@ -1065,12 +1065,26 @@ export default function PremiumReaderPreviewContent() {
 
   function handleGestureDown(e: React.MouseEvent) {
     // Real-device gesture safety: never arm a gesture while a locally-
-    // rendered sheet (More / Contents / page strip) is open, or while the
-    // Accessibility (Reading Options) panel is open — that panel is
-    // portaled outside this subtree, so accessibilityPanelOpenRef (fed by
+    // rendered sheet (More / Contents / page strip / Read menu / chapter-
+    // unavailable / resume prompt) is open, or while the Accessibility
+    // (Reading Options) panel is open — that panel is portaled outside
+    // this subtree, so accessibilityPanelOpenRef (fed by
     // AccessibilityToolbar's ndl-accessibility-panel-state broadcast) is
     // the only way this handler can know about it.
-    if (mobileMoreOpen || contentsOpen || pageStripOpen || accessibilityPanelOpenRef.current) { gestureStartRef.current = null; return; }
+    //
+    // P0 regression fix: readMenuOpen/chapterUnavailableOpen/
+    // resumePromptPage were missing from this list — a tap on the Read
+    // menu's backdrop (or the dialogs' backdrop) is a plain <div>, which
+    // isInteractiveTarget doesn't recognize as a control, so without this
+    // guard the tap fell through to normal gesture handling instead
+    // (arming a pan/long-press or, on a plain tap, toggling immersive
+    // chrome back on via finishTapOrSwipe) — the backdrop's own onClick
+    // never got a chance to run because the touch's default action had
+    // already been claimed by the gesture layer, so the menu never
+    // closed and every subsequent tap kept re-hitting the same stuck
+    // full-viewport backdrop.
+    if (mobileMoreOpen || contentsOpen || pageStripOpen || accessibilityPanelOpenRef.current
+      || readMenuOpen || chapterUnavailableOpen || resumePromptPage !== null) { gestureStartRef.current = null; return; }
     if (interactionMode !== "none") { gestureStartRef.current = null; return; }
     startGesture(e.clientX, e.clientY, isInteractiveTarget(e.target));
   }
@@ -1259,7 +1273,12 @@ export default function PremiumReaderPreviewContent() {
 
   function handlePointerDown(e: PointerEvent) {
     if (e.pointerType !== "touch" && e.pointerType !== "pen") return;
-    if (mobileMoreOpen || contentsOpen || pageStripOpen || accessibilityPanelOpenRef.current) return;
+    // P0 regression fix: see the matching comment on handleGestureDown's
+    // identical guard above — readMenuOpen/chapterUnavailableOpen/
+    // resumePromptPage were missing here too, which is the real-device
+    // touch path (this is what an iPhone actually uses).
+    if (mobileMoreOpen || contentsOpen || pageStripOpen || accessibilityPanelOpenRef.current
+      || readMenuOpen || chapterUnavailableOpen || resumePromptPage !== null) return;
     // Explicit text/image select mode: leave this untouched, exactly as
     // before — it's still driven by the mouse-compat path via
     // onCenterMouseDown/Move (drag-to-select), which real touches still
@@ -1728,6 +1747,14 @@ export default function PremiumReaderPreviewContent() {
   // handleReadAiResponse both call stopContinuousRead()), same
   // one-speaker-at-a-time rule.
   const [readMenuOpen, setReadMenuOpen] = useState(false);
+  // P0 regression fix: wraps the Read menu's trigger + dropdown (both
+  // portrait and landscape headers share this one ref/effect — only one
+  // can ever be mounted at a time). Used by the outside-click effect
+  // below, replacing the old full-viewport invisible backdrop <div>,
+  // which the reader's own touch-gesture layer treated as a plain
+  // (non-control) tap target and swallowed via preventDefault before the
+  // backdrop's onClick could ever fire on a real touch device.
+  const readMenuRef = useRef<HTMLDivElement>(null);
   const [continuousReadScope, setContinuousReadScope] = useState<ContinuousReadScope | null>(null);
   const [continuousReadState, setContinuousReadState] = useState<SpeechState>("idle");
   const [continuousReadSpeed, setContinuousReadSpeed] = useState(1);
@@ -1911,6 +1938,10 @@ export default function PremiumReaderPreviewContent() {
     setLiveDragRect(null);
     window.getSelection()?.removeAllRanges(); // native browser selection
     setPan({ x: 0, y: 0 });
+    // P0 regression fix: a page turn or book switch closes the Read
+    // menu, per spec — it doesn't make sense to leave a page-scoped menu
+    // open across content changing underneath it.
+    setReadMenuOpen(false);
   }, [readerPage, bookId]); // eslint-disable-line
 
   // Enhanced Read Aloud — interrupt continuous reading on a MANUAL page
@@ -1932,9 +1963,64 @@ export default function PremiumReaderPreviewContent() {
   // aiPanelCompact covers "opens AI" / "opens Notes" / "opens Bookmarks"
   // in one place.
   useEffect(() => {
-    if (!aiPanelCompact && continuousReadScope) stopContinuousRead();
+    if (!aiPanelCompact) {
+      if (continuousReadScope) stopContinuousRead();
+      setReadMenuOpen(false); // P0 regression fix: opening AI/Notes/Bookmarks closes the Read menu too
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [aiPanelCompact]);
+
+  // P0 regression fix: opening the More sheet, Contents, or the page-
+  // strip sheet also closes the Read menu — only one of Read menu/modal
+  // dialog/panel should be active at a time, per spec.
+  useEffect(() => {
+    if (mobileMoreOpen || contentsOpen || pageStripOpen) {
+      setReadMenuOpen(false);
+      // Issue 4 explicitly calls out "More" alongside Accessibility/AI/
+      // Notes/Bookmarks as an interruption trigger — extended to
+      // Contents/page-strip too since they're the same class of local
+      // full-attention sheet.
+      if (continuousReadScope) stopContinuousRead();
+    }
+  }, [mobileMoreOpen, contentsOpen, pageStripOpen]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // P0 regression fix: rotating the phone closes the Read menu — a
+  // portrait-anchored (or landscape-anchored) dropdown makes no sense
+  // once the header it was anchored to has been replaced by the other
+  // orientation's completely different header layout.
+  useEffect(() => {
+    setReadMenuOpen(false);
+  }, [isMobileLandscape]);
+
+  // P0 regression fix: Escape closes the Read menu where supported
+  // (physical/Bluetooth keyboard, desktop browser testing) — real
+  // iPhone touch users close it via the outside-click effect below.
+  useEffect(() => {
+    if (!readMenuOpen) return;
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") setReadMenuOpen(false);
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [readMenuOpen]);
+
+  // P0 regression fix: replaces the old full-viewport invisible backdrop
+  // <div> (which the touch-gesture layer swallowed — see the
+  // handleGestureDown/handlePointerDown guard comments above) with a
+  // plain document-level pointerdown listener + ref-contains check, the
+  // same proven pattern AccessibilityToolbar already uses for its own
+  // outside-click dismissal. This renders NOTHING while closed (no
+  // stray element, nothing to intercept pointer events) and reacts to
+  // the real native pointerdown event directly, so it can never be
+  // preempted by the reader's own gesture classification.
+  useEffect(() => {
+    if (!readMenuOpen) return;
+    function onPointerDown(e: PointerEvent) {
+      if (readMenuRef.current && !readMenuRef.current.contains(e.target as Node)) setReadMenuOpen(false);
+    }
+    document.addEventListener("pointerdown", onPointerDown);
+    return () => document.removeEventListener("pointerdown", onPointerDown);
+  }, [readMenuOpen]);
 
   // Interrupt continuous reading when the Accessibility panel opens —
   // same ndl-accessibility-panel-state broadcast the gesture layer
@@ -1944,7 +2030,10 @@ export default function PremiumReaderPreviewContent() {
   useEffect(() => {
     function onA11yPanelState(e: Event) {
       const open = !!(e as CustomEvent<{ open: boolean }>).detail?.open;
-      if (open && continuousReadScopeRef.current) stopContinuousRead();
+      if (open) {
+        if (continuousReadScopeRef.current) stopContinuousRead();
+        setReadMenuOpen(false); // P0 regression fix: opening Accessibility closes the Read menu too
+      }
     }
     window.addEventListener("ndl-accessibility-panel-state", onA11yPanelState);
     return () => window.removeEventListener("ndl-accessibility-panel-state", onA11yPanelState);
@@ -4047,32 +4136,42 @@ export default function PremiumReaderPreviewContent() {
                       The icon reflects whichever of the three "players"
                       (page speech, AI speech is separate, continuous read)
                       is currently active. */}
-                  <div className="relative flex-shrink-0">
+                  {/* P0 regression fix: right-anchored (not left-anchored)
+                      since this trigger sits in the right portion of the
+                      header (title has flex-1, pushing everything after
+                      it rightward) — a left-anchored fixed-width dropdown
+                      grew off the right edge of the screen. max-w clamps
+                      to the viewport as a hard safety net regardless of
+                      where the trigger ends up. No backdrop <div> — see
+                      the outside-click/Escape/rotation/panel-open effects
+                      above, all of which close this via plain state. */}
+                  <div ref={readMenuRef} className="relative flex-shrink-0">
                     <button onClick={() => setReadMenuOpen((v) => !v)} disabled={speechState === "loading"}
                       title={t.premiumReaderReadMenu} aria-label={t.premiumReaderReadMenu}
+                      aria-haspopup="menu" aria-expanded={readMenuOpen}
                       className="ndl-press inline-flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-slate-900 text-sm text-white shadow hover:bg-slate-800 disabled:opacity-50">
                       {speechState === "loading" || continuousReadState === "loading" ? "⏳"
                         : speechState === "speaking" || continuousReadState === "speaking" ? "⏸"
                         : speechState === "paused" || continuousReadState === "paused" ? "▶" : "🔊"}
                     </button>
                     {readMenuOpen && (
-                      <>
-                        <div className="fixed inset-0 z-[159]" onClick={() => setReadMenuOpen(false)} />
-                        <div className="absolute left-0 top-10 z-[161] w-44 overflow-hidden rounded-2xl bg-white py-1 shadow-xl ring-1 ring-black/5">
-                          <button onClick={startReadPageFromMenu}
-                            className="flex w-full items-center gap-2 px-4 py-2.5 text-left text-xs font-bold text-slate-700 hover:bg-amber-50">
-                            📄 {t.premiumReaderReadPage}
-                          </button>
-                          <button onClick={startReadChapter}
-                            className="flex w-full items-center gap-2 px-4 py-2.5 text-left text-xs font-bold text-slate-700 hover:bg-amber-50">
-                            📖 {t.premiumReaderReadChapter}
-                          </button>
-                          <button onClick={startReadBook}
-                            className="flex w-full items-center gap-2 px-4 py-2.5 text-left text-xs font-bold text-slate-700 hover:bg-amber-50">
-                            📚 {t.premiumReaderReadBook}
-                          </button>
-                        </div>
-                      </>
+                      <div
+                        role="menu" aria-label={t.premiumReaderReadMenu}
+                        className="absolute right-0 top-10 z-[161] w-44 max-w-[min(224px,calc(100vw-2rem))] overflow-hidden rounded-2xl bg-white py-1 shadow-xl ring-1 ring-black/5"
+                      >
+                        <button role="menuitem" onClick={startReadPageFromMenu}
+                          className="flex min-h-[44px] w-full items-center gap-2 px-4 py-2.5 text-left text-xs font-bold text-slate-700 hover:bg-amber-50">
+                          📄 {t.premiumReaderReadPage}
+                        </button>
+                        <button role="menuitem" onClick={startReadChapter}
+                          className="flex min-h-[44px] w-full items-center gap-2 px-4 py-2.5 text-left text-xs font-bold text-slate-700 hover:bg-amber-50">
+                          📖 {t.premiumReaderReadChapter}
+                        </button>
+                        <button role="menuitem" onClick={startReadBook}
+                          className="flex min-h-[44px] w-full items-center gap-2 px-4 py-2.5 text-left text-xs font-bold text-slate-700 hover:bg-amber-50">
+                          📚 {t.premiumReaderReadBook}
+                        </button>
+                      </div>
                     )}
                   </div>
                   {(speechState === "speaking" || speechState === "paused" || continuousReadScope) && (
@@ -4139,33 +4238,41 @@ export default function PremiumReaderPreviewContent() {
                         sites (portrait header, desktop toolbar). Top bar
                         is now exactly Back / title / page / Read Page —
                         "extremely slim," per spec. */}
-                    <div className="relative flex-shrink-0">
+                    {/* P0 regression fix: right-anchored + max-w clamp
+                        (same reasoning as the portrait menu above) and no
+                        backdrop <div> — this trigger sits inside a
+                        horizontally-CENTERED floating pill, so its exact
+                        on-screen X position varies with content width;
+                        right-anchoring plus the viewport clamp keeps the
+                        dropdown on-screen regardless. */}
+                    <div ref={readMenuRef} className="relative flex-shrink-0">
                       <button onClick={() => setReadMenuOpen((v) => !v)} disabled={speechState === "loading"}
                         title={t.premiumReaderReadMenu} aria-label={t.premiumReaderReadMenu}
+                        aria-haspopup="menu" aria-expanded={readMenuOpen}
                         className="ndl-press flex h-7 w-7 items-center justify-center rounded-full text-[13px] text-amber-100/80 hover:bg-white/10 disabled:opacity-40">
                         {speechState === "loading" || continuousReadState === "loading" ? "⏳"
                           : speechState === "speaking" || continuousReadState === "speaking" ? "⏸"
                           : speechState === "paused" || continuousReadState === "paused" ? "▶" : "🔊"}
                       </button>
                       {readMenuOpen && (
-                        <>
-                          <div className="fixed inset-0 z-[159]" onClick={() => setReadMenuOpen(false)} />
-                          <div className="absolute left-0 top-9 z-[161] w-40 overflow-hidden rounded-2xl backdrop-blur-2xl py-1"
-                            style={{ background: "rgba(15,13,11,0.92)", border: "1px solid rgba(212,175,110,0.18)" }}>
-                            <button onClick={startReadPageFromMenu}
-                              className="flex w-full items-center gap-2 px-3 py-2 text-left text-[11px] font-semibold text-amber-50 hover:bg-white/10">
-                              📄 {t.premiumReaderReadPage}
-                            </button>
-                            <button onClick={startReadChapter}
-                              className="flex w-full items-center gap-2 px-3 py-2 text-left text-[11px] font-semibold text-amber-50 hover:bg-white/10">
-                              📖 {t.premiumReaderReadChapter}
-                            </button>
-                            <button onClick={startReadBook}
-                              className="flex w-full items-center gap-2 px-3 py-2 text-left text-[11px] font-semibold text-amber-50 hover:bg-white/10">
-                              📚 {t.premiumReaderReadBook}
-                            </button>
-                          </div>
-                        </>
+                        <div
+                          role="menu" aria-label={t.premiumReaderReadMenu}
+                          className="absolute right-0 top-9 z-[161] w-40 max-w-[min(200px,calc(100vw-2rem))] overflow-hidden rounded-2xl backdrop-blur-2xl py-1"
+                          style={{ background: "rgba(15,13,11,0.92)", border: "1px solid rgba(212,175,110,0.18)" }}
+                        >
+                          <button role="menuitem" onClick={startReadPageFromMenu}
+                            className="flex min-h-[44px] w-full items-center gap-2 px-3 py-2 text-left text-[11px] font-semibold text-amber-50 hover:bg-white/10">
+                            📄 {t.premiumReaderReadPage}
+                          </button>
+                          <button role="menuitem" onClick={startReadChapter}
+                            className="flex min-h-[44px] w-full items-center gap-2 px-3 py-2 text-left text-[11px] font-semibold text-amber-50 hover:bg-white/10">
+                            📖 {t.premiumReaderReadChapter}
+                          </button>
+                          <button role="menuitem" onClick={startReadBook}
+                            className="flex min-h-[44px] w-full items-center gap-2 px-3 py-2 text-left text-[11px] font-semibold text-amber-50 hover:bg-white/10">
+                            📚 {t.premiumReaderReadBook}
+                          </button>
+                        </div>
                       )}
                     </div>
                     {(speechState === "speaking" || speechState === "paused" || continuousReadScope) && (
