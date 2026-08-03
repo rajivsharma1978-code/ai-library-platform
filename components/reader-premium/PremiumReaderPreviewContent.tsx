@@ -224,6 +224,49 @@ function cropCanvasRegion(
 }
 
 type SpeechState = "idle" | "loading" | "speaking" | "paused";
+
+// ── Enhanced Read Aloud: Read Book / Read Chapter ──────────────────────
+// "Read Page" (handleReadPage, below) is completely unchanged. These add
+// a CONTINUOUS mode that auto-turns pages and keeps speaking — its own
+// state machine (continuousReadScope/continuousReadState), separate from
+// speechState, so Read Page and continuous reading can never fight over
+// the same flags (they DO share the one browser speechSynthesis queue,
+// so starting either one cancels the other — see the top of
+// runContinuousRead/handleReadPage).
+type ContinuousReadScope = "chapter" | "book";
+type SleepTimerOption = "off" | "10" | "20" | "30" | "45" | "60" | "endOfPage" | "endOfChapter";
+
+// Page-level resume — deliberately the ONLY thing persisted (per spec:
+// no sentence position, no speech timestamps). Keyed by bookId inside one
+// localStorage entry so multiple books each keep their own last position.
+const READ_BOOK_RESUME_KEY = "ndl_read_book_resume";
+function saveReadBookResume(bookId: string, page: number) {
+  try {
+    const raw = window.localStorage.getItem(READ_BOOK_RESUME_KEY);
+    const all = raw ? JSON.parse(raw) : {};
+    all[bookId] = { page, mode: "book" };
+    window.localStorage.setItem(READ_BOOK_RESUME_KEY, JSON.stringify(all));
+  } catch { /* best-effort only — never block reading on storage failure */ }
+}
+function getReadBookResume(bookId: string): { page: number } | null {
+  try {
+    const raw = window.localStorage.getItem(READ_BOOK_RESUME_KEY);
+    if (!raw) return null;
+    const all = JSON.parse(raw);
+    const entry = all[bookId];
+    return entry && Number.isFinite(entry.page) ? { page: entry.page } : null;
+  } catch { return null; }
+}
+function clearReadBookResume(bookId: string) {
+  try {
+    const raw = window.localStorage.getItem(READ_BOOK_RESUME_KEY);
+    if (!raw) return;
+    const all = JSON.parse(raw);
+    delete all[bookId];
+    window.localStorage.setItem(READ_BOOK_RESUME_KEY, JSON.stringify(all));
+  } catch { /* best-effort only */ }
+}
+
 const ZOOM_MIN = 50, ZOOM_MAX = 200, ZOOM_STEP = 20;
 // Landscape fit-width follow-up: landscape's "100%" now MEANS fit-width
 // (see MobilePdfPage's baseFitScale), so zooming below 100 there would
@@ -1677,6 +1720,42 @@ export default function PremiumReaderPreviewContent() {
   const pageSpeechStoppedRef = useRef(false);
   const aiSpeechStoppedRef = useRef(false);
 
+  // ── Enhanced Read Aloud: continuous (Chapter/Book) reading state ──────
+  // Mobile-only (see the Read menu's render site below) — desktop keeps
+  // its single Read Page button/behavior completely unchanged. A THIRD
+  // independent "player" alongside page/AI speech above: starting it
+  // stops the other two (and vice versa — handleReadPage/
+  // handleReadAiResponse both call stopContinuousRead()), same
+  // one-speaker-at-a-time rule.
+  const [readMenuOpen, setReadMenuOpen] = useState(false);
+  const [continuousReadScope, setContinuousReadScope] = useState<ContinuousReadScope | null>(null);
+  const [continuousReadState, setContinuousReadState] = useState<SpeechState>("idle");
+  const [continuousReadSpeed, setContinuousReadSpeed] = useState(1);
+  const [continuousReadEndPage, setContinuousReadEndPage] = useState<number | null>(null);
+  const [chapterUnavailableOpen, setChapterUnavailableOpen] = useState(false);
+  const [resumePromptPage, setResumePromptPage] = useState<number | null>(null);
+  const [sleepTimerOption, setSleepTimerOption] = useState<SleepTimerOption>("off");
+  const continuousReadStoppedRef = useRef(false);
+  const continuousReadTokenRef = useRef(0);
+  // Kept in sync with continuousReadScope via the effect below — read
+  // from the accessibility-panel-state window listener, which is
+  // registered once on mount and would otherwise close over a stale
+  // (always-null) value.
+  const continuousReadScopeRef = useRef<ContinuousReadScope | null>(null);
+  useEffect(() => { continuousReadScopeRef.current = continuousReadScope; }, [continuousReadScope]);
+  // The page the continuous engine itself is about to navigate TO, set
+  // immediately before every auto-turn — the "manual page change"
+  // interruption effect below treats any OTHER readerPage change as user-
+  // driven (swipe, Prev/Next, page strip, voice command) and stops.
+  const continuousExpectedPageRef = useRef<number | null>(null);
+  // Preloads the NEXT page's text while the current one is still
+  // speaking — {page, promise}, consumed (and cleared) by
+  // getPageTextWithPreload once the engine actually reaches that page.
+  const nextPageTextCacheRef = useRef<{ page: number; promise: Promise<string> } | null>(null);
+  const sleepTimerHandleRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const sleepTimerEndOfUnitRef = useRef<"page" | null>(null);
+  const sleepTimerEndPageRef = useRef<number | null>(null);
+
   // ── Go To Page ────────────────────────────────────────────────────
   // Input always means the PRINTED page number — there is no PDF-page
   // mode. PDF page indexes are purely internal.
@@ -1834,6 +1913,55 @@ export default function PremiumReaderPreviewContent() {
     setPan({ x: 0, y: 0 });
   }, [readerPage, bookId]); // eslint-disable-line
 
+  // Enhanced Read Aloud — interrupt continuous reading on a MANUAL page
+  // change. The continuous engine records the page it's about to auto-
+  // turn TO in continuousExpectedPageRef immediately before navigating;
+  // any readerPage change that doesn't match that expectation (swipe,
+  // Prev/Next tap, page-strip jump, voice command, Go to Page) is
+  // necessarily user-driven and stops continuous reading, per spec.
+  useEffect(() => {
+    if (continuousReadScope && continuousExpectedPageRef.current !== null && readerPage !== continuousExpectedPageRef.current) {
+      stopContinuousRead();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [readerPage]);
+
+  // Interrupt continuous reading when the AI Companion panel opens —
+  // openMobileBookmarks (Bookmarks) and the "Notes" tab both open this
+  // same panel (just on a different starting tab), so watching
+  // aiPanelCompact covers "opens AI" / "opens Notes" / "opens Bookmarks"
+  // in one place.
+  useEffect(() => {
+    if (!aiPanelCompact && continuousReadScope) stopContinuousRead();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [aiPanelCompact]);
+
+  // Interrupt continuous reading when the Accessibility panel opens —
+  // same ndl-accessibility-panel-state broadcast the gesture layer
+  // already listens to (see accessibilityPanelOpenRef above). Registered
+  // once on mount, so it reads continuousReadScopeRef (kept fresh by the
+  // effect declared alongside it) rather than the state directly.
+  useEffect(() => {
+    function onA11yPanelState(e: Event) {
+      const open = !!(e as CustomEvent<{ open: boolean }>).detail?.open;
+      if (open && continuousReadScopeRef.current) stopContinuousRead();
+    }
+    window.addEventListener("ndl-accessibility-panel-state", onA11yPanelState);
+    return () => window.removeEventListener("ndl-accessibility-panel-state", onA11yPanelState);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Interrupt continuous reading (and cancel any pending speech) when
+  // the reader itself unmounts — leaving the reader page entirely
+  // (Back, browser navigation, closing the tab).
+  useEffect(() => {
+    return () => {
+      continuousReadStoppedRef.current = true;
+      continuousReadTokenRef.current += 1;
+      window.speechSynthesis?.cancel();
+    };
+  }, []);
+
   // Also applies a validated `?page=` — read fresh from `searchParams`
   // every time this effect runs, rather than a "do it once, ever" ref
   // guard. That guard was tried first, but a Link-driven client-side
@@ -1885,13 +2013,16 @@ export default function PremiumReaderPreviewContent() {
     setAiFailed(false);
     // Unlike a plain page turn, a book change invalidates BOTH speech
     // players — the AI response about to be cleared, and whatever page
-    // was playing, both belonged to the book being left.
+    // was playing, both belonged to the book being left. Continuous
+    // reading (Chapter/Book) belonged to that same book too — "changes
+    // book" is one of the spec's explicit interruption triggers.
     window.speechSynthesis?.cancel();
     pageSpeechStoppedRef.current = true;
     setSpeechState("idle");
     aiSpeechStoppedRef.current = true;
     setAiSpeechState("idle");
     setAiVoiceNotice(null);
+    if (continuousReadScope) stopContinuousRead();
 
     const urlPage = Number(searchParams.get("page"));
     let resolvedPage = 1;
@@ -2621,6 +2752,7 @@ export default function PremiumReaderPreviewContent() {
     if (speechState === "speaking") { synth.pause(); setSpeechState("paused"); return; }
     if (speechState === "paused")  { synth.resume(); setSpeechState("speaking"); return; }
 
+    if (continuousReadScope) stopContinuousRead();
     stopAiSpeech();
     synth.cancel();
     setSpeechState("loading");
@@ -2653,6 +2785,7 @@ export default function PremiumReaderPreviewContent() {
     if (aiSpeechState === "paused")  { synth.resume(); setAiSpeechState("speaking"); return; }
     if (!aiResponse.trim() || aiLoading) return;
 
+    if (continuousReadScope) stopContinuousRead();
     stopPageSpeech();
     synth.cancel();
     setAiVoiceNotice(null);
@@ -2679,6 +2812,296 @@ export default function PremiumReaderPreviewContent() {
   function handleStopAiResponse() {
     stopAiSpeech();
     window.speechSynthesis?.cancel();
+  }
+
+  // ══════════════════════════════════════════════════════════════════
+  // Enhanced Read Aloud — Read Chapter / Read Book (continuous mode)
+  // Mobile only. Reuses the exact same primitives "Read Page" and the
+  // AI scope pipeline already established above: resolvePageText (per-
+  // page cache + OCR fallback, so a page is never re-OCR'd), pageTexts
+  // (populated as the reader renders pages, read here first before
+  // falling back to extraction), sanitizeForSpeech/cleanOcrTextForAi,
+  // splitIntoSpeechChunks. No new PDF pipeline.
+  // ══════════════════════════════════════════════════════════════════
+
+  // Per-page text for reading aloud: pageTexts cache first (free/
+  // instant — the same cache AI scope and Read Page already read from),
+  // then resolvePageText's own text-layer+OCR extraction (which has its
+  // own internal cache, shared with everything else that's already
+  // OCR'd a page) for a page the user hasn't viewed yet. Populates
+  // pageTexts on a successful extraction so a later AI question or
+  // Read Page on the same page is instant too.
+  async function getPageTextForRead(pageNum: number): Promise<string> {
+    const cached = pageTexts[pageNum];
+    if (cached && cached.trim().length > 0) return cached;
+    try {
+      const pdf = await getSharedPdfDocument();
+      const { text } = await resolvePageText(pdf, currentBook.pdf, pageNum);
+      if (text && text.trim().length > 0) {
+        setPageTexts(prev => (prev[pageNum] ? prev : { ...prev, [pageNum]: text }));
+      }
+      return text || "";
+    } catch {
+      return "";
+    }
+  }
+  // Kicks off extraction for the NEXT page in the background while the
+  // current one is still speaking, so by the time the engine actually
+  // reaches it there's no extraction delay between the auto page-turn
+  // and speech continuing.
+  function preloadPageText(pageNum: number) {
+    if (nextPageTextCacheRef.current?.page === pageNum) return;
+    nextPageTextCacheRef.current = { page: pageNum, promise: getPageTextForRead(pageNum) };
+  }
+  async function getPageTextWithPreload(pageNum: number): Promise<string> {
+    if (nextPageTextCacheRef.current?.page === pageNum) {
+      const { promise } = nextPageTextCacheRef.current;
+      nextPageTextCacheRef.current = null;
+      return promise;
+    }
+    return getPageTextForRead(pageNum);
+  }
+
+  // Promise-based chunk speaker (speakSequence above is callback/state-
+  // driven only, no way to await completion) — resolves once every
+  // chunk has finished, OR immediately once stopped/superseded (checked
+  // via BOTH the stoppedRef flag and a generation token, since a brand
+  // new continuous-read session bumping the token is exactly as valid a
+  // "stop the old one" signal as an explicit Stop tap).
+  function speakChunksContinuous(
+    chunks: string[], speed: number, stoppedRef: { current: boolean },
+    token: number, tokenRef: { current: number }
+  ): Promise<void> {
+    return new Promise((resolve) => {
+      const synth = window.speechSynthesis;
+      let i = 0;
+      function speakNext() {
+        if (stoppedRef.current || tokenRef.current !== token) { resolve(); return; }
+        if (i >= chunks.length) { resolve(); return; }
+        const utt = new SpeechSynthesisUtterance(chunks[i]);
+        utt.rate = speed;
+        utt.onend = () => { i += 1; speakNext(); };
+        utt.onerror = () => resolve();
+        synth.speak(utt);
+      }
+      speakNext();
+    });
+  }
+
+  // ── Chapter-end detection ────────────────────────────────────────
+  // No chapter/TOC metadata exists anywhere in this app (confirmed
+  // elsewhere in this file — Contents only ever listed raw page
+  // numbers). Per spec: never invent a chapter boundary. This is a
+  // best-effort HEADING scan bounded to CHAPTER_HEADING_SCAN_CAP pages
+  // ahead — a page whose first text line either matches a plain
+  // "Chapter/Part/Section N" pattern, or is set in a visibly larger
+  // font than the rest of that page's own body text, is treated as the
+  // start of the NEXT section; the current one is read through the page
+  // just before it. Returns null (never a guess) if nothing plausible
+  // turns up within the scan cap — callers must show the honest
+  // "not available" prompt in that case, not fall back to totalPages
+  // silently.
+  const CHAPTER_HEADING_SCAN_CAP = 60;
+  async function findChapterEndPage(startPage: number): Promise<number | null> {
+    try {
+      const pdf = await getSharedPdfDocument();
+      const lastScan = Math.min(totalPages, startPage + CHAPTER_HEADING_SCAN_CAP);
+      for (let p = startPage + 1; p <= lastScan; p++) {
+        let items: any[];
+        try {
+          const page = await pdf.getPage(p);
+          const textContent = await page.getTextContent();
+          items = textContent.items as any[];
+        } catch { continue; }
+        if (!items.length) continue;
+        const heights = items
+          .map((it) => Math.hypot(it.transform?.[2] || 0, it.transform?.[3] || 0))
+          .filter((h) => h > 0);
+        if (!heights.length) continue;
+        const sorted = [...heights].sort((a, b) => a - b);
+        const medianH = sorted[Math.floor(sorted.length / 2)];
+        const first = items[0];
+        const firstText = String(first?.str || "").trim();
+        const firstH = Math.hypot(first?.transform?.[2] || 0, first?.transform?.[3] || 0);
+        const looksLikeHeadingText = /^(chapter|part|section)\s+[\divxlcdm]+/i.test(firstText)
+          || /^(chapter|part)\s+\w+/i.test(firstText);
+        const looksLikeLargeFont = firstH > medianH * 1.3 && firstText.length > 0 && firstText.length < 60;
+        if (looksLikeHeadingText || looksLikeLargeFont) return p - 1;
+      }
+    } catch (err) {
+      console.error("[ReadChapter] heading scan failed:", err);
+    }
+    return null;
+  }
+
+  // ── Sleep timer (optional) ───────────────────────────────────────
+  function clearSleepTimer() {
+    if (sleepTimerHandleRef.current) { clearTimeout(sleepTimerHandleRef.current); sleepTimerHandleRef.current = null; }
+    sleepTimerEndOfUnitRef.current = null;
+    sleepTimerEndPageRef.current = null;
+  }
+  async function applySleepTimer(option: SleepTimerOption) {
+    clearSleepTimer();
+    setSleepTimerOption(option);
+    if (option === "off") return;
+    if (option === "endOfPage") { sleepTimerEndOfUnitRef.current = "page"; return; }
+    if (option === "endOfChapter") {
+      // Reuses the chapter-mode end page if already reading a chapter;
+      // otherwise runs the same honest heading scan from the current
+      // page. If that scan also can't find a boundary, the timer simply
+      // has nothing to trigger on (never invents one) — reading
+      // continues normally to the end of the book.
+      const target = continuousReadScope === "chapter" && continuousReadEndPage != null
+        ? continuousReadEndPage
+        : await findChapterEndPage(readerPage);
+      sleepTimerEndPageRef.current = target;
+      return;
+    }
+    const minutes = Number(option);
+    sleepTimerHandleRef.current = setTimeout(() => stopContinuousRead(), minutes * 60 * 1000);
+  }
+
+  // ── Core engine ───────────────────────────────────────────────────
+  function stopContinuousRead() {
+    // Guards on the REF, not the continuousReadScope state directly —
+    // this function is called from the accessibility-panel-state window
+    // listener, which is registered once on mount ([] deps) and so
+    // always invokes whichever closure existed at that first render.
+    // continuousReadScopeRef is kept fresh independently (see the effect
+    // by its declaration) specifically so a state check here can't ever
+    // read a permanently-stale "null" and silently no-op.
+    if (continuousReadScopeRef.current === null) return;
+    continuousReadStoppedRef.current = true;
+    continuousReadTokenRef.current += 1;
+    window.speechSynthesis?.cancel();
+    setContinuousReadState("idle");
+    setContinuousReadScope(null);
+    setContinuousReadEndPage(null);
+    continuousExpectedPageRef.current = null;
+    nextPageTextCacheRef.current = null;
+    clearSleepTimer();
+    setSleepTimerOption("off");
+  }
+  function pauseContinuousRead() {
+    window.speechSynthesis?.pause();
+    setContinuousReadState("paused");
+  }
+  function resumeContinuousReadPlayback() {
+    window.speechSynthesis?.resume();
+    setContinuousReadState("speaking");
+  }
+
+  async function runContinuousRead(scopeKind: ContinuousReadScope, startPage: number, endPage: number) {
+    // Only one "player" speaks at a time — starting continuous read
+    // stops Read Page and Read AI Response exactly like starting either
+    // of those already stops the other.
+    stopPageSpeech();
+    stopAiSpeech();
+    window.speechSynthesis?.cancel();
+
+    const token = ++continuousReadTokenRef.current;
+    continuousReadStoppedRef.current = false;
+    setContinuousReadScope(scopeKind);
+    setContinuousReadEndPage(endPage);
+    setContinuousReadState("loading");
+    setReadMenuOpen(false);
+
+    let page = startPage;
+    // Set unconditionally, even when starting from the already-current
+    // page (the common case) — leaving this at its initial `null` until
+    // the first auto-turn meant a manual page change made BEFORE that
+    // first turn went undetected, since the interruption effect only
+    // checks readerPage against this ref when it's non-null.
+    continuousExpectedPageRef.current = page;
+    if (page !== readerPage) {
+      navigateToPdfPage(page);
+      await new Promise((r) => setTimeout(r, 250)); // let the jump settle before extracting/speaking
+    }
+
+    while (page <= endPage) {
+      if (continuousReadStoppedRef.current || continuousReadTokenRef.current !== token) return;
+      setContinuousReadState("loading");
+      const rawText = await getPageTextWithPreload(page);
+      if (continuousReadTokenRef.current !== token) return;
+
+      // Page-level resume, persisted BEFORE speaking starts — so even if
+      // the tab closes mid-page, resume lands on this page, never a
+      // half-read one silently skipped.
+      if (scopeKind === "book") saveReadBookResume(bookId, page);
+
+      const spoken = rawText.trim().length > 0 ? sanitizeForSpeech(cleanOcrTextForAi(rawText)) : "";
+      const chunks = spoken ? splitIntoSpeechChunks(spoken) : [];
+      if (page < endPage) preloadPageText(page + 1);
+
+      setContinuousReadState("speaking");
+      if (chunks.length > 0) {
+        await speakChunksContinuous(chunks, continuousReadSpeed, continuousReadStoppedRef, token, continuousReadTokenRef);
+      }
+      if (continuousReadStoppedRef.current || continuousReadTokenRef.current !== token) return;
+
+      if (sleepTimerEndOfUnitRef.current === "page") { stopContinuousRead(); return; }
+      if (sleepTimerEndPageRef.current !== null && page >= sleepTimerEndPageRef.current) { stopContinuousRead(); return; }
+      if (page >= endPage) break;
+
+      page += 1;
+      continuousExpectedPageRef.current = page;
+      navigateToPdfPage(page);
+      await new Promise((r) => setTimeout(r, 200)); // brief settle before the next page's text/render
+    }
+
+    if (continuousReadTokenRef.current === token) {
+      if (scopeKind === "book") clearReadBookResume(bookId);
+      setContinuousReadState("idle");
+      setContinuousReadScope(null);
+      setContinuousReadEndPage(null);
+      continuousExpectedPageRef.current = null;
+      clearSleepTimer();
+      setSleepTimerOption("off");
+    }
+  }
+
+  // ── Read menu actions ────────────────────────────────────────────
+  function startReadPageFromMenu() {
+    setReadMenuOpen(false);
+    handleReadPage();
+  }
+  async function startReadChapter() {
+    setReadMenuOpen(false);
+    if (continuousReadScope) stopContinuousRead();
+    setContinuousReadState("loading");
+    const endPage = await findChapterEndPage(readerPage);
+    if (endPage === null || endPage <= readerPage) {
+      setContinuousReadState("idle");
+      setChapterUnavailableOpen(true);
+      return;
+    }
+    runContinuousRead("chapter", readerPage, endPage);
+  }
+  function startReadBook() {
+    setReadMenuOpen(false);
+    const resume = getReadBookResume(bookId);
+    if (resume && resume.page !== readerPage && resume.page >= 1 && resume.page <= totalPages) {
+      setResumePromptPage(resume.page);
+      return;
+    }
+    runContinuousRead("book", readerPage, totalPages);
+  }
+  function confirmResumeFromSaved() {
+    const p = resumePromptPage;
+    setResumePromptPage(null);
+    if (p) runContinuousRead("book", p, totalPages);
+  }
+  function confirmStartFromCurrentPage() {
+    setResumePromptPage(null);
+    runContinuousRead("book", readerPage, totalPages);
+  }
+  function continueBookAfterChapterUnavailable() {
+    setChapterUnavailableOpen(false);
+    startReadBook();
+  }
+  function handleStopAnyReadAloud() {
+    if (continuousReadScope) stopContinuousRead();
+    else handleStopReadAloud();
   }
 
   // ── Voice Assistant integration ─────────────────────────────────────
@@ -3617,13 +4040,43 @@ export default function PremiumReaderPreviewContent() {
                       {displayLabel}
                     </button>
                   )}
-                  <button onClick={handleReadPage} disabled={speechState === "loading"}
-                    title={t.premiumReaderReadPageTitle} aria-label={t.premiumReaderReadPageTitle}
-                    className="ndl-press inline-flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-slate-900 text-sm text-white shadow hover:bg-slate-800 disabled:opacity-50">
-                    {speechState === "loading" ? "⏳" : speechState === "speaking" ? "⏸" : speechState === "paused" ? "▶" : "🔊"}
-                  </button>
-                  {(speechState === "speaking" || speechState === "paused") && (
-                    <button onClick={handleStopReadAloud} title={t.premiumReaderStop} aria-label={t.premiumReaderStop}
+                  {/* Enhanced Read Aloud: "Read Page" replaced with a Read
+                      menu (Page/Chapter/Book) per spec — Read Page itself
+                      is byte-for-byte unchanged (startReadPageFromMenu just
+                      closes the menu and calls the original handleReadPage).
+                      The icon reflects whichever of the three "players"
+                      (page speech, AI speech is separate, continuous read)
+                      is currently active. */}
+                  <div className="relative flex-shrink-0">
+                    <button onClick={() => setReadMenuOpen((v) => !v)} disabled={speechState === "loading"}
+                      title={t.premiumReaderReadMenu} aria-label={t.premiumReaderReadMenu}
+                      className="ndl-press inline-flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-slate-900 text-sm text-white shadow hover:bg-slate-800 disabled:opacity-50">
+                      {speechState === "loading" || continuousReadState === "loading" ? "⏳"
+                        : speechState === "speaking" || continuousReadState === "speaking" ? "⏸"
+                        : speechState === "paused" || continuousReadState === "paused" ? "▶" : "🔊"}
+                    </button>
+                    {readMenuOpen && (
+                      <>
+                        <div className="fixed inset-0 z-[159]" onClick={() => setReadMenuOpen(false)} />
+                        <div className="absolute left-0 top-10 z-[161] w-44 overflow-hidden rounded-2xl bg-white py-1 shadow-xl ring-1 ring-black/5">
+                          <button onClick={startReadPageFromMenu}
+                            className="flex w-full items-center gap-2 px-4 py-2.5 text-left text-xs font-bold text-slate-700 hover:bg-amber-50">
+                            📄 {t.premiumReaderReadPage}
+                          </button>
+                          <button onClick={startReadChapter}
+                            className="flex w-full items-center gap-2 px-4 py-2.5 text-left text-xs font-bold text-slate-700 hover:bg-amber-50">
+                            📖 {t.premiumReaderReadChapter}
+                          </button>
+                          <button onClick={startReadBook}
+                            className="flex w-full items-center gap-2 px-4 py-2.5 text-left text-xs font-bold text-slate-700 hover:bg-amber-50">
+                            📚 {t.premiumReaderReadBook}
+                          </button>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                  {(speechState === "speaking" || speechState === "paused" || continuousReadScope) && (
+                    <button onClick={handleStopAnyReadAloud} title={t.premiumReaderStop} aria-label={t.premiumReaderStop}
                       className="ndl-press inline-flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-red-600 text-xs font-bold text-white shadow hover:bg-red-700">⏹</button>
                   )}
                   <button onClick={toggleBookmarkCurrentPage}
@@ -3686,11 +4139,153 @@ export default function PremiumReaderPreviewContent() {
                         sites (portrait header, desktop toolbar). Top bar
                         is now exactly Back / title / page / Read Page —
                         "extremely slim," per spec. */}
-                    <button onClick={handleReadPage} disabled={speechState === "loading"}
-                      title={t.premiumReaderReadPageTitle} aria-label={t.premiumReaderReadPageTitle}
-                      className="ndl-press flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full text-[13px] text-amber-100/80 hover:bg-white/10 disabled:opacity-40">
-                      {speechState === "loading" ? "⏳" : speechState === "speaking" ? "⏸" : speechState === "paused" ? "▶" : "🔊"}
+                    <div className="relative flex-shrink-0">
+                      <button onClick={() => setReadMenuOpen((v) => !v)} disabled={speechState === "loading"}
+                        title={t.premiumReaderReadMenu} aria-label={t.premiumReaderReadMenu}
+                        className="ndl-press flex h-7 w-7 items-center justify-center rounded-full text-[13px] text-amber-100/80 hover:bg-white/10 disabled:opacity-40">
+                        {speechState === "loading" || continuousReadState === "loading" ? "⏳"
+                          : speechState === "speaking" || continuousReadState === "speaking" ? "⏸"
+                          : speechState === "paused" || continuousReadState === "paused" ? "▶" : "🔊"}
+                      </button>
+                      {readMenuOpen && (
+                        <>
+                          <div className="fixed inset-0 z-[159]" onClick={() => setReadMenuOpen(false)} />
+                          <div className="absolute left-0 top-9 z-[161] w-40 overflow-hidden rounded-2xl backdrop-blur-2xl py-1"
+                            style={{ background: "rgba(15,13,11,0.92)", border: "1px solid rgba(212,175,110,0.18)" }}>
+                            <button onClick={startReadPageFromMenu}
+                              className="flex w-full items-center gap-2 px-3 py-2 text-left text-[11px] font-semibold text-amber-50 hover:bg-white/10">
+                              📄 {t.premiumReaderReadPage}
+                            </button>
+                            <button onClick={startReadChapter}
+                              className="flex w-full items-center gap-2 px-3 py-2 text-left text-[11px] font-semibold text-amber-50 hover:bg-white/10">
+                              📖 {t.premiumReaderReadChapter}
+                            </button>
+                            <button onClick={startReadBook}
+                              className="flex w-full items-center gap-2 px-3 py-2 text-left text-[11px] font-semibold text-amber-50 hover:bg-white/10">
+                              📚 {t.premiumReaderReadBook}
+                            </button>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                    {(speechState === "speaking" || speechState === "paused" || continuousReadScope) && (
+                      <button onClick={handleStopAnyReadAloud} title={t.premiumReaderStop} aria-label={t.premiumReaderStop}
+                        className="ndl-press flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full text-[13px] text-amber-100/80 hover:bg-white/10">⏹</button>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* ── Enhanced Read Aloud: compact floating Reading Player —
+                  only while Read Chapter/Read Book is active. Deliberately
+                  ALWAYS fully visible/interactive (not tied to
+                  mobileChromeCls's tap-to-reveal/auto-hide) — a control
+                  surface for a session already in progress shouldn't
+                  itself require finding it first. Sits above the bottom
+                  dock so it never overlaps those buttons. ─────────────── */}
+              {continuousReadScope && (
+                <div
+                  className="pointer-events-none fixed inset-x-0 z-40 flex justify-center"
+                  style={{ bottom: "calc(4.25rem + env(safe-area-inset-bottom))" }}
+                >
+                  <div
+                    className="pointer-events-auto flex max-w-[94vw] items-center gap-2 rounded-full px-3 py-2 backdrop-blur-2xl shadow-lg"
+                    style={{ background: "rgba(15,13,11,0.9)", border: "1px solid rgba(212,175,110,0.22)", boxShadow: "0 12px 32px rgba(0,0,0,0.4)" }}
+                  >
+                    <button
+                      onClick={() => (continuousReadState === "speaking" ? pauseContinuousRead() : resumeContinuousReadPlayback())}
+                      disabled={continuousReadState === "loading"}
+                      title={continuousReadState === "speaking" ? t.premiumReaderPause : t.premiumReaderResume}
+                      aria-label={continuousReadState === "speaking" ? t.premiumReaderPause : t.premiumReaderResume}
+                      className="ndl-press flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-white/15 text-sm text-amber-50 hover:bg-white/25 disabled:opacity-40"
+                    >
+                      {continuousReadState === "loading" ? "⏳" : continuousReadState === "speaking" ? "⏸" : "▶"}
                     </button>
+                    <button onClick={stopContinuousRead} title={t.premiumReaderStop} aria-label={t.premiumReaderStop}
+                      className="ndl-press flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-red-600/90 text-xs font-bold text-white hover:bg-red-600">
+                      ⏹
+                    </button>
+                    <select
+                      value={continuousReadSpeed}
+                      onChange={(e) => setContinuousReadSpeed(Number(e.target.value))}
+                      aria-label={t.premiumReaderPlaybackSpeed} title={t.premiumReaderPlaybackSpeed}
+                      className="flex-shrink-0 rounded-full border-none bg-white/15 px-2 py-1 text-[10px] font-bold text-amber-50"
+                    >
+                      <option value={1}>1x</option>
+                      <option value={1.25}>1.25x</option>
+                      <option value={1.5}>1.5x</option>
+                      <option value={2}>2x</option>
+                    </select>
+                    <span className="min-w-0 max-w-[30vw] truncate text-[10px] font-semibold text-amber-100/85">
+                      {continuousReadScope === "book" ? t.premiumReaderReadingBook : t.premiumReaderReadingChapter}
+                      {" · "}
+                      {displayLabel || `${readerPage} / ${totalPages}`}
+                    </span>
+                    {/* Sleep Timer — optional per spec, kept intentionally
+                        minimal (one native <select>) to stay compact. */}
+                    <select
+                      value={sleepTimerOption}
+                      onChange={(e) => applySleepTimer(e.target.value as SleepTimerOption)}
+                      aria-label={t.premiumReaderSleepTimer} title={t.premiumReaderSleepTimer}
+                      className="flex-shrink-0 rounded-full border-none bg-white/15 px-2 py-1 text-[10px] font-bold text-amber-50"
+                    >
+                      <option value="off">⏰ {t.premiumReaderSleepOff}</option>
+                      <option value="10">10 min</option>
+                      <option value="20">20 min</option>
+                      <option value="30">30 min</option>
+                      <option value="45">45 min</option>
+                      <option value="60">60 min</option>
+                      <option value="endOfPage">{t.premiumReaderSleepEndOfPage}</option>
+                      <option value="endOfChapter">{t.premiumReaderSleepEndOfChapter}</option>
+                    </select>
+                  </div>
+                </div>
+              )}
+
+              {/* ── Enhanced Read Aloud: page-level resume prompt — shown
+                  only when Read Book is started and a previously saved
+                  position exists for THIS book at a different page.
+                  Intentionally simple per spec: page number only, no
+                  sentence/timestamp state. ─────────────────────────────── */}
+              {resumePromptPage !== null && (
+                <div className="ndl-fade-in-scale fixed inset-0 z-[161] flex items-center justify-center bg-black/40 p-4">
+                  <div className="w-full max-w-xs rounded-2xl bg-white p-5 text-center shadow-xl">
+                    <p className="mb-4 text-sm font-bold text-slate-800">
+                      {t.premiumReaderResumeFromPage.replace("{page}", String(resumePromptPage))}
+                    </p>
+                    <div className="flex flex-col gap-2">
+                      <button onClick={confirmResumeFromSaved}
+                        className="ndl-press w-full rounded-full bg-slate-900 px-4 py-2 text-xs font-bold text-white hover:bg-slate-800">
+                        {t.premiumReaderResume}
+                      </button>
+                      <button onClick={confirmStartFromCurrentPage}
+                        className="ndl-press w-full rounded-full bg-slate-100 px-4 py-2 text-xs font-bold text-slate-700 hover:bg-slate-200">
+                        {t.premiumReaderStartFromCurrentPage}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* ── Enhanced Read Aloud: chapter-unavailable prompt — shown
+                  when Read Chapter's heading scan (findChapterEndPage)
+                  genuinely can't find a plausible chapter boundary, per
+                  the spec's exact required message. Never invents a
+                  boundary instead. ──────────────────────────────────────── */}
+              {chapterUnavailableOpen && (
+                <div className="ndl-fade-in-scale fixed inset-0 z-[161] flex items-center justify-center bg-black/40 p-4">
+                  <div className="w-full max-w-xs rounded-2xl bg-white p-5 text-center shadow-xl">
+                    <p className="mb-4 text-sm font-bold text-slate-800">{t.premiumReaderChapterUnavailableMsg}</p>
+                    <div className="flex flex-col gap-2">
+                      <button onClick={continueBookAfterChapterUnavailable}
+                        className="ndl-press w-full rounded-full bg-slate-900 px-4 py-2 text-xs font-bold text-white hover:bg-slate-800">
+                        {t.premiumReaderContinueBookInstead}
+                      </button>
+                      <button onClick={() => setChapterUnavailableOpen(false)}
+                        className="ndl-press w-full rounded-full bg-slate-100 px-4 py-2 text-xs font-bold text-slate-700 hover:bg-slate-200">
+                        {t.commonCancel}
+                      </button>
+                    </div>
                   </div>
                 </div>
               )}
