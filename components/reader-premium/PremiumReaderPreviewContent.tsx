@@ -1782,6 +1782,28 @@ export default function PremiumReaderPreviewContent() {
   const sleepTimerHandleRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const sleepTimerEndOfUnitRef = useRef<"page" | null>(null);
   const sleepTimerEndPageRef = useRef<number | null>(null);
+  // UX polish: live playback-speed ref (always current, unlike a value
+  // captured once when a page's chunk sequence started) plus the chunk-
+  // level restart machinery below, so changing speed while actively
+  // speaking takes effect on the very next utterance instead of waiting
+  // for the current page to finish.
+  const continuousReadSpeedRef = useRef(1);
+  useEffect(() => { continuousReadSpeedRef.current = continuousReadSpeed; }, [continuousReadSpeed]);
+  // { chunks, index } for whichever page is currently being spoken —
+  // read/written by speakChunksContinuous below and by
+  // restartCurrentChunkAtNewSpeed (triggered from the speed <select>).
+  const chunkStateRef = useRef<{ chunks: string[]; index: number } | null>(null);
+  // Holds speakChunksContinuous's own speakCurrent closure while a page
+  // is actively being spoken, so restartCurrentChunkAtNewSpeed can
+  // re-invoke that EXACT continuation (not a parallel one) after a
+  // speed-triggered cancel(). Null whenever nothing is in-flight.
+  const speakCurrentChunkFnRef = useRef<(() => void) | null>(null);
+  // Bumped every time the CURRENT chunk is manually restarted at a new
+  // speed — lets an in-flight utterance's onend/onerror recognize it's
+  // been superseded (by the cancel() that restart triggers) and quietly
+  // no-op instead of either double-advancing or prematurely resolving
+  // the whole page's speech promise.
+  const chunkSessionRef = useRef(0);
 
   // ── Go To Page ────────────────────────────────────────────────────
   // Input always means the PRINTED page number — there is no PDF-page
@@ -2957,24 +2979,79 @@ export default function PremiumReaderPreviewContent() {
   // via BOTH the stoppedRef flag and a generation token, since a brand
   // new continuous-read session bumping the token is exactly as valid a
   // "stop the old one" signal as an explicit Stop tap).
+  //
+  // UX polish: reads continuousReadSpeedRef.current (not a `speed`
+  // parameter captured once at call time) for EVERY utterance, and
+  // stashes its own speakCurrent closure in speakCurrentChunkFnRef so
+  // restartCurrentChunkAtNewSpeed (below) can re-invoke the EXACT SAME
+  // continuation — same chunk index, same eventual `resolve` — instead
+  // of running a second, parallel chain that would never settle this
+  // promise. The chosen restart granularity is "current sentence," not
+  // word-level (not recoverable from the Web Speech API once an
+  // utterance is cancelled) — the task's own spec allows "where possible".
   function speakChunksContinuous(
-    chunks: string[], speed: number, stoppedRef: { current: boolean },
+    chunks: string[], stoppedRef: { current: boolean },
     token: number, tokenRef: { current: number }
   ): Promise<void> {
     return new Promise((resolve) => {
       const synth = window.speechSynthesis;
-      let i = 0;
-      function speakNext() {
-        if (stoppedRef.current || tokenRef.current !== token) { resolve(); return; }
-        if (i >= chunks.length) { resolve(); return; }
-        const utt = new SpeechSynthesisUtterance(chunks[i]);
-        utt.rate = speed;
-        utt.onend = () => { i += 1; speakNext(); };
-        utt.onerror = () => resolve();
+      chunkStateRef.current = { chunks, index: 0 };
+      function speakCurrent() {
+        const state = chunkStateRef.current;
+        if (!state || stoppedRef.current || tokenRef.current !== token) {
+          chunkStateRef.current = null;
+          speakCurrentChunkFnRef.current = null;
+          resolve();
+          return;
+        }
+        if (state.index >= state.chunks.length) {
+          chunkStateRef.current = null;
+          speakCurrentChunkFnRef.current = null;
+          resolve();
+          return;
+        }
+        const mySession = ++chunkSessionRef.current;
+        const utt = new SpeechSynthesisUtterance(state.chunks[state.index]);
+        utt.rate = continuousReadSpeedRef.current;
+        utt.onend = () => {
+          // A speed-triggered restart bumps chunkSessionRef and starts a
+          // fresh utterance before this one's onend/onerror can fire —
+          // if the session moved on without us, this utterance was
+          // superseded, not genuinely finished, so don't double-advance.
+          if (chunkSessionRef.current !== mySession || !chunkStateRef.current) return;
+          chunkStateRef.current.index += 1;
+          speakCurrent();
+        };
+        utt.onerror = () => {
+          // Also fires for the cancel() a speed-change restart performs
+          // on the outgoing utterance — same supersession check, so that
+          // expected cancellation doesn't prematurely resolve the whole
+          // page's speech promise.
+          if (chunkSessionRef.current !== mySession) return;
+          chunkStateRef.current = null;
+          speakCurrentChunkFnRef.current = null;
+          resolve();
+        };
         synth.speak(utt);
       }
-      speakNext();
+      speakCurrentChunkFnRef.current = speakCurrent;
+      speakCurrent();
     });
+  }
+
+  // UX polish: called from the speed <select>'s onChange while actively
+  // speaking — cancels the currently-playing utterance and immediately
+  // re-invokes the SAME speakCurrent closure speakChunksContinuous is
+  // already running (same chunk index, same continuation/resolve), just
+  // with a fresh utterance built from the new continuousReadSpeedRef
+  // value. While paused/loading/idle there's nothing in-flight to
+  // restart; the new rate simply applies to whichever utterance starts
+  // next (resume, or the next chunk/page).
+  function restartCurrentChunkAtNewSpeed() {
+    if (continuousReadState !== "speaking" || !chunkStateRef.current || !speakCurrentChunkFnRef.current) return;
+    chunkSessionRef.current += 1; // invalidate the outgoing utterance's handlers before cancelling it
+    window.speechSynthesis.cancel();
+    speakCurrentChunkFnRef.current();
   }
 
   // ── Chapter-end detection ────────────────────────────────────────
@@ -3068,6 +3145,8 @@ export default function PremiumReaderPreviewContent() {
     setContinuousReadEndPage(null);
     continuousExpectedPageRef.current = null;
     nextPageTextCacheRef.current = null;
+    chunkStateRef.current = null;
+    speakCurrentChunkFnRef.current = null;
     clearSleepTimer();
     setSleepTimerOption("off");
   }
@@ -3124,7 +3203,7 @@ export default function PremiumReaderPreviewContent() {
 
       setContinuousReadState("speaking");
       if (chunks.length > 0) {
-        await speakChunksContinuous(chunks, continuousReadSpeed, continuousReadStoppedRef, token, continuousReadTokenRef);
+        await speakChunksContinuous(chunks, continuousReadStoppedRef, token, continuousReadTokenRef);
       }
       if (continuousReadStoppedRef.current || continuousReadTokenRef.current !== token) return;
 
@@ -3189,7 +3268,11 @@ export default function PremiumReaderPreviewContent() {
     startReadBook();
   }
   function handleStopAnyReadAloud() {
-    if (continuousReadScope) stopContinuousRead();
+    // UX polish: the header's Stop button mirrors the floating player's
+    // own Stop (which now pauses, not tears down — see the player's ⏹
+    // button comment). Read Page's own Stop is untouched — it has no
+    // "player" to keep alive, so it stays a true stop.
+    if (continuousReadScope) pauseContinuousRead();
     else handleStopReadAloud();
   }
 
@@ -4175,7 +4258,9 @@ export default function PremiumReaderPreviewContent() {
                     )}
                   </div>
                   {(speechState === "speaking" || speechState === "paused" || continuousReadScope) && (
-                    <button onClick={handleStopAnyReadAloud} title={t.premiumReaderStop} aria-label={t.premiumReaderStop}
+                    <button onClick={handleStopAnyReadAloud}
+                      title={continuousReadScope ? t.premiumReaderPause : t.premiumReaderStop}
+                      aria-label={continuousReadScope ? t.premiumReaderPause : t.premiumReaderStop}
                       className="ndl-press inline-flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-red-600 text-xs font-bold text-white shadow hover:bg-red-700">⏹</button>
                   )}
                   <button onClick={toggleBookmarkCurrentPage}
@@ -4276,7 +4361,9 @@ export default function PremiumReaderPreviewContent() {
                       )}
                     </div>
                     {(speechState === "speaking" || speechState === "paused" || continuousReadScope) && (
-                      <button onClick={handleStopAnyReadAloud} title={t.premiumReaderStop} aria-label={t.premiumReaderStop}
+                      <button onClick={handleStopAnyReadAloud}
+                        title={continuousReadScope ? t.premiumReaderPause : t.premiumReaderStop}
+                        aria-label={continuousReadScope ? t.premiumReaderPause : t.premiumReaderStop}
                         className="ndl-press flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full text-[13px] text-amber-100/80 hover:bg-white/10">⏹</button>
                     )}
                   </div>
@@ -4293,7 +4380,7 @@ export default function PremiumReaderPreviewContent() {
               {continuousReadScope && (
                 <div
                   className="pointer-events-none fixed inset-x-0 z-40 flex justify-center"
-                  style={{ bottom: "calc(4.25rem + env(safe-area-inset-bottom))" }}
+                  style={{ bottom: "calc(4.25rem + env(safe-area-inset-bottom) - 24px)" }}
                 >
                   <div
                     className="pointer-events-auto flex max-w-[94vw] items-center gap-2 rounded-full px-3 py-2 backdrop-blur-2xl shadow-lg"
@@ -4308,16 +4395,36 @@ export default function PremiumReaderPreviewContent() {
                     >
                       {continuousReadState === "loading" ? "⏳" : continuousReadState === "speaking" ? "⏸" : "▶"}
                     </button>
-                    <button onClick={stopContinuousRead} title={t.premiumReaderStop} aria-label={t.premiumReaderStop}
+                    {/* UX polish: this used to fully tear down the session
+                        (stopContinuousRead) — now it just pauses, same as
+                        the toggle button above, so the player stays on
+                        screen and Play resumes instantly. A true teardown
+                        still happens via the existing interruption paths
+                        (starting Read Page/another mode, opening AI/Notes/
+                        Bookmarks/Accessibility/More, changing page/book,
+                        or leaving the reader) — see stopContinuousRead's
+                        other call sites, all unchanged. */}
+                    <button onClick={pauseContinuousRead} title={t.premiumReaderPause} aria-label={t.premiumReaderPause}
                       className="ndl-press flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-red-600/90 text-xs font-bold text-white hover:bg-red-600">
                       ⏹
                     </button>
                     <select
                       value={continuousReadSpeed}
-                      onChange={(e) => setContinuousReadSpeed(Number(e.target.value))}
+                      onChange={(e) => {
+                        const next = Number(e.target.value);
+                        // Applied to the ref synchronously (not just via
+                        // setState, which only reaches continuousReadSpeedRef
+                        // a render later through its own effect) so the
+                        // restart below builds its new utterance at the
+                        // right rate immediately, not the stale one.
+                        continuousReadSpeedRef.current = next;
+                        setContinuousReadSpeed(next);
+                        restartCurrentChunkAtNewSpeed();
+                      }}
                       aria-label={t.premiumReaderPlaybackSpeed} title={t.premiumReaderPlaybackSpeed}
                       className="flex-shrink-0 rounded-full border-none bg-white/15 px-2 py-1 text-[10px] font-bold text-amber-50"
                     >
+                      <option value={0.75}>0.75x</option>
                       <option value={1}>1x</option>
                       <option value={1.25}>1.25x</option>
                       <option value={1.5}>1.5x</option>
