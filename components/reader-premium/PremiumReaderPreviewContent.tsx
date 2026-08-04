@@ -1776,6 +1776,40 @@ export default function PremiumReaderPreviewContent() {
   // Minimize/expand — playback is completely unaffected by this; it only
   // changes which of the two player layouts renders (see the JSX below).
   const [playerMinimized, setPlayerMinimized] = useState(false);
+  // ── P1: draggable floating player — a single (x,y) pixel offset applied
+  // via `transform: translate()` on top of the player's existing default
+  // bottom-center anchor. `null` means "never dragged, use the default
+  // position" (requirement 5); once set, the SAME offset is shared by the
+  // error/mini/full layouts (requirement 6 — minimize/expand never moves
+  // the player, since none of them touch this value). Persisted to
+  // localStorage so it survives close/reopen in the same session AND
+  // across reloads (a superset of the "same session" requirement, not a
+  // narrower one). Restored/clamped in the effects further down, once
+  // the actual DOM node can be measured.
+  const PLAYER_POS_KEY = "ndl_reader_player_pos";
+  const [playerOffset, setPlayerOffset] = useState<{ x: number; y: number } | null>(null);
+  const [isDraggingPlayer, setIsDraggingPlayer] = useState(false);
+  const playerDragLayerRef = useRef<HTMLDivElement | null>(null);
+  const playerDragStateRef = useRef<{
+    pointerId: number;
+    startClientX: number;
+    startClientY: number;
+    // Screen-space rect of the drag layer (i.e. already reflecting
+    // whatever offset was in effect) captured at pointerdown, so every
+    // subsequent move is clamped against real on-screen geometry rather
+    // than a recomputed/assumed one.
+    layerRect: DOMRect;
+    boundsRect: DOMRect;
+    startOffsetX: number;
+    startOffsetY: number;
+  } | null>(null);
+  // rAF-throttled commit target for pointermove — requirement 8
+  // ("avoid constantly changing top/left... throttle if necessary"):
+  // every pointermove updates this ref synchronously, but at most one
+  // `setPlayerOffset` (the only thing that touches the transform style)
+  // happens per animation frame.
+  const pendingPlayerOffsetRef = useRef<{ x: number; y: number } | null>(null);
+  const playerDragRafRef = useRef<number | null>(null);
   const [chapterUnavailableOpen, setChapterUnavailableOpen] = useState(false);
   const [resumePromptPage, setResumePromptPage] = useState<number | null>(null);
   const [sleepTimerOption, setSleepTimerOption] = useState<SleepTimerOption>("off");
@@ -3214,6 +3248,131 @@ export default function PremiumReaderPreviewContent() {
     setPlayerMinimized((v) => !v);
   }
 
+  // ── P1: draggable floating player ────────────────────────────────────
+  // Restore a saved position once on mount — the player itself may not
+  // even be open yet; the offset just sits ready for whenever it is
+  // (the clamp effect below re-validates it the moment the player
+  // actually mounts, covering "clamp back after resize/rotation").
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(PLAYER_POS_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (typeof parsed?.x === "number" && typeof parsed?.y === "number") setPlayerOffset(parsed);
+      }
+    } catch { /* ignore */ }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Persist every committed change — covers both the drag-end commit and
+  // the resize/rotation re-clamp below, so a reload always restores
+  // wherever the player was actually left, not a stale intermediate spot.
+  useEffect(() => {
+    if (!playerOffset) return;
+    try { localStorage.setItem(PLAYER_POS_KEY, JSON.stringify(playerOffset)); } catch { /* ignore */ }
+  }, [playerOffset]);
+
+  // Re-clamp into the visible reading area (bookAreaRef) whenever the
+  // viewport resizes/rotates, or whenever the player's own on-screen
+  // footprint could have changed (mount, minimize/expand, error state)
+  // — requirement 4 ("if the stored position would be outside the
+  // viewport after resize or rotation, clamp it back automatically").
+  // No-ops (skips the state update entirely) unless the current on-screen
+  // rect is actually out of bounds, so this never fights an in-progress
+  // drag or nudges an already-valid position.
+  useEffect(() => {
+    if (!playerMode || !playerOffset) return;
+    const layer = playerDragLayerRef.current;
+    const bounds = bookAreaRef.current;
+    if (!layer || !bounds) return;
+    const layerRect = layer.getBoundingClientRect();
+    const boundsRect = bounds.getBoundingClientRect();
+    const w = layerRect.width, h = layerRect.height;
+    const minLeft = boundsRect.left, maxLeft = Math.max(minLeft, boundsRect.right - w);
+    const minTop = boundsRect.top, maxTop = Math.max(minTop, boundsRect.bottom - h);
+    const clampedLeft = Math.min(Math.max(layerRect.left, minLeft), maxLeft);
+    const clampedTop = Math.min(Math.max(layerRect.top, minTop), maxTop);
+    const dx = clampedLeft - layerRect.left;
+    const dy = clampedTop - layerRect.top;
+    if (dx !== 0 || dy !== 0) {
+      setPlayerOffset((prev) => (prev ? { x: prev.x + dx, y: prev.y + dy } : prev));
+    }
+  }, [viewportWidth, viewportHeight, playerMode, playerMinimized, playerStatus, playerOffset]);
+
+  // A drag may only START from an empty part of the player — any real
+  // control (button/select/link/menu item) handles its own interaction
+  // completely untouched, per requirement 1.
+  function isPlayerDragSurface(target: EventTarget | null): boolean {
+    if (!(target instanceof Element)) return true;
+    return !target.closest("button, select, a, input, [role='menuitem'], [role='menu']");
+  }
+
+  function handlePlayerPointerDown(e: React.PointerEvent<HTMLDivElement>) {
+    if (e.pointerType === "mouse" && e.button !== 0) return;
+    if (!isPlayerDragSurface(e.target)) return;
+    const layer = playerDragLayerRef.current;
+    const bounds = bookAreaRef.current;
+    if (!layer || !bounds) return;
+    const current = playerOffset ?? { x: 0, y: 0 };
+    playerDragStateRef.current = {
+      pointerId: e.pointerId,
+      startClientX: e.clientX,
+      startClientY: e.clientY,
+      layerRect: layer.getBoundingClientRect(),
+      boundsRect: bounds.getBoundingClientRect(),
+      startOffsetX: current.x,
+      startOffsetY: current.y,
+    };
+    try { layer.setPointerCapture(e.pointerId); } catch { /* ignore */ }
+    setIsDraggingPlayer(true);
+    // Stops desktop text selection from competing with the drag; touch
+    // scrolling is separately blocked via `touchAction: "none"` on the
+    // layer itself (requirement 9 — "no accidental page scrolling").
+    e.preventDefault();
+  }
+
+  function handlePlayerPointerMove(e: React.PointerEvent<HTMLDivElement>) {
+    const drag = playerDragStateRef.current;
+    if (!drag || drag.pointerId !== e.pointerId) return;
+    const rawDx = e.clientX - drag.startClientX;
+    const rawDy = e.clientY - drag.startClientY;
+    const w = drag.layerRect.width, h = drag.layerRect.height;
+    const minLeft = drag.boundsRect.left, maxLeft = Math.max(minLeft, drag.boundsRect.right - w);
+    const minTop = drag.boundsRect.top, maxTop = Math.max(minTop, drag.boundsRect.bottom - h);
+    const clampedLeft = Math.min(Math.max(drag.layerRect.left + rawDx, minLeft), maxLeft);
+    const clampedTop = Math.min(Math.max(drag.layerRect.top + rawDy, minTop), maxTop);
+    pendingPlayerOffsetRef.current = {
+      x: drag.startOffsetX + (clampedLeft - drag.layerRect.left),
+      y: drag.startOffsetY + (clampedTop - drag.layerRect.top),
+    };
+    // requirement 8: transform-only + rAF-throttled — at most one state
+    // update (and therefore one style write) per animation frame, no
+    // matter how many pointermove events a touch drag fires.
+    if (playerDragRafRef.current == null) {
+      playerDragRafRef.current = requestAnimationFrame(() => {
+        playerDragRafRef.current = null;
+        if (pendingPlayerOffsetRef.current) setPlayerOffset(pendingPlayerOffsetRef.current);
+      });
+    }
+  }
+
+  function endPlayerDrag(e: React.PointerEvent<HTMLDivElement>) {
+    const drag = playerDragStateRef.current;
+    if (!drag || drag.pointerId !== e.pointerId) return;
+    if (playerDragRafRef.current != null) {
+      cancelAnimationFrame(playerDragRafRef.current);
+      playerDragRafRef.current = null;
+    }
+    // Commits the exact final position the pointer was released at,
+    // never an rAF frame behind — this is also what the persist effect
+    // above writes to localStorage.
+    if (pendingPlayerOffsetRef.current) setPlayerOffset(pendingPlayerOffsetRef.current);
+    pendingPlayerOffsetRef.current = null;
+    try { playerDragLayerRef.current?.releasePointerCapture(e.pointerId); } catch { /* ignore */ }
+    playerDragStateRef.current = null;
+    setIsDraggingPlayer(false);
+  }
+
   // Mobile shows the full inline error state (message + Retry + Close,
   // +Skip Page for Read Book); desktop has no player card to show that
   // in, so it falls back to speaking the same honest fallback message
@@ -4157,6 +4316,32 @@ export default function PremiumReaderPreviewContent() {
           // unused breathing room there — not an obstruction.
           style={{ bottom: "calc(5rem + env(safe-area-inset-bottom))" }}
         >
+          {/* ── P1: draggable floating player — a single drag "layer" shared
+              by all three card variants (error/mini/full), so drag state
+              (offset, in-progress drag) is never destroyed switching
+              between them, and dragging works identically no matter which
+              is showing. Only fires from an empty part of the surface
+              (see isPlayerDragSurface) — every real control underneath
+              keeps handling its own click/change untouched. `transform`
+              only (never top/left) per the performance requirement; the
+              default (no offset yet) renders with no transform at all, so
+              the existing bottom-center centering above is completely
+              unaffected until the user's first drag. */}
+          <div
+            ref={playerDragLayerRef}
+            onPointerDown={handlePlayerPointerDown}
+            onPointerMove={handlePlayerPointerMove}
+            onPointerUp={endPlayerDrag}
+            onPointerCancel={endPlayerDrag}
+            className="pointer-events-auto"
+            style={{
+              transform: playerOffset ? `translate(${playerOffset.x}px, ${playerOffset.y}px)` : undefined,
+              touchAction: "none",
+              cursor: isDraggingPlayer ? "grabbing" : "grab",
+              WebkitUserSelect: isDraggingPlayer ? "none" : undefined,
+              userSelect: isDraggingPlayer ? ("none" as const) : undefined,
+            }}
+          >
           {playerStatus === "error" ? (
             // ── Error state — "Do not silently hang": shown
             // inline in the SAME player shell so it survives no
@@ -4299,6 +4484,7 @@ export default function PremiumReaderPreviewContent() {
               </div>
             </div>
           )}
+          </div>
         </div>
       )}
 
