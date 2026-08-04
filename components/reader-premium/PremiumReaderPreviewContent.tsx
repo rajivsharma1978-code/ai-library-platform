@@ -4081,23 +4081,18 @@ export default function PremiumReaderPreviewContent() {
     );
   }
 
-  // Desktop's single button doubles as "start" and "toggle pause/resume"
-  // — only meaningful for its OWN mode ("page"); if Chapter/Book were
-  // ever started some other way while on desktop, this button still
-  // reads as idle/ready rather than misreporting a different mode's
-  // state as its own.
-  const isDesktopReaderOnPage = playerMode === "page";
-  const readLabel = isDesktopReaderOnPage && playerStatus === "starting" ? `⏳ ${t.readerPreparing}`
-    : isDesktopReaderOnPage && playerStatus === "playing" ? `⏸ ${t.premiumReaderPause}`
-    : isDesktopReaderOnPage && playerStatus === "paused"  ? `▶ ${t.premiumReaderResume}`
+  // P0 desktop-regression fix: the desktop toolbar's Read control used to
+  // be a single button that only ever started/toggled mode "page" — Read
+  // Chapter/Book were unreachable on desktop, and the persistent player
+  // below was only ever mounted from the mobile branch. Desktop now uses
+  // the exact same Read menu trigger + `readMenuOpen`/`readMenuRef` state,
+  // and the exact same startReadPageFromMenu/startReadChapter/
+  // startReadBook handlers, as mobile — see the desktop controls-strip
+  // JSX below. No new engine, no new handlers, no new player state.
+  const readDesktopIcon = playerStatus === "starting" ? `⏳ ${t.readerPreparing}`
+    : playerStatus === "playing" ? `⏸ ${t.premiumReaderPause}`
+    : playerStatus === "paused" ? `▶ ${t.premiumReaderResume}`
     : `🔊 ${t.premiumReaderReadPage}`;
-  function handleDesktopReadPageClick() {
-    if (isDesktopReaderOnPage) {
-      if (playerStatus === "playing") { pauseReader(); return; }
-      if (playerStatus === "paused") { resumeReader(); return; }
-    }
-    startReading({ mode: "page", startPage: readerPage, endPage: readerPage });
-  }
 
   // Printed-page label — the SAME pure lookup PdfBookSpread used to do
   // internally (Phase C3 moved the surrounding chrome, not the lookup
@@ -4138,6 +4133,224 @@ export default function PremiumReaderPreviewContent() {
   // Landscape now renders its own separate floating dock (see below) with
   // its own icon-only buttons, so this no longer needs a landscape branch.
   const mobileNavBtnCls = "flex-col gap-0.5 px-1 py-1.5";
+
+  // ── Unified Reading Engine: persistent Reading Player + its resume/
+  // chapter-unavailable dialogs — extracted to a single shared JSX value
+  // so desktop and mobile render the EXACT same markup/handlers from one
+  // definition (no second player, no second state machine, per the P0
+  // desktop-regression fix's explicit requirement). Positioning is
+  // `fixed`/viewport-relative throughout, so it's equally correct
+  // whether it's mounted from the desktop branch or the mobile one.
+  const readingEngineOverlays = (
+    <>
+      {playerMode && (
+        <div
+          className="pointer-events-none fixed inset-x-0 z-40 flex justify-center"
+          // The two-row full player is taller than a single-row
+          // pill, and this wrapper's `bottom` offset pins the
+          // CARD'S BOTTOM edge, not its top — so it needs real
+          // clearance from the bottom dock here. Verified against
+          // the dock's real on-screen rect: 5rem leaves a clear
+          // gap in both portrait and landscape, and the (shorter)
+          // mini-player only ever needs LESS room, never more.
+          // Desktop has no bottom dock to clear, so this is simply
+          // unused breathing room there — not an obstruction.
+          style={{ bottom: "calc(5rem + env(safe-area-inset-bottom))" }}
+        >
+          {playerStatus === "error" ? (
+            // ── Error state — "Do not silently hang": shown
+            // inline in the SAME player shell so it survives no
+            // matter how the failure was reached, with the exact
+            // required message, Retry, Close, and — Read Book
+            // only — Skip Page.
+            <div
+              className="ndl-fade-in-scale pointer-events-auto flex w-[272px] max-w-[92vw] flex-col gap-2.5 rounded-[26px] px-4 py-3 backdrop-blur-2xl shadow-lg"
+              style={{ background: "rgba(15,13,11,0.92)", border: "1px solid rgba(212,175,110,0.22)", boxShadow: "0 12px 32px rgba(0,0,0,0.4)" }}
+            >
+              <div className="flex items-start justify-between gap-2">
+                <p className="text-[12px] font-semibold leading-snug text-amber-50">⚠️ {playerErrorMessage}</p>
+                <button onClick={closeReader} title={t.commonClose} aria-label={t.commonClose}
+                  className="ndl-press flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full bg-white/15 text-xs text-amber-50 hover:bg-white/25">✕</button>
+              </div>
+              <div className="flex items-center gap-2">
+                <button onClick={retryReader}
+                  className="ndl-press flex-1 rounded-full bg-white/15 px-3 py-1.5 text-[11px] font-bold text-amber-50 hover:bg-white/25">
+                  {t.commonRetry}
+                </button>
+                {playerMode === "book" && (
+                  <button onClick={skipFailedPageInBook}
+                    className="ndl-press flex-1 rounded-full bg-white/15 px-3 py-1.5 text-[11px] font-bold text-amber-50 hover:bg-white/25">
+                    {t.premiumReaderSkipPage}
+                  </button>
+                )}
+                <button onClick={closeReader}
+                  className="ndl-press flex-1 rounded-full bg-red-600/90 px-3 py-1.5 text-[11px] font-bold text-white hover:bg-red-600">
+                  {t.commonClose}
+                </button>
+              </div>
+            </div>
+          ) : playerMinimized ? (
+            // ── Mini-player — playback is completely unaffected
+            // by minimizing (no state here at all, just less of
+            // it rendered); tapping the label expands back.
+            <div
+              className="ndl-fade-in-scale pointer-events-auto flex max-w-[92vw] items-center gap-2 rounded-full px-3 py-2 backdrop-blur-2xl shadow-lg"
+              style={{ background: "rgba(15,13,11,0.92)", border: "1px solid rgba(212,175,110,0.22)", boxShadow: "0 12px 32px rgba(0,0,0,0.4)" }}
+            >
+              <button
+                onClick={() => (playerStatus === "playing" ? pauseReader() : resumeReader())}
+                disabled={playerStatus === "starting"}
+                title={playerStatus === "playing" ? t.premiumReaderPause : t.premiumReaderResume}
+                aria-label={playerStatus === "playing" ? t.premiumReaderPause : t.premiumReaderResume}
+                className="ndl-press flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-white/15 text-sm text-amber-50 hover:bg-white/25 disabled:opacity-40"
+              >
+                {playerStatus === "starting" ? "⏳" : playerStatus === "playing" ? "⏸" : "▶"}
+              </button>
+              <button onClick={togglePlayerMinimized} title={t.premiumReaderExpand} aria-label={t.premiumReaderExpand}
+                className="ndl-press flex min-w-0 items-center gap-1 truncate text-[11px] font-semibold text-amber-50">
+                <span className="min-w-0 max-w-[42vw] truncate">
+                  {(playerMode === "book" ? t.premiumReaderReadingBook : playerMode === "chapter" ? t.premiumReaderReadingChapter : t.premiumReaderReadingPage)}
+                  {" · "}
+                  {playerStatus === "starting" ? t.premiumReaderStarting
+                    : playerStatus === "completed" ? t.premiumReaderCompleted
+                    : t.premiumReaderPageXofY.replace("{page}", String(displayLabel || readerPage)).replace("{total}", String(totalPages))}
+                </span>
+                <span aria-hidden className="flex-shrink-0 text-amber-100/70">↑</span>
+              </button>
+              <button onClick={closeReader} title={t.commonClose} aria-label={t.commonClose}
+                className="ndl-press flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-white/15 text-xs text-amber-50 hover:bg-white/25">✕</button>
+            </div>
+          ) : (
+            // ── Full player
+            <div
+              className="ndl-fade-in-scale pointer-events-auto flex w-[272px] max-w-[92vw] flex-col gap-2.5 rounded-[26px] px-4 py-3 backdrop-blur-2xl shadow-lg"
+              style={{ background: "rgba(15,13,11,0.92)", border: "1px solid rgba(212,175,110,0.22)", boxShadow: "0 12px 32px rgba(0,0,0,0.4)" }}
+            >
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => (playerStatus === "playing" ? pauseReader() : resumeReader())}
+                  disabled={playerStatus === "starting"}
+                  title={playerStatus === "playing" ? t.premiumReaderPause : t.premiumReaderResume}
+                  aria-label={playerStatus === "playing" ? t.premiumReaderPause : t.premiumReaderResume}
+                  className="ndl-press flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-full bg-white/15 text-lg text-amber-50 hover:bg-white/25 disabled:opacity-40"
+                >
+                  {playerStatus === "starting" ? "⏳" : playerStatus === "playing" ? "⏸" : "▶"}
+                </button>
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-[13px] font-bold leading-tight text-amber-50">
+                    {playerMode === "book" ? t.premiumReaderReadingBook : playerMode === "chapter" ? t.premiumReaderReadingChapter : t.premiumReaderReadingPage}
+                  </div>
+                  <div className="truncate text-[11px] font-medium leading-tight text-amber-100/65 tabular-nums">
+                    {playerStatus === "starting" ? t.premiumReaderStarting
+                      : playerStatus === "completed" ? t.premiumReaderCompleted
+                      : t.premiumReaderPageXofY
+                          .replace("{page}", String(displayLabel || readerPage))
+                          .replace("{total}", String(totalPages))}
+                  </div>
+                </div>
+                <div className="flex flex-shrink-0 items-center gap-1">
+                  <button onClick={togglePlayerMinimized} title={t.premiumReaderMinimize} aria-label={t.premiumReaderMinimize}
+                    className="ndl-press flex h-7 w-7 items-center justify-center rounded-full bg-white/10 text-xs text-amber-50 hover:bg-white/20">−</button>
+                  <button onClick={closeReader} title={t.commonClose} aria-label={t.commonClose}
+                    className="ndl-press flex h-7 w-7 items-center justify-center rounded-full bg-white/10 text-xs text-amber-50 hover:bg-white/20">✕</button>
+                </div>
+              </div>
+              <div className="flex items-center justify-between gap-2 border-t border-white/10 pt-2.5">
+                <select
+                  value={playerSpeed}
+                  onChange={(e) => {
+                    const next = Number(e.target.value);
+                    // Applied to the ref synchronously (not just
+                    // via setState, which only reaches
+                    // playerSpeedRef a render later through its
+                    // own effect) so the restart below builds its
+                    // new utterance at the right rate
+                    // immediately, not the stale one.
+                    playerSpeedRef.current = next;
+                    setPlayerSpeed(next);
+                    restartCurrentChunkAtNewSpeed();
+                  }}
+                  aria-label={t.premiumReaderPlaybackSpeed} title={t.premiumReaderPlaybackSpeed}
+                  className="ndl-chrome-fade flex-shrink-0 rounded-full border-none bg-white/15 px-2.5 py-1 text-[11px] font-bold tabular-nums text-amber-50 hover:bg-white/20"
+                >
+                  <option value={0.75}>0.75×</option>
+                  <option value={1}>1.0×</option>
+                  <option value={1.25}>1.25×</option>
+                  <option value={1.5}>1.5×</option>
+                  <option value={2}>2.0×</option>
+                </select>
+                {/* Sleep Timer — optional per spec, kept
+                    intentionally minimal (one native <select>) to
+                    stay compact. */}
+                <select
+                  value={sleepTimerOption}
+                  onChange={(e) => applySleepTimer(e.target.value as SleepTimerOption)}
+                  aria-label={t.premiumReaderSleepTimer} title={t.premiumReaderSleepTimer}
+                  className="ndl-chrome-fade flex-shrink-0 rounded-full border-none bg-white/15 px-2.5 py-1 text-[10px] font-bold text-amber-50 hover:bg-white/20"
+                >
+                  <option value="off">⏰ {t.premiumReaderSleepOff}</option>
+                  <option value="15">15 min</option>
+                  <option value="30">30 min</option>
+                  <option value="45">45 min</option>
+                  <option value="60">60 min</option>
+                  <option value="endOfChapter">{t.premiumReaderSleepEndOfChapter}</option>
+                  <option value="endOfBook">{t.premiumReaderSleepEndOfBook}</option>
+                </select>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── Enhanced Read Aloud: page-level resume prompt — shown
+          only when Read Book is started and a previously saved
+          position exists for THIS book at a different page.
+          Intentionally simple per spec: page number only, no
+          sentence/timestamp state. ─────────────────────────────── */}
+      {resumePromptPage !== null && (
+        <div className="ndl-fade-in-scale fixed inset-0 z-[161] flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-xs rounded-2xl bg-white p-5 text-center shadow-xl">
+            <p className="mb-4 text-sm font-bold text-slate-800">
+              {t.premiumReaderResumeFromPage.replace("{page}", String(resumePromptPage))}
+            </p>
+            <div className="flex flex-col gap-2">
+              <button onClick={confirmResumeFromSaved}
+                className="ndl-press w-full rounded-full bg-slate-900 px-4 py-2 text-xs font-bold text-white hover:bg-slate-800">
+                {t.premiumReaderResume}
+              </button>
+              <button onClick={confirmStartFromCurrentPage}
+                className="ndl-press w-full rounded-full bg-slate-100 px-4 py-2 text-xs font-bold text-slate-700 hover:bg-slate-200">
+                {t.premiumReaderStartFromCurrentPage}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Enhanced Read Aloud: chapter-unavailable prompt — shown
+          when Read Chapter's heading scan (findChapterEndPage)
+          genuinely can't find a plausible chapter boundary, per
+          the spec's exact required message. Never invents a
+          boundary instead. ──────────────────────────────────────── */}
+      {chapterUnavailableOpen && (
+        <div className="ndl-fade-in-scale fixed inset-0 z-[161] flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-xs rounded-2xl bg-white p-5 text-center shadow-xl">
+            <p className="mb-4 text-sm font-bold text-slate-800">{t.premiumReaderChapterUnavailableMsg}</p>
+            <div className="flex flex-col gap-2">
+              <button onClick={continueBookAfterChapterUnavailable}
+                className="ndl-press w-full rounded-full bg-slate-900 px-4 py-2 text-xs font-bold text-white hover:bg-slate-800">
+                {t.premiumReaderContinueBookInstead}
+              </button>
+              <button onClick={() => setChapterUnavailableOpen(false)}
+                className="ndl-press w-full rounded-full bg-slate-100 px-4 py-2 text-xs font-bold text-slate-700 hover:bg-slate-200">
+                {t.commonCancel}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  );
 
   return (
     <>
@@ -4238,14 +4451,45 @@ export default function PremiumReaderPreviewContent() {
                   no control is removed. ──────────────────────────────────── */}
               <div className={`mx-auto ${fsBarGapY} flex w-full max-w-[1340px] flex-shrink-0 flex-wrap items-center ${fsGroupGap} px-1`}>
                 <div className="flex items-center gap-1.5">
-                  <button onClick={handleDesktopReadPageClick} disabled={isDesktopReaderOnPage && playerStatus === "starting"}
-                    title={t.premiumReaderReadPageTitle}
-                    className={`ndl-press inline-flex ${fsBtnH} items-center gap-1.5 rounded-full bg-slate-900 px-4 ${fsBtnText} font-bold text-white shadow hover:bg-slate-800 disabled:opacity-50`}>
-                    {readLabel}
-                  </button>
-                  {isDesktopReaderOnPage && (playerStatus === "playing" || playerStatus === "paused") && (
-                    <button onClick={closeReader}
-                      className={`ndl-press inline-flex ${fsBtnH} items-center gap-1.5 rounded-full bg-red-600 px-4 ${fsBtnText} font-bold text-white shadow hover:bg-red-700`}>⏹ {t.premiumReaderStop}</button>
+                  {/* P0 desktop-regression fix: was a single "Read Page"
+                      button that could never reach Chapter/Book. Now the
+                      same Read menu trigger as mobile — same
+                      `readMenuOpen`/`readMenuRef` state, same three
+                      handlers (startReadPageFromMenu/startReadChapter/
+                      startReadBook), just desktop-styled (white popover,
+                      icon+label trigger) instead of mobile's icon-only
+                      dark-glass menu. */}
+                  <div ref={readMenuRef} className="relative flex-shrink-0">
+                    <button onClick={() => setReadMenuOpen((v) => !v)} disabled={playerStatus === "starting"}
+                      title={t.premiumReaderReadMenu} aria-label={t.premiumReaderReadMenu}
+                      aria-haspopup="menu" aria-expanded={readMenuOpen}
+                      className={`ndl-press inline-flex ${fsBtnH} items-center gap-1.5 rounded-full bg-slate-900 px-4 ${fsBtnText} font-bold text-white shadow hover:bg-slate-800 disabled:opacity-50`}>
+                      {readDesktopIcon}
+                    </button>
+                    {readMenuOpen && (
+                      <div
+                        role="menu" aria-label={t.premiumReaderReadMenu}
+                        className="absolute left-0 top-full z-[161] mt-1.5 w-48 max-w-[min(224px,calc(100vw-2rem))] overflow-hidden rounded-2xl bg-white py-1 shadow-xl ring-1 ring-black/5"
+                      >
+                        <button role="menuitem" onClick={startReadPageFromMenu}
+                          className="flex min-h-[40px] w-full items-center gap-2 px-4 py-2.5 text-left text-xs font-bold text-slate-700 hover:bg-amber-50">
+                          📄 {t.premiumReaderReadPage}
+                        </button>
+                        <button role="menuitem" onClick={startReadChapter}
+                          className="flex min-h-[40px] w-full items-center gap-2 px-4 py-2.5 text-left text-xs font-bold text-slate-700 hover:bg-amber-50">
+                          📖 {t.premiumReaderReadChapter}
+                        </button>
+                        <button role="menuitem" onClick={startReadBook}
+                          className="flex min-h-[40px] w-full items-center gap-2 px-4 py-2.5 text-left text-xs font-bold text-slate-700 hover:bg-amber-50">
+                          📚 {t.premiumReaderReadBook}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                  {(playerStatus === "playing" || playerStatus === "paused") && (
+                    <button onClick={handleStopAnyReadAloud}
+                      title={t.premiumReaderPause} aria-label={t.premiumReaderPause}
+                      className={`ndl-press inline-flex ${fsBtnH} items-center gap-1.5 rounded-full bg-red-600 px-4 ${fsBtnText} font-bold text-white shadow hover:bg-red-700`}>⏹ {t.premiumReaderPause}</button>
                   )}
                 </div>
                 <span className="h-5 w-px bg-amber-200/70" />
@@ -4301,6 +4545,14 @@ export default function PremiumReaderPreviewContent() {
                   <LanguagePopover language={language} onLanguageChange={setLanguage} availableLanguages={availableToolbarLanguages} />
                 </div>
               </div>
+
+              {/* P0 desktop-regression fix: the persistent Reading Player
+                  (and its resume/chapter-unavailable dialogs) was only
+                  ever mounted from the mobile branch below — desktop had
+                  no Minimize/Close/speed/sleep-timer surface at all once
+                  a session started. Same shared value, same state, same
+                  handlers as mobile — see its definition above `return`. */}
+              {readingEngineOverlays}
             </>
           ) : (
             <>
@@ -4511,223 +4763,13 @@ export default function PremiumReaderPreviewContent() {
                 </div>
               )}
 
-              {/* ── Unified Reading Engine: persistent Reading Player —
-                  shown for ALL THREE modes (Page/Chapter/Book), not just
-                  Chapter/Book. Deliberately ALWAYS fully visible/
-                  interactive (not tied to mobileChromeCls's tap-to-
-                  reveal/auto-hide) — a control surface for a session
-                  already in progress shouldn't itself require finding it
-                  first. Sits above the bottom dock so it never overlaps
-                  those buttons. Three layouts share this one mount point:
-                  the full player, the compact mini-player (Minimize),
-                  and an inline error card (Retry/Skip Page/Close) — never
-                  three separate components, just conditional content
-                  inside the same shell, so playback state is never
-                  destroyed switching between them. */}
-              {playerMode && (
-                <div
-                  className="pointer-events-none fixed inset-x-0 z-40 flex justify-center"
-                  // The two-row full player is taller than a single-row
-                  // pill, and this wrapper's `bottom` offset pins the
-                  // CARD'S BOTTOM edge, not its top — so it needs real
-                  // clearance from the bottom dock here. Verified against
-                  // the dock's real on-screen rect: 5rem leaves a clear
-                  // gap in both portrait and landscape, and the (shorter)
-                  // mini-player only ever needs LESS room, never more.
-                  style={{ bottom: "calc(5rem + env(safe-area-inset-bottom))" }}
-                >
-                  {playerStatus === "error" ? (
-                    // ── Error state — "Do not silently hang": shown
-                    // inline in the SAME player shell so it survives no
-                    // matter how the failure was reached, with the exact
-                    // required message, Retry, Close, and — Read Book
-                    // only — Skip Page.
-                    <div
-                      className="ndl-fade-in-scale pointer-events-auto flex w-[272px] max-w-[92vw] flex-col gap-2.5 rounded-[26px] px-4 py-3 backdrop-blur-2xl shadow-lg"
-                      style={{ background: "rgba(15,13,11,0.92)", border: "1px solid rgba(212,175,110,0.22)", boxShadow: "0 12px 32px rgba(0,0,0,0.4)" }}
-                    >
-                      <div className="flex items-start justify-between gap-2">
-                        <p className="text-[12px] font-semibold leading-snug text-amber-50">⚠️ {playerErrorMessage}</p>
-                        <button onClick={closeReader} title={t.commonClose} aria-label={t.commonClose}
-                          className="ndl-press flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full bg-white/15 text-xs text-amber-50 hover:bg-white/25">✕</button>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <button onClick={retryReader}
-                          className="ndl-press flex-1 rounded-full bg-white/15 px-3 py-1.5 text-[11px] font-bold text-amber-50 hover:bg-white/25">
-                          {t.commonRetry}
-                        </button>
-                        {playerMode === "book" && (
-                          <button onClick={skipFailedPageInBook}
-                            className="ndl-press flex-1 rounded-full bg-white/15 px-3 py-1.5 text-[11px] font-bold text-amber-50 hover:bg-white/25">
-                            {t.premiumReaderSkipPage}
-                          </button>
-                        )}
-                        <button onClick={closeReader}
-                          className="ndl-press flex-1 rounded-full bg-red-600/90 px-3 py-1.5 text-[11px] font-bold text-white hover:bg-red-600">
-                          {t.commonClose}
-                        </button>
-                      </div>
-                    </div>
-                  ) : playerMinimized ? (
-                    // ── Mini-player — playback is completely unaffected
-                    // by minimizing (no state here at all, just less of
-                    // it rendered); tapping the label expands back.
-                    <div
-                      className="ndl-fade-in-scale pointer-events-auto flex max-w-[92vw] items-center gap-2 rounded-full px-3 py-2 backdrop-blur-2xl shadow-lg"
-                      style={{ background: "rgba(15,13,11,0.92)", border: "1px solid rgba(212,175,110,0.22)", boxShadow: "0 12px 32px rgba(0,0,0,0.4)" }}
-                    >
-                      <button
-                        onClick={() => (playerStatus === "playing" ? pauseReader() : resumeReader())}
-                        disabled={playerStatus === "starting"}
-                        title={playerStatus === "playing" ? t.premiumReaderPause : t.premiumReaderResume}
-                        aria-label={playerStatus === "playing" ? t.premiumReaderPause : t.premiumReaderResume}
-                        className="ndl-press flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-white/15 text-sm text-amber-50 hover:bg-white/25 disabled:opacity-40"
-                      >
-                        {playerStatus === "starting" ? "⏳" : playerStatus === "playing" ? "⏸" : "▶"}
-                      </button>
-                      <button onClick={togglePlayerMinimized} title={t.premiumReaderExpand} aria-label={t.premiumReaderExpand}
-                        className="ndl-press flex min-w-0 items-center gap-1 truncate text-[11px] font-semibold text-amber-50">
-                        <span className="min-w-0 max-w-[42vw] truncate">
-                          {(playerMode === "book" ? t.premiumReaderReadingBook : playerMode === "chapter" ? t.premiumReaderReadingChapter : t.premiumReaderReadingPage)}
-                          {" · "}
-                          {playerStatus === "starting" ? t.premiumReaderStarting
-                            : playerStatus === "completed" ? t.premiumReaderCompleted
-                            : t.premiumReaderPageXofY.replace("{page}", String(displayLabel || readerPage)).replace("{total}", String(totalPages))}
-                        </span>
-                        <span aria-hidden className="flex-shrink-0 text-amber-100/70">↑</span>
-                      </button>
-                      <button onClick={closeReader} title={t.commonClose} aria-label={t.commonClose}
-                        className="ndl-press flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-white/15 text-xs text-amber-50 hover:bg-white/25">✕</button>
-                    </div>
-                  ) : (
-                    // ── Full player
-                    <div
-                      className="ndl-fade-in-scale pointer-events-auto flex w-[272px] max-w-[92vw] flex-col gap-2.5 rounded-[26px] px-4 py-3 backdrop-blur-2xl shadow-lg"
-                      style={{ background: "rgba(15,13,11,0.92)", border: "1px solid rgba(212,175,110,0.22)", boxShadow: "0 12px 32px rgba(0,0,0,0.4)" }}
-                    >
-                      <div className="flex items-center gap-3">
-                        <button
-                          onClick={() => (playerStatus === "playing" ? pauseReader() : resumeReader())}
-                          disabled={playerStatus === "starting"}
-                          title={playerStatus === "playing" ? t.premiumReaderPause : t.premiumReaderResume}
-                          aria-label={playerStatus === "playing" ? t.premiumReaderPause : t.premiumReaderResume}
-                          className="ndl-press flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-full bg-white/15 text-lg text-amber-50 hover:bg-white/25 disabled:opacity-40"
-                        >
-                          {playerStatus === "starting" ? "⏳" : playerStatus === "playing" ? "⏸" : "▶"}
-                        </button>
-                        <div className="min-w-0 flex-1">
-                          <div className="truncate text-[13px] font-bold leading-tight text-amber-50">
-                            {playerMode === "book" ? t.premiumReaderReadingBook : playerMode === "chapter" ? t.premiumReaderReadingChapter : t.premiumReaderReadingPage}
-                          </div>
-                          <div className="truncate text-[11px] font-medium leading-tight text-amber-100/65 tabular-nums">
-                            {playerStatus === "starting" ? t.premiumReaderStarting
-                              : playerStatus === "completed" ? t.premiumReaderCompleted
-                              : t.premiumReaderPageXofY
-                                  .replace("{page}", String(displayLabel || readerPage))
-                                  .replace("{total}", String(totalPages))}
-                          </div>
-                        </div>
-                        <div className="flex flex-shrink-0 items-center gap-1">
-                          <button onClick={togglePlayerMinimized} title={t.premiumReaderMinimize} aria-label={t.premiumReaderMinimize}
-                            className="ndl-press flex h-7 w-7 items-center justify-center rounded-full bg-white/10 text-xs text-amber-50 hover:bg-white/20">−</button>
-                          <button onClick={closeReader} title={t.commonClose} aria-label={t.commonClose}
-                            className="ndl-press flex h-7 w-7 items-center justify-center rounded-full bg-white/10 text-xs text-amber-50 hover:bg-white/20">✕</button>
-                        </div>
-                      </div>
-                      <div className="flex items-center justify-between gap-2 border-t border-white/10 pt-2.5">
-                        <select
-                          value={playerSpeed}
-                          onChange={(e) => {
-                            const next = Number(e.target.value);
-                            // Applied to the ref synchronously (not just
-                            // via setState, which only reaches
-                            // playerSpeedRef a render later through its
-                            // own effect) so the restart below builds its
-                            // new utterance at the right rate
-                            // immediately, not the stale one.
-                            playerSpeedRef.current = next;
-                            setPlayerSpeed(next);
-                            restartCurrentChunkAtNewSpeed();
-                          }}
-                          aria-label={t.premiumReaderPlaybackSpeed} title={t.premiumReaderPlaybackSpeed}
-                          className="ndl-chrome-fade flex-shrink-0 rounded-full border-none bg-white/15 px-2.5 py-1 text-[11px] font-bold tabular-nums text-amber-50 hover:bg-white/20"
-                        >
-                          <option value={0.75}>0.75×</option>
-                          <option value={1}>1.0×</option>
-                          <option value={1.25}>1.25×</option>
-                          <option value={1.5}>1.5×</option>
-                          <option value={2}>2.0×</option>
-                        </select>
-                        {/* Sleep Timer — optional per spec, kept
-                            intentionally minimal (one native <select>) to
-                            stay compact. */}
-                        <select
-                          value={sleepTimerOption}
-                          onChange={(e) => applySleepTimer(e.target.value as SleepTimerOption)}
-                          aria-label={t.premiumReaderSleepTimer} title={t.premiumReaderSleepTimer}
-                          className="ndl-chrome-fade flex-shrink-0 rounded-full border-none bg-white/15 px-2.5 py-1 text-[10px] font-bold text-amber-50 hover:bg-white/20"
-                        >
-                          <option value="off">⏰ {t.premiumReaderSleepOff}</option>
-                          <option value="15">15 min</option>
-                          <option value="30">30 min</option>
-                          <option value="45">45 min</option>
-                          <option value="60">60 min</option>
-                          <option value="endOfChapter">{t.premiumReaderSleepEndOfChapter}</option>
-                          <option value="endOfBook">{t.premiumReaderSleepEndOfBook}</option>
-                        </select>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* ── Enhanced Read Aloud: page-level resume prompt — shown
-                  only when Read Book is started and a previously saved
-                  position exists for THIS book at a different page.
-                  Intentionally simple per spec: page number only, no
-                  sentence/timestamp state. ─────────────────────────────── */}
-              {resumePromptPage !== null && (
-                <div className="ndl-fade-in-scale fixed inset-0 z-[161] flex items-center justify-center bg-black/40 p-4">
-                  <div className="w-full max-w-xs rounded-2xl bg-white p-5 text-center shadow-xl">
-                    <p className="mb-4 text-sm font-bold text-slate-800">
-                      {t.premiumReaderResumeFromPage.replace("{page}", String(resumePromptPage))}
-                    </p>
-                    <div className="flex flex-col gap-2">
-                      <button onClick={confirmResumeFromSaved}
-                        className="ndl-press w-full rounded-full bg-slate-900 px-4 py-2 text-xs font-bold text-white hover:bg-slate-800">
-                        {t.premiumReaderResume}
-                      </button>
-                      <button onClick={confirmStartFromCurrentPage}
-                        className="ndl-press w-full rounded-full bg-slate-100 px-4 py-2 text-xs font-bold text-slate-700 hover:bg-slate-200">
-                        {t.premiumReaderStartFromCurrentPage}
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* ── Enhanced Read Aloud: chapter-unavailable prompt — shown
-                  when Read Chapter's heading scan (findChapterEndPage)
-                  genuinely can't find a plausible chapter boundary, per
-                  the spec's exact required message. Never invents a
-                  boundary instead. ──────────────────────────────────────── */}
-              {chapterUnavailableOpen && (
-                <div className="ndl-fade-in-scale fixed inset-0 z-[161] flex items-center justify-center bg-black/40 p-4">
-                  <div className="w-full max-w-xs rounded-2xl bg-white p-5 text-center shadow-xl">
-                    <p className="mb-4 text-sm font-bold text-slate-800">{t.premiumReaderChapterUnavailableMsg}</p>
-                    <div className="flex flex-col gap-2">
-                      <button onClick={continueBookAfterChapterUnavailable}
-                        className="ndl-press w-full rounded-full bg-slate-900 px-4 py-2 text-xs font-bold text-white hover:bg-slate-800">
-                        {t.premiumReaderContinueBookInstead}
-                      </button>
-                      <button onClick={() => setChapterUnavailableOpen(false)}
-                        className="ndl-press w-full rounded-full bg-slate-100 px-4 py-2 text-xs font-bold text-slate-700 hover:bg-slate-200">
-                        {t.commonCancel}
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              )}
+              {/* ── Unified Reading Engine: persistent Reading Player +
+                  its resume/chapter-unavailable dialogs. Rendered from
+                  the single shared `readingEngineOverlays` value defined
+                  above `return` — also mounted from the desktop branch —
+                  so mobile and desktop share the exact same JSX/handlers,
+                  never a second copy or a second state machine. */}
+              {readingEngineOverlays}
 
               {/* ── Honest "Add to Home Screen" hint — see
                   showHomeScreenHint's own comment above for the full
