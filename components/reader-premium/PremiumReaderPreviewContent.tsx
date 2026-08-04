@@ -4457,12 +4457,32 @@ export default function PremiumReaderPreviewContent() {
                   }}
                   aria-label={t.premiumReaderPlaybackSpeed} title={t.premiumReaderPlaybackSpeed}
                   className="ndl-chrome-fade flex-shrink-0 rounded-full border-none bg-white/15 px-2.5 py-1 text-[11px] font-bold tabular-nums text-amber-50 hover:bg-white/20"
+                  // Root cause of the "invisible options" bug: className
+                  // only ever styles the CLOSED control — the open
+                  // options popup is a separate, browser-native overlay
+                  // that never inherits the semi-transparent bg-white/15
+                  // (native popups aren't composited over the page, so
+                  // that alpha effectively renders as opaque white/light
+                  // in most browsers) while `text-amber-50` still cascades
+                  // its near-white color into each <option>. Near-white
+                  // text on that native near-white background is what was
+                  // actually invisible — hover only "worked" because the
+                  // OS's own row-highlight color briefly created contrast.
+                  // color-scheme hints the native picker chrome (scrollbar
+                  // etc.) toward dark in browsers that honor it; the real
+                  // fix is the explicit, opaque color+backgroundColor set
+                  // directly on every <option> below, which every engine
+                  // that lets author CSS reach the options popup at all
+                  // (Chrome/Edge/Firefox, and Safari to the extent it
+                  // does) will render exactly as specified — not a
+                  // workaround, the actual missing style declaration.
+                  style={{ colorScheme: "dark" }}
                 >
-                  <option value={0.75}>0.75×</option>
-                  <option value={1}>1.0×</option>
-                  <option value={1.25}>1.25×</option>
-                  <option value={1.5}>1.5×</option>
-                  <option value={2}>2.0×</option>
+                  {[0.75, 1, 1.25, 1.5, 2].map((s) => (
+                    <option key={s} value={s} style={{ color: "#fffbeb", backgroundColor: "#15130f" }}>
+                      {s === 1 ? "1.0×" : `${s}×`}
+                    </option>
+                  ))}
                 </select>
                 {/* Sleep Timer — optional per spec, kept
                     intentionally minimal (one native <select>) to
@@ -4472,14 +4492,15 @@ export default function PremiumReaderPreviewContent() {
                   onChange={(e) => applySleepTimer(e.target.value as SleepTimerOption)}
                   aria-label={t.premiumReaderSleepTimer} title={t.premiumReaderSleepTimer}
                   className="ndl-chrome-fade flex-shrink-0 rounded-full border-none bg-white/15 px-2.5 py-1 text-[10px] font-bold text-amber-50 hover:bg-white/20"
+                  style={{ colorScheme: "dark" }}
                 >
-                  <option value="off">⏰ {t.premiumReaderSleepOff}</option>
-                  <option value="15">15 min</option>
-                  <option value="30">30 min</option>
-                  <option value="45">45 min</option>
-                  <option value="60">60 min</option>
-                  <option value="endOfChapter">{t.premiumReaderSleepEndOfChapter}</option>
-                  <option value="endOfBook">{t.premiumReaderSleepEndOfBook}</option>
+                  <option value="off" style={{ color: "#fffbeb", backgroundColor: "#15130f" }}>⏰ {t.premiumReaderSleepOff}</option>
+                  <option value="15" style={{ color: "#fffbeb", backgroundColor: "#15130f" }}>15 min</option>
+                  <option value="30" style={{ color: "#fffbeb", backgroundColor: "#15130f" }}>30 min</option>
+                  <option value="45" style={{ color: "#fffbeb", backgroundColor: "#15130f" }}>45 min</option>
+                  <option value="60" style={{ color: "#fffbeb", backgroundColor: "#15130f" }}>60 min</option>
+                  <option value="endOfChapter" style={{ color: "#fffbeb", backgroundColor: "#15130f" }}>{t.premiumReaderSleepEndOfChapter}</option>
+                  <option value="endOfBook" style={{ color: "#fffbeb", backgroundColor: "#15130f" }}>{t.premiumReaderSleepEndOfBook}</option>
                 </select>
               </div>
             </div>

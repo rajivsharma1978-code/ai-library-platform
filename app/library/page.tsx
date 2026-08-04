@@ -76,6 +76,17 @@ export default function LibraryPage() {
 
   useEffect(() => {
     setSavedIds(new Set(readMyLibrary().map(e => (typeof e === "string" ? e : e?.bookId)).filter(Boolean) as string[]));
+    // Picks up a `?q=` handed off from Explore's topic/career/collection
+    // cards (Explore is discovery-only and deliberately has no book grid
+    // of its own — this is what lets its cards actually surface matching
+    // books here instead of being pure dead ends). Read directly off
+    // `window.location` rather than `useSearchParams()` so this page
+    // doesn't need a Suspense boundary for static export; a plain client-
+    // side read after mount is all a one-time initial-value handoff needs.
+    try {
+      const q = new URLSearchParams(window.location.search).get("q");
+      if (q) setSearch(q);
+    } catch { /* ignore */ }
     setMounted(true);
   }, []);
 
