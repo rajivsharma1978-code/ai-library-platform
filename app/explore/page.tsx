@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { UI_TEXT } from "@/lib/i18n";
 import { useLanguage } from "@/lib/useLanguage";
 import { usePublicCatalog, type CatalogBook } from "@/lib/catalog";
@@ -226,25 +225,292 @@ function formatRemaining(p: ReadingProgressEntry, t: UIText): string {
   return t.exploreContinueHoursMinutesTemplate.replace("{hours}", String(hours)).replace("{minutes}", String(minutes));
 }
 
+// ══════════════════════════════════════════════════════════════════════
+// Explore detail system — ONE reusable content shape + renderer, built
+// by small per-section functions below, instead of a separate page/
+// component per section. Every card that used to jump straight to
+// /library now opens one of these (in the ExploreDetailSheet modal, or
+// inline for Surprise Me), and only the actions that are genuinely a
+// "go search the catalog" step still carry a /library href. ═══════════
+type DetailKind = "topic" | "career" | "learningPath" | "collection" | "book";
+
+interface DetailAction {
+  label: string;
+  variant?: "primary" | "secondary" | "ghost";
+  href?: string;
+  onClick?: () => void;
+}
+
+interface DetailListSection {
+  label: string;
+  items: string[];
+}
+
+interface DetailContent {
+  kind: DetailKind;
+  kindLabel: string;
+  icon: string;
+  title: string;
+  description: string;
+  badges?: { icon: string; label: string }[];
+  lists?: DetailListSection[];
+  actions: DetailAction[];
+}
+
+// Best-effort real-book match for a topic label, so "Start Learning"
+// from a topic can open an actual catalog book instead of always
+// falling back to AI Tutor — falls back gracefully since the demo
+// catalog only has a few real titles.
+function bestBookForTopic(label: string, catalog: CatalogBook[]): CatalogBook | null {
+  const needle = label.toLowerCase();
+  return catalog.find((b) => (b.category && b.category.toLowerCase().includes(needle)) || b.title.toLowerCase().includes(needle)) ?? null;
+}
+
+function buildTopicDetail(topic: { icon: string; key: keyof UIText }, t: UIText, catalog: CatalogBook[]): DetailContent {
+  const label = t[topic.key];
+  const learners = pickRange(topic.key, 2000, 24000);
+  const book = bestBookForTopic(label, catalog);
+  return {
+    kind: "topic",
+    kindLabel: t.exploreDetailKindTopic,
+    icon: topic.icon,
+    title: label,
+    description: t.exploreTopicOverviewTemplate.replace("{learners}", learners.toLocaleString()),
+    badges: [
+      { icon: "🔥", label: t.exploreTrendingBadge },
+      { icon: "🗺️", label: t.explorePathAiName },
+    ],
+    actions: [
+      { label: t.exploreActionViewRelatedBooks, variant: "secondary", href: `/library?q=${encodeURIComponent(label)}` },
+      { label: t.exploreStartLearningCta, variant: "primary", href: book ? `/reader-premium?book=${book.id}` : "/ai-tutor" },
+      { label: t.exploreActionAskAiTutor, variant: "ghost", href: "/ai-tutor" },
+    ],
+  };
+}
+
+function buildCareerDetail(career: { icon: string; key: keyof UIText }, t: UIText, openDetail: (c: DetailContent) => void, readingTargetHref: string): DetailContent {
+  const label = t[career.key];
+  const books = pickRange(career.key, 20, 60);
+  const hours = pickRange(`${career.key}::dur`, 40, 150);
+  const skills = skillsFor(career.key, t);
+  return {
+    kind: "career",
+    kindLabel: t.exploreDetailKindCareer,
+    icon: career.icon,
+    title: label,
+    description: t.exploreCareerOverviewTemplate.replace("{career}", label),
+    badges: [
+      { icon: "📚", label: t.exploreCareerRecommendedBooksTemplate.replace("{count}", String(books)) },
+      { icon: "⏱", label: t.exploreHoursTemplate.replace("{count}", String(hours)) },
+      { icon: "🤖", label: t.exploreAiTutorLabel },
+    ],
+    lists: [{ label: t.exploreCareerSkillsLabel, items: skills }],
+    actions: [
+      { label: t.exploreActionViewCareerPath, variant: "secondary", href: "#ai-knowledge-journey" },
+      { label: t.exploreStartLearningCta, variant: "primary", onClick: () => openDetail(buildJourneyStageDetail(CURRENT_JOURNEY_STAGE, t, openDetail, readingTargetHref)) },
+      { label: t.exploreActionBrowseRelatedBooks, variant: "ghost", href: `/library?q=${encodeURIComponent(label)}` },
+    ],
+  };
+}
+
+// Shared by both AI Learning Paths (compact) and Knowledge Journey 2.0
+// entry points — same six-stage data model, so both open the same
+// state-dependent detail rather than two parallel content shapes.
+function buildJourneyStageDetail(
+  stage: typeof JOURNEY_STAGES[number],
+  t: UIText,
+  openDetail: (c: DetailContent) => void,
+  readingTargetHref: string
+): DetailContent {
+  const idx = JOURNEY_STAGES.findIndex((s) => s.key === stage.key);
+  const prev = idx > 0 ? JOURNEY_STAGES[idx - 1] : null;
+  const next = idx < JOURNEY_STAGES.length - 1 ? JOURNEY_STAGES[idx + 1] : null;
+  const stateLabel = stageStateLabel(stage.state, t);
+  const label = t[stage.key];
+
+  const badges = [
+    { icon: "📚", label: t.explorePathBooksTemplate.replace("{count}", String(stage.books)) },
+    { icon: "⏱", label: t.exploreHoursTemplate.replace("{count}", String(stage.hours)) },
+    { icon: "🤖", label: t.exploreAiTutorLabel },
+  ];
+  if (stage.quiz) badges.push({ icon: "📝", label: t.exploreQuizLabel });
+
+  let description = stateLabel;
+  let primaryActions: DetailAction[] = [];
+  const lists: DetailListSection[] = [];
+
+  if (stage.state === "completed") {
+    description = `${stateLabel} — ${t.explorePathBooksTemplate.replace("{count}", String(stage.books))}`;
+    primaryActions = [
+      { label: t.exploreActionReviewProgress, variant: "primary", href: "/my-space" },
+      { label: t.exploreActionRevisitBooks, variant: "secondary", href: `/library?q=${encodeURIComponent(label)}` },
+      { label: t.exploreActionRetakeQuiz, variant: "ghost", href: "/quiz" },
+    ];
+  } else if (stage.state === "current") {
+    description = `${stateLabel} · ${t.explorePercentCompleteTemplate.replace("{percent}", String(CURRENT_STAGE_PERCENT))}`;
+    primaryActions = [
+      { label: t.exploreContinueReadingAction, variant: "primary", href: readingTargetHref },
+      { label: t.exploreActionOpenAiTutor, variant: "secondary", href: "/ai-tutor" },
+      { label: t.exploreActionViewBooks, variant: "ghost", href: `/library?q=${encodeURIComponent(label)}` },
+    ];
+  } else if (stage.state === "recommendedNext") {
+    description = prev ? t.exploreJourneyRecommendReasonTemplate.replace("{stage}", t[prev.key]) : stateLabel;
+    primaryActions = [
+      { label: t.exploreActionStartStage, variant: "primary", href: readingTargetHref },
+      { label: t.exploreActionOpenAiTutor, variant: "secondary", href: "/ai-tutor" },
+      { label: t.exploreActionViewBooks, variant: "ghost", href: `/library?q=${encodeURIComponent(label)}` },
+    ];
+  } else {
+    // locked / futureGoal — show prerequisites, never navigate directly.
+    description = stateLabel;
+    lists.push({ label: t.exploreLabelPrerequisites, items: JOURNEY_STAGES.slice(0, idx).map((s) => t[s.key]) });
+  }
+
+  const navActions: DetailAction[] = [];
+  if (prev) navActions.push({ label: `${t.exploreLabelPreviousStage}: ${t[prev.key]}`, variant: "ghost", onClick: () => openDetail(buildJourneyStageDetail(prev, t, openDetail, readingTargetHref)) });
+  if (next) navActions.push({ label: `${t.exploreLabelNextStage}: ${t[next.key]}`, variant: "ghost", onClick: () => openDetail(buildJourneyStageDetail(next, t, openDetail, readingTargetHref)) });
+
+  return {
+    kind: "learningPath",
+    kindLabel: t.exploreDetailKindJourneyStage,
+    icon: stage.icon,
+    title: label,
+    description,
+    badges,
+    lists,
+    actions: [...primaryActions, ...navActions],
+  };
+}
+
+// The compact "AI Learning Paths" entry point — same stage data, but a
+// simpler state-agnostic action set (Start Stage / Open AI Tutor / View
+// Books) per spec, distinct from Knowledge Journey 2.0's state-dependent
+// detail above.
+function buildPathStageDetailSimple(
+  stage: typeof JOURNEY_STAGES[number],
+  t: UIText,
+  openDetail: (c: DetailContent) => void,
+  readingTargetHref: string
+): DetailContent {
+  const idx = JOURNEY_STAGES.findIndex((s) => s.key === stage.key);
+  const prev = idx > 0 ? JOURNEY_STAGES[idx - 1] : null;
+  const next = idx < JOURNEY_STAGES.length - 1 ? JOURNEY_STAGES[idx + 1] : null;
+  const stateLabel = stageStateLabel(stage.state, t);
+  const label = t[stage.key];
+
+  const badges = [
+    { icon: "📚", label: t.explorePathBooksTemplate.replace("{count}", String(stage.books)) },
+    { icon: "⏱", label: t.exploreHoursTemplate.replace("{count}", String(stage.hours)) },
+    { icon: "🤖", label: t.exploreAiTutorLabel },
+  ];
+  if (stage.quiz) badges.push({ icon: "📝", label: t.exploreQuizLabel });
+
+  let description = `${stateLabel} — ${t.explorePathBooksTemplate.replace("{count}", String(stage.books))} · ${t.exploreHoursTemplate.replace("{count}", String(stage.hours))}`;
+  if (stage.state === "current") {
+    description += ` · ${t.explorePercentCompleteTemplate.replace("{percent}", String(CURRENT_STAGE_PERCENT))}`;
+  }
+
+  const navActions: DetailAction[] = [];
+  if (prev) navActions.push({ label: `${t.exploreLabelPreviousStage}: ${t[prev.key]}`, variant: "ghost", onClick: () => openDetail(buildPathStageDetailSimple(prev, t, openDetail, readingTargetHref)) });
+  if (next) navActions.push({ label: `${t.exploreLabelNextStage}: ${t[next.key]}`, variant: "ghost", onClick: () => openDetail(buildPathStageDetailSimple(next, t, openDetail, readingTargetHref)) });
+
+  return {
+    kind: "learningPath",
+    kindLabel: t.exploreDetailKindLearningPath,
+    icon: stage.icon,
+    title: label,
+    description,
+    badges,
+    actions: [
+      { label: t.exploreActionStartStage, variant: "primary", href: readingTargetHref },
+      { label: t.exploreActionOpenAiTutor, variant: "secondary", href: "/ai-tutor" },
+      { label: t.exploreActionViewBooks, variant: "ghost", href: `/library?q=${encodeURIComponent(label)}` },
+      ...navActions,
+    ],
+  };
+}
+
+function buildCollectionDetail(c: { icon: string; titleKey: keyof UIText; descKey: keyof UIText }, t: UIText, catalog: CatalogBook[]): DetailContent {
+  const label = t[c.titleKey];
+  const books = pickRange(c.titleKey, 8, 40);
+  const hours = pickRange(`${c.titleKey}::dur`, 4, 30);
+  const difficulty = difficultyFor(c.titleKey, t);
+  const included = catalog.slice(0, Math.min(3, catalog.length)).map((b) => b.title);
+  const firstBook = catalog[0] ?? null;
+  return {
+    kind: "collection",
+    kindLabel: t.exploreDetailKindCollection,
+    icon: c.icon,
+    title: label,
+    description: t[c.descKey],
+    badges: [
+      { icon: "📚", label: t.explorePathBooksTemplate.replace("{count}", String(books)) },
+      { icon: "⏱", label: t.exploreHoursTemplate.replace("{count}", String(hours)) },
+      { icon: "🎓", label: difficulty },
+      { icon: "🤖", label: t.exploreCollectionsAiTutorReady },
+    ],
+    lists: included.length > 0 ? [{ label: t.exploreLabelIncludedBooks, items: included }] : [],
+    actions: [
+      { label: t.exploreActionStartFirstBook, variant: "primary", href: firstBook ? `/reader-premium?book=${firstBook.id}` : "/library" },
+      { label: t.exploreActionViewAllInLibrary, variant: "secondary", href: `/library?q=${encodeURIComponent(label)}` },
+    ],
+  };
+}
+
+function buildBookDetail(book: CatalogBook, t: UIText): DetailContent {
+  const difficulty = difficultyFor(book.id, t);
+  const hours = pickRange(`${book.id}::rec`, 3, 10);
+  return {
+    kind: "book",
+    kindLabel: t.exploreDetailKindBook,
+    icon: "📖",
+    title: book.title,
+    description: book.category ? t.exploreRecommendationReasonTemplate.replace("{topic}", book.category) : "",
+    badges: [
+      { icon: "📊", label: difficulty },
+      { icon: "⏱", label: t.exploreHoursTemplate.replace("{count}", String(hours)) },
+      { icon: "🤖", label: t.exploreAiTutorLabel },
+    ],
+    actions: [
+      { label: t.exploreStartLearningCta, variant: "primary", href: `/reader-premium?book=${book.id}` },
+      { label: t.exploreActionViewBookDetails, variant: "secondary", href: `/library?q=${encodeURIComponent(book.title)}` },
+    ],
+  };
+}
+
 export default function ExplorePage() {
   const { language } = useLanguage();
   const t = UI_TEXT[language];
   const catalog = usePublicCatalog();
-  const router = useRouter();
 
   const [progress, setProgress] = useState<ReadingProgressEntry[]>([]);
-  const [surpriseTopic, setSurpriseTopic] = useState<{ icon: string; label: string } | null>(null);
-  const [shuffling, setShuffling] = useState(false);
-  const [revealing, setRevealing] = useState(false);
-  const surpriseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // The one shared detail panel — every card/section that used to jump
+  // straight to /library now opens its content here instead.
+  const [detailContent, setDetailContent] = useState<DetailContent | null>(null);
+  const openDetail = (content: DetailContent) => setDetailContent(content);
+  const closeDetailPanel = () => setDetailContent(null);
+
+  // Surprise Me — explicit idle/shuffling/result state machine. No
+  // router navigation ever happens inside the shuffle timer; the result
+  // stays on screen until the learner picks Try Again, Close, or one of
+  // the recommendation's own actions.
+  type SurpriseState = "idle" | "shuffling" | "result";
+  const [surpriseState, setSurpriseState] = useState<SurpriseState>("idle");
+  const [surpriseShuffleItem, setSurpriseShuffleItem] = useState<{ icon: string; label: string } | null>(null);
+  const [surpriseResult, setSurpriseResult] = useState<DetailContent | null>(null);
   const shuffleIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  function clearShuffleTimer() {
+    if (shuffleIntervalRef.current) {
+      clearInterval(shuffleIntervalRef.current);
+      shuffleIntervalRef.current = null;
+    }
+  }
 
   useEffect(() => {
     setProgress(readProgress());
-    return () => {
-      if (surpriseTimerRef.current) clearTimeout(surpriseTimerRef.current);
-      if (shuffleIntervalRef.current) clearInterval(shuffleIntervalRef.current);
-    };
+    return () => clearShuffleTimer();
   }, []);
 
   const period = periodOfDay();
@@ -302,45 +568,64 @@ export default function ExplorePage() {
     ];
   }, [t, continueLearning, dailyBook]);
 
-  // Surprise Me's pool spans every category the page itself links to
-  // (topics, the learning path, careers, collections, and real books) —
-  // "Book / Topic / Collection / Career / Learning Path" per spec.
-  const surprisePool = useMemo(() => {
-    const pool: { icon: string; label: string; href: string }[] = [];
-    TRENDING_TOPICS.forEach((topic) => pool.push({ icon: topic.icon, label: t[topic.key], href: `/library?q=${encodeURIComponent(t[topic.key])}` }));
-    pool.push({ icon: "🎯", label: t.explorePathAiName, href: `/library?q=${encodeURIComponent(t.explorePathAiName)}` });
-    CAREERS.forEach((career) => pool.push({ icon: career.icon, label: t[career.key], href: `/library?q=${encodeURIComponent(t[career.key])}` }));
-    COLLECTIONS.forEach((c) => pool.push({ icon: c.icon, label: t[c.titleKey], href: `/library?q=${encodeURIComponent(t[c.titleKey])}` }));
-    catalog.forEach((book) => pool.push({ icon: "📖", label: book.title, href: `/reader-premium?book=${book.id}` }));
-    return pool;
-  }, [t, catalog]);
+  // What "Start Stage" / "Continue Reading" inside a learning-path/
+  // journey-stage detail actually opens — whatever's in progress, or
+  // today's pick as a fallback, same book Continue Learning already uses.
+  const readingTargetHref = useMemo(() => {
+    const book = continueLearning[0]?.book ?? dailyBook;
+    return book ? `/reader-premium?book=${book.id}` : "/library";
+  }, [continueLearning, dailyBook]);
 
-  // Every click: shuffle rapidly through random picks ("Loading… /
-  // shuffle cards" per spec), then settle on one final pick and
-  // auto-navigate — never repeating the immediately-previous result.
-  function surpriseMe() {
-    if (shuffling || revealing || surprisePool.length === 0) return;
-    setShuffling(true);
+  // Surprise Me's pool spans every category the page itself links to —
+  // "Book / Topic / Collection / Career / Learning Path" per spec. Each
+  // entry lazily builds its full DetailContent only once picked, so the
+  // rapid shuffle itself stays cheap (just swapping icon/label).
+  const surprisePool = useMemo(() => {
+    const pool: { icon: string; label: string; build: () => DetailContent }[] = [];
+    TRENDING_TOPICS.forEach((topic) => pool.push({ icon: topic.icon, label: t[topic.key], build: () => buildTopicDetail(topic, t, catalog) }));
+    JOURNEY_STAGES.forEach((stage) => pool.push({ icon: stage.icon, label: t[stage.key], build: () => buildJourneyStageDetail(stage, t, openDetail, readingTargetHref) }));
+    CAREERS.forEach((career) => pool.push({ icon: career.icon, label: t[career.key], build: () => buildCareerDetail(career, t, openDetail, readingTargetHref) }));
+    COLLECTIONS.forEach((c) => pool.push({ icon: c.icon, label: t[c.titleKey], build: () => buildCollectionDetail(c, t, catalog) }));
+    catalog.forEach((book) => pool.push({ icon: "📖", label: book.title, build: () => buildBookDetail(book, t) }));
+    return pool;
+  }, [t, catalog, readingTargetHref]);
+
+  // The one shuffle loop — 4 to 6 items at ~500ms each, then stop on a
+  // single final recommendation and stay there. No router navigation
+  // happens in here; the result is just state, shown inline until the
+  // learner acts on it.
+  function runShuffle() {
+    clearShuffleTimer();
+    setSurpriseResult(null);
+    if (surprisePool.length === 0) return;
+    setSurpriseState("shuffling");
+    const totalTicks = 4 + Math.floor(Math.random() * 3);
     let ticks = 0;
     shuffleIntervalRef.current = setInterval(() => {
-      const random = surprisePool[Math.floor(Math.random() * surprisePool.length)];
-      setSurpriseTopic({ icon: random.icon, label: random.label });
+      const candidate = surprisePool[Math.floor(Math.random() * surprisePool.length)];
+      setSurpriseShuffleItem({ icon: candidate.icon, label: candidate.label });
       ticks += 1;
-      if (ticks >= 6) {
-        if (shuffleIntervalRef.current) clearInterval(shuffleIntervalRef.current);
-        shuffleIntervalRef.current = null;
-        setShuffling(false);
-        let finalPick = surprisePool[Math.floor(Math.random() * surprisePool.length)];
-        if (surprisePool.length > 1) {
-          while (finalPick.label === random.label) {
-            finalPick = surprisePool[Math.floor(Math.random() * surprisePool.length)];
-          }
-        }
-        setSurpriseTopic({ icon: finalPick.icon, label: finalPick.label });
-        setRevealing(true);
-        surpriseTimerRef.current = setTimeout(() => router.push(finalPick.href), 700);
+      if (ticks >= totalTicks) {
+        clearShuffleTimer();
+        const finalPick = surprisePool[Math.floor(Math.random() * surprisePool.length)];
+        setSurpriseShuffleItem({ icon: finalPick.icon, label: finalPick.label });
+        setSurpriseResult(finalPick.build());
+        setSurpriseState("result");
       }
-    }, 150);
+    }, 500);
+  }
+  function startSurprise() {
+    if (surpriseState !== "idle") return;
+    runShuffle();
+  }
+  function tryAgainSurprise() {
+    runShuffle();
+  }
+  function closeSurprise() {
+    clearShuffleTimer();
+    setSurpriseState("idle");
+    setSurpriseShuffleItem(null);
+    setSurpriseResult(null);
   }
 
   return (
@@ -383,9 +668,12 @@ export default function ExplorePage() {
                   <StatBadge tone="dark" icon="🤖" label={t.exploreAiTutorAvailableLabel} />
                   {isDailyBookContinuing && <StatBadge tone="dark" icon="🔄" label={t.exploreContinueLearningBadge} />}
                 </div>
-                <div className="mt-5 flex justify-center sm:justify-start">
+                <div className="mt-5 flex flex-wrap justify-center gap-2 sm:justify-start">
                   <AppButton href={`/reader-premium?book=${dailyBook.id}`} variant="accent" size="md">
                     🤖 {t.exploreDailyCta}
+                  </AppButton>
+                  <AppButton href="/ai-tutor" variant="secondary" size="md">
+                    🤖 {t.exploreActionAskAiTutor}
                   </AppButton>
                 </div>
               </div>
@@ -403,11 +691,12 @@ export default function ExplorePage() {
             const learnersLabel = t.exploreLearnersTemplate.replace("{count}", learners.toLocaleString());
             const trendLabel = t.exploreTrendingUpTemplate.replace("{percent}", String(trendPercent));
             return (
-              <Link
+              <button
                 key={topic.key}
-                href={`/library?q=${encodeURIComponent(t[topic.key])}`}
+                type="button"
+                onClick={() => openDetail(buildTopicDetail(topic, t, catalog))}
                 aria-label={`${t[topic.key]} — ${t.exploreTrendingBadge}, ${trendLabel}, ${learnersLabel}${recommended ? `, ${t.exploreRecommendedBadge}` : ""}`}
-                className="ndl-press relative flex flex-col items-center gap-1.5 rounded-3xl bg-white px-4 py-6 text-center shadow-[0_10px_30px_rgba(75,45,12,0.08)] ring-1 ring-black/5 hover:-translate-y-0.5 hover:shadow-[0_16px_40px_rgba(75,45,12,0.14)]"
+                className="ndl-press relative flex w-full flex-col items-center gap-1.5 rounded-3xl bg-white px-4 py-6 text-center shadow-[0_10px_30px_rgba(75,45,12,0.08)] ring-1 ring-black/5 hover:-translate-y-0.5 hover:shadow-[0_16px_40px_rgba(75,45,12,0.14)]"
               >
                 {recommended && (
                   <span className="absolute right-2.5 top-2.5 rounded-full bg-emerald-500 px-2 py-0.5 text-[9px] font-black uppercase tracking-wide text-white">
@@ -425,7 +714,7 @@ export default function ExplorePage() {
                 </span>
                 <span className="text-[10px] font-bold tabular-nums text-emerald-600">{trendLabel}</span>
                 <span className="text-[10px] font-medium tabular-nums text-slate-400">{learnersLabel}</span>
-              </Link>
+              </button>
             );
           })}
         </div>
@@ -444,7 +733,12 @@ export default function ExplorePage() {
             {JOURNEY_STAGES.map((stage, i) => (
               <div key={stage.key} className="flex min-w-0 flex-1 flex-col items-center sm:flex-row">
                 <div className="w-full min-w-0">
-                  <JourneyStageCard stage={stage} t={t} compact />
+                  <JourneyStageCard
+                    stage={stage}
+                    t={t}
+                    compact
+                    onOpen={() => openDetail(buildPathStageDetailSimple(stage, t, openDetail, readingTargetHref))}
+                  />
                 </div>
                 {i < JOURNEY_STAGES.length - 1 && (
                   <span className="flex-shrink-0 py-1 text-lg text-amber-400 sm:px-1" aria-hidden>
@@ -509,7 +803,7 @@ export default function ExplorePage() {
             for it; portrait phones and tablets get a clean vertical
             stack instead of a cramped horizontal squeeze. ───────────── */}
         <SectionHeading title={t.exploreJourneyTitle} subtitle={t.exploreJourneySubtitle} />
-        <div className="rounded-[2rem] bg-white p-6 shadow-[0_20px_60px_rgba(75,45,12,0.10)] ring-1 ring-black/5 sm:p-8">
+        <div id="ai-knowledge-journey" className="scroll-mt-24 rounded-[2rem] bg-white p-6 shadow-[0_20px_60px_rgba(75,45,12,0.10)] ring-1 ring-black/5 sm:p-8">
           <span className="mb-5 inline-flex items-center gap-1.5 rounded-full bg-slate-900 px-3 py-1 text-[10px] font-black uppercase tracking-widest text-white">
             {t.exploreDifficultyBeginner}
           </span>
@@ -517,7 +811,11 @@ export default function ExplorePage() {
             {JOURNEY_STAGES.map((stage, i) => (
               <div key={stage.key} className="flex min-w-0 flex-1 flex-col items-center lg:flex-row">
                 <div className="w-full min-w-0">
-                  <JourneyStageCard stage={stage} t={t} />
+                  <JourneyStageCard
+                    stage={stage}
+                    t={t}
+                    onOpen={() => openDetail(buildJourneyStageDetail(stage, t, openDetail, readingTargetHref))}
+                  />
                 </div>
                 {i < JOURNEY_STAGES.length - 1 && <FlowConnector animated />}
               </div>
@@ -535,10 +833,11 @@ export default function ExplorePage() {
             const hours = pickRange(`${career.key}::dur`, 40, 150);
             const skills = skillsFor(career.key, t);
             return (
-              <Link
+              <button
                 key={career.key}
-                href={`/library?q=${encodeURIComponent(t[career.key])}`}
-                className="ndl-press flex flex-col items-center gap-2 rounded-3xl bg-white px-4 py-6 text-center shadow-[0_10px_30px_rgba(75,45,12,0.08)] ring-1 ring-black/5 hover:-translate-y-0.5 hover:shadow-[0_16px_40px_rgba(75,45,12,0.14)]"
+                type="button"
+                onClick={() => openDetail(buildCareerDetail(career, t, openDetail, readingTargetHref))}
+                className="ndl-press flex w-full flex-col items-center gap-2 rounded-3xl bg-white px-4 py-6 text-center shadow-[0_10px_30px_rgba(75,45,12,0.08)] ring-1 ring-black/5 hover:-translate-y-0.5 hover:shadow-[0_16px_40px_rgba(75,45,12,0.14)]"
               >
                 <span className="text-3xl" aria-hidden>{career.icon}</span>
                 <span className="text-sm font-bold text-slate-800 break-words">{t[career.key]}</span>
@@ -556,7 +855,7 @@ export default function ExplorePage() {
                     ))}
                   </div>
                 </div>
-              </Link>
+              </button>
             );
           })}
         </div>
@@ -664,6 +963,9 @@ export default function ExplorePage() {
                         <AppButton href={`/reader-premium?book=${book.id}`} variant="primary" size="sm" fullWidth>
                           {t.exploreStartLearningCta}
                         </AppButton>
+                        <AppButton href={`/library?q=${encodeURIComponent(book.title)}`} variant="secondary" size="sm" fullWidth>
+                          {t.exploreActionViewBookDetails}
+                        </AppButton>
                       </div>
                     </div>
                   );
@@ -681,10 +983,11 @@ export default function ExplorePage() {
             const hours = pickRange(`${c.titleKey}::dur`, 4, 30);
             const difficulty = difficultyFor(c.titleKey, t);
             return (
-              <Link
+              <button
                 key={c.titleKey}
-                href={`/library?q=${encodeURIComponent(t[c.titleKey])}`}
-                className="ndl-press flex flex-col gap-2 rounded-3xl bg-white p-6 shadow-[0_10px_30px_rgba(75,45,12,0.08)] ring-1 ring-black/5 hover:-translate-y-0.5 hover:shadow-[0_16px_40px_rgba(75,45,12,0.14)]"
+                type="button"
+                onClick={() => openDetail(buildCollectionDetail(c, t, catalog))}
+                className="ndl-press flex w-full flex-col gap-2 rounded-3xl bg-white p-6 text-left shadow-[0_10px_30px_rgba(75,45,12,0.08)] ring-1 ring-black/5 hover:-translate-y-0.5 hover:shadow-[0_16px_40px_rgba(75,45,12,0.14)]"
               >
                 <span className="text-3xl" aria-hidden>{c.icon}</span>
                 <h4 className="font-black text-slate-950 break-words">{t[c.titleKey]}</h4>
@@ -696,43 +999,61 @@ export default function ExplorePage() {
                   <StatBadge icon="🎓" label={difficulty} />
                 </div>
                 <span className="mt-2 text-xs font-bold text-orange-600">{t.exploreExploreCollectionCta} →</span>
-              </Link>
+              </button>
             );
           })}
         </div>
 
         {/* ── 🎲 Surprise Me — one button; every click shuffles rapidly
-            through the pool (a real "Loading… / shuffle cards" visual,
-            not just a static reveal) before settling on a random target
-            from EVERY category the page links to, then auto-navigates. */}
+            through 4-6 picks, then stops on ONE final recommendation
+            shown as a full card right here on the page. Never navigates
+            on its own — the learner picks Try Again, Close, or one of
+            the recommendation's own actions. */}
         <section className="mt-10 mb-6">
           <div className="rounded-[2rem] bg-white p-8 text-center shadow-[0_20px_60px_rgba(75,45,12,0.10)] ring-1 ring-black/5">
             <h2 className="text-lg font-black text-slate-900">{t.exploreSurpriseTitle}</h2>
             <p className="mt-1.5 text-sm text-slate-500">{t.exploreSurpriseSubtitle}</p>
-            <button
-              onClick={surpriseMe}
-              disabled={shuffling || revealing}
-              aria-label={t.exploreSurpriseButton}
-              className="ndl-press mt-5 inline-flex items-center gap-2 rounded-full bg-orange-600 px-8 py-3.5 text-sm font-bold text-white shadow-[0_10px_30px_rgba(194,65,12,0.3)] hover:bg-orange-700 disabled:opacity-60"
-            >
-              🎲 {t.exploreSurpriseButton}
-            </button>
-            {surpriseTopic && (
+            {surpriseState !== "result" && (
+              <button
+                type="button"
+                onClick={startSurprise}
+                disabled={surpriseState === "shuffling"}
+                aria-label={t.exploreSurpriseButton}
+                className="ndl-press mt-5 inline-flex items-center gap-2 rounded-full bg-orange-600 px-8 py-3.5 text-sm font-bold text-white shadow-[0_10px_30px_rgba(194,65,12,0.3)] hover:bg-orange-700 disabled:opacity-60"
+              >
+                🎲 {t.exploreSurpriseButton}
+              </button>
+            )}
+
+            {surpriseState === "shuffling" && surpriseShuffleItem && (
               <div className="ndl-fade-in-scale mt-6 flex flex-col items-center gap-3" role="status" aria-live="polite">
                 <div className="flex items-center gap-3 rounded-full bg-amber-50 px-6 py-3 ring-1 ring-amber-100">
-                  <span className={`text-2xl ${shuffling ? "motion-safe:animate-bounce" : ""}`} aria-hidden>{surpriseTopic.icon}</span>
+                  <span className="motion-safe:animate-bounce text-2xl" aria-hidden>{surpriseShuffleItem.icon}</span>
                   <div className="text-left">
-                    <p className="text-[10px] font-black uppercase tracking-widest text-amber-600">
-                      {shuffling ? t.exploreSurpriseLoading : revealing ? t.exploreSurpriseRevealing : t.exploreSurpriseResultPrefix}
-                    </p>
-                    <p className="font-black text-slate-900 break-words">{surpriseTopic.label}</p>
+                    <p className="text-[10px] font-black uppercase tracking-widest text-amber-600">{t.exploreSurpriseFindingLabel}</p>
+                    <p className="font-black text-slate-900 break-words">{surpriseShuffleItem.label}</p>
                   </div>
+                </div>
+              </div>
+            )}
+
+            {surpriseState === "result" && surpriseResult && (
+              <div className="ndl-fade-in-scale mx-auto mt-6 max-w-md rounded-3xl bg-amber-50/60 p-6 text-left ring-1 ring-amber-100" role="status" aria-live="polite">
+                <DetailPanelBody content={surpriseResult} />
+                <div className="mt-3 flex flex-wrap gap-2 border-t border-amber-100 pt-3">
+                  <AppButton variant="secondary" size="sm" onClick={tryAgainSurprise}>
+                    🔁 {t.exploreSurpriseTryAgain}
+                  </AppButton>
+                  <AppButton variant="ghost" size="sm" onClick={closeSurprise}>
+                    {t.commonClose}
+                  </AppButton>
                 </div>
               </div>
             )}
           </div>
         </section>
       </div>
+      <ExploreDetailSheet content={detailContent} onClose={closeDetailPanel} t={t} />
       <AccessibilityToolbar />
     </main>
   );
@@ -782,26 +1103,26 @@ function FlowConnector({ animated }: { animated?: boolean }) {
 // The one stage-card renderer shared by both the compact horizontal "AI
 // Learning Paths" roadmap and the full "Knowledge Journey 2.0" —
 // `compact` hides the stat badges and shrinks padding, everything else
-// (state styling, checkmark/current-stage treatment, navigation) is
-// identical between the two views. Every stage stays a real link (per
-// spec: "hover/tap any node should open Library filtered to that
-// topic") — locked/future stages are simply styled as muted rather than
-// disabled, so the roadmap never becomes a dead end. State colors:
-// completed=green, current=gold (pulsing ring), recommended=blue
-// (pulsing glow), locked/future=grey.
+// (state styling, checkmark/current-stage treatment) is identical
+// between the two views. Every stage opens its detail in-page via
+// `onOpen` rather than jumping straight to Library — locked/future
+// stages are simply styled as muted rather than disabled, so the
+// roadmap never becomes a dead end. State colors: completed=green,
+// current=gold (pulsing ring), recommended=blue (pulsing glow),
+// locked/future=grey.
 function JourneyStageCard({
-  stage, t, compact,
+  stage, t, compact, onOpen,
 }: {
   stage: typeof JOURNEY_STAGES[number];
   t: UIText;
   compact?: boolean;
+  onOpen: () => void;
 }) {
   const isCompleted = stage.state === "completed";
   const isCurrent = stage.state === "current";
   const isRecommended = stage.state === "recommendedNext";
   const isMuted = stage.state === "locked" || stage.state === "futureGoal";
   const stateLabel = stageStateLabel(stage.state, t);
-  const href = `/library?q=${encodeURIComponent(t[stage.key])}`;
 
   const stateTextClass =
     isCompleted ? "text-emerald-600" :
@@ -809,7 +1130,7 @@ function JourneyStageCard({
     isRecommended ? "text-blue-600" :
     "text-slate-400";
 
-  const cardClass = `block min-w-0 rounded-2xl ring-1 transition ${compact ? "p-2.5" : "p-3.5"} ${
+  const cardClass = `w-full min-w-0 rounded-2xl ring-1 transition ${compact ? "p-2.5" : "p-3.5"} ${
     isCurrent ? "ndl-current-stage bg-amber-50 ring-amber-300" :
     isCompleted ? "bg-emerald-50/70 ring-emerald-100" :
     isRecommended ? "ndl-recommended-glow bg-blue-50 ring-blue-300" :
@@ -818,9 +1139,10 @@ function JourneyStageCard({
   }`;
 
   return (
-    <Link
-      href={href}
-      className={`ndl-press ${cardClass}`}
+    <button
+      type="button"
+      onClick={onOpen}
+      className={`ndl-press text-left ${cardClass}`}
       aria-label={`${t[stage.key]} — ${stateLabel}${isCurrent ? `, ${t.explorePercentCompleteTemplate.replace("{percent}", String(CURRENT_STAGE_PERCENT))}` : ""}`}
     >
       <div className="flex items-center gap-2">
@@ -848,6 +1170,120 @@ function JourneyStageCard({
           <StatBadge icon="⏱" label={t.exploreHoursTemplate.replace("{count}", String(stage.hours))} />
         </div>
       )}
-    </Link>
+    </button>
+  );
+}
+
+// ── DetailPanelBody — the one content renderer shared by BOTH the
+// ExploreDetailSheet modal AND the inline Surprise Me result card, so
+// there is exactly one place that lays out kind/title/description/
+// badges/lists/actions instead of duplicating that JSX per surface.
+function DetailPanelBody({ content, onNavigate }: { content: DetailContent; onNavigate?: () => void }) {
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="flex items-start gap-3">
+        <span className="flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-2xl bg-amber-50 text-2xl ring-1 ring-amber-100" aria-hidden>
+          {content.icon}
+        </span>
+        <div className="min-w-0 flex-1">
+          <p className="text-[10px] font-black uppercase tracking-widest text-amber-600">{content.kindLabel}</p>
+          <h3 className="mt-0.5 text-lg font-black text-slate-950 break-words">{content.title}</h3>
+        </div>
+      </div>
+      {content.description && <p className="text-sm text-slate-600 break-words">{content.description}</p>}
+      {content.badges && content.badges.length > 0 && (
+        <div className="flex flex-wrap gap-1.5">
+          {content.badges.map((b, i) => (
+            <StatBadge key={i} icon={b.icon} label={b.label} />
+          ))}
+        </div>
+      )}
+      {content.lists?.map((list) => (
+        <div key={list.label}>
+          <p className="text-[10px] font-black uppercase tracking-wide text-slate-400">{list.label}</p>
+          <div className="mt-1.5 flex flex-wrap gap-1.5">
+            {list.items.map((item) => (
+              <span key={item} className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-bold text-slate-600 break-words">
+                {item}
+              </span>
+            ))}
+          </div>
+        </div>
+      ))}
+      {content.actions.length > 0 && (
+        <div className="mt-1 flex flex-col gap-2 sm:flex-row sm:flex-wrap">
+          {content.actions.map((action, i) => (
+            <DetailActionButton key={i} action={action} onNavigate={onNavigate} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function DetailActionButton({ action, onNavigate }: { action: DetailAction; onNavigate?: () => void }) {
+  const variant = action.variant ?? "secondary";
+  if (action.href) {
+    return (
+      <AppButton
+        href={action.href}
+        variant={variant}
+        size="sm"
+        onClick={() => {
+          action.onClick?.();
+          onNavigate?.();
+        }}
+      >
+        {action.label}
+      </AppButton>
+    );
+  }
+  return (
+    <AppButton type="button" variant={variant} size="sm" onClick={action.onClick}>
+      {action.label}
+    </AppButton>
+  );
+}
+
+// Desktop: centered modal. Mobile: full-width bottom sheet. Escape and
+// backdrop click both close; the close button receives focus on open.
+function ExploreDetailSheet({ content, onClose, t }: { content: DetailContent | null; onClose: () => void; t: UIText }) {
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (!content) return;
+    closeButtonRef.current?.focus();
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") onClose();
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [content, onClose]);
+
+  if (!content) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center sm:p-4">
+      <button type="button" aria-label={t.commonClose} onClick={onClose} className="absolute inset-0 bg-slate-950/50" />
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label={content.title}
+        className="ndl-fade-in-scale relative z-10 max-h-[85vh] w-full overflow-y-auto rounded-t-3xl bg-white p-6 shadow-2xl sm:max-w-md sm:rounded-3xl sm:p-8"
+      >
+        <div className="mb-2 flex items-center justify-end">
+          <button
+            ref={closeButtonRef}
+            type="button"
+            onClick={onClose}
+            aria-label={t.commonClose}
+            className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-slate-100 text-sm text-slate-500 hover:bg-slate-200"
+          >
+            ✕
+          </button>
+        </div>
+        <DetailPanelBody content={content} onNavigate={onClose} />
+      </div>
+    </div>
   );
 }
