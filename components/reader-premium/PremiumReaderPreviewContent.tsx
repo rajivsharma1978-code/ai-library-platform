@@ -38,6 +38,10 @@ import { loadVoices, pickVoiceForLanguage, stripMarkdownForSpeech, splitIntoSpee
 import { useEnabledLanguages, LANGUAGE_NAME_TO_CODE } from "@/lib/languageSettings";
 import { UI_TEXT, type Language } from "@/lib/i18n";
 import { useLanguage } from "@/lib/useLanguage";
+import {
+  getFullscreenElement, isFullscreenApiSupported, requestFullscreenCompat, exitFullscreenCompat,
+  addFullscreenChangeListener, addFullscreenErrorListener,
+} from "@/lib/fullscreen";
 
 const PdfBookSpread = dynamic(
   () => import("@/components/reader-premium/PdfBookSpread"),
@@ -701,16 +705,32 @@ export default function PremiumReaderPreviewContent() {
       if (stored !== null) setAiPanelCompact(stored === "true");
       else setAiPanelCompact(window.innerWidth < 1024); // tablet/mobile default
     } catch { /* ignore */ }
-    function onFsChange() { setIsFullscreenLayout(!!document.fullscreenElement); }
-    document.addEventListener("fullscreenchange", onFsChange);
-    setFullscreenSupported(!!document.fullscreenEnabled);
+    function onFsChange() { setIsFullscreenLayout(!!getFullscreenElement()); }
+    const removeFsListener = addFullscreenChangeListener(onFsChange);
+    setFullscreenSupported(isFullscreenApiSupported());
     setViewportWidth(window.innerWidth);
     setViewportHeight(window.innerHeight);
     function onResize() { setViewportWidth(window.innerWidth); setViewportHeight(window.innerHeight); }
     window.addEventListener("resize", onResize);
+    // Mobile fullscreen fix: window.resize alone can lag the ACTUAL
+    // visible viewport during Android/iOS's URL-bar show/hide animation
+    // on rotation — visualViewport reports the true visible area and
+    // fires its own resize event, typically sooner and more accurately
+    // than window's during that transition. Purely additive (feature-
+    // detected; degrades to window-resize-only where unsupported) and
+    // only ever narrows the tracked size toward reality, so it can only
+    // reduce white-gap/clipping risk during rotation, never introduce it.
+    function onVisualViewportResize() {
+      const vv = window.visualViewport;
+      if (!vv) return;
+      setViewportWidth(vv.width);
+      setViewportHeight(vv.height);
+    }
+    window.visualViewport?.addEventListener("resize", onVisualViewportResize);
     return () => {
-      document.removeEventListener("fullscreenchange", onFsChange);
+      removeFsListener();
       window.removeEventListener("resize", onResize);
+      window.visualViewport?.removeEventListener("resize", onVisualViewportResize);
     };
   }, []);
   // Final mobile polish point 2: a touch device (phone) rotating to
@@ -843,6 +863,41 @@ export default function PremiumReaderPreviewContent() {
     return () => { document.documentElement.removeAttribute("data-ndl-immersive-hidden"); };
   }, [isMobileLandscape, mobileChromeVisible]);
 
+  // Mobile fullscreen fix: lock body scroll/overscroll whenever the
+  // reader is in an immersive state — true Fullscreen API active
+  // (isFullscreenLayout) OR the CSS-fallback immersive landscape mode
+  // used when true fullscreen isn't granted/available (isMobileLandscape,
+  // e.g. iPhone Safari, or before the user's first tap grants it on
+  // Android). Without this, the underlying document can still rubber-
+  // band/scroll on a stray gesture, which is what lets Android/Samsung
+  // Internet's URL bar reappear even while the reader itself looks full-
+  // screen — this closes that gap. Every inline style touched is saved
+  // and restored to its EXACT prior value on cleanup (covers both
+  // "user exits fullscreen" and "component unmounts mid-immersive"), so
+  // navigating away or leaving landscape always hands the page back
+  // exactly as it was. Desktop is unaffected outside true fullscreen
+  // (isMobileLandscape is always false there), and true fullscreen on
+  // desktop already has no scrollable body to lock in the first place.
+  useEffect(() => {
+    const immersive = isFullscreenLayout || isMobileLandscape;
+    if (!immersive) return;
+    const { body } = document;
+    const html = document.documentElement;
+    const prev = {
+      bodyOverflow: body.style.overflow,
+      bodyOverscroll: body.style.overscrollBehavior,
+      htmlOverscroll: html.style.overscrollBehavior,
+    };
+    body.style.overflow = "hidden";
+    body.style.overscrollBehavior = "none";
+    html.style.overscrollBehavior = "none";
+    return () => {
+      body.style.overflow = prev.bodyOverflow;
+      body.style.overscrollBehavior = prev.bodyOverscroll;
+      html.style.overscrollBehavior = prev.htmlOverscroll;
+    };
+  }, [isFullscreenLayout, isMobileLandscape]);
+
   // Landscape accessibility fix: the Accessibility glass panel is
   // portaled outside this component's own subtree (see
   // AccessibilityToolbar's ndl-accessibility-panel-state comment), so
@@ -884,15 +939,28 @@ export default function PremiumReaderPreviewContent() {
   function requestImmersiveFullscreenOnce() {
     if (!isMobileLandscape || !fullscreenSupported) return;
     if (hasAutoRequestedFullscreenRef.current) return;
-    if (document.fullscreenElement) return;
+    if (getFullscreenElement()) return;
     hasAutoRequestedFullscreenRef.current = true;
-    try {
-      const maybePromise = document.documentElement.requestFullscreen();
-      if (maybePromise && typeof (maybePromise as Promise<void>).catch === "function") {
-        (maybePromise as Promise<void>).catch(() => setFullscreenDenied(true));
-      }
-    } catch { setFullscreenDenied(true); }
+    requestFullscreenCompat(document.documentElement).catch(() => setFullscreenDenied(true));
   }
+  // Mobile fullscreen fix — root cause of "rotating never triggers
+  // immersive mode": the effect below used to close over
+  // requestImmersiveFullscreenOnce directly with an empty dependency
+  // array, which freezes that closure (and everything IT closes over —
+  // isMobileLandscape, fullscreenSupported) at its MOUNT-time values
+  // forever. Since the component mounts with the default 1280x800
+  // viewport (isMobileLandscape=false at that instant), the orientation-
+  // change handler's call to requestImmersiveFullscreenOnce() was
+  // permanently reading a stale "not landscape" and no-opping on every
+  // real rotation, no matter the device's actual current orientation.
+  // Fix: same "always-latest" ref indirection already used for the
+  // native pointer handlers below (pointerHandlersRef) — the ref is
+  // reassigned on every render (a plain synchronous assignment, not
+  // inside an effect), so the orientationchange listener — registered
+  // once — always invokes the CURRENT render's closure instead of the
+  // first one.
+  const requestImmersiveFullscreenOnceRef = useRef(requestImmersiveFullscreenOnce);
+  requestImmersiveFullscreenOnceRef.current = requestImmersiveFullscreenOnce;
   useEffect(() => {
     function onFullscreenError() { setFullscreenDenied(true); }
     // Best-effort re-attempt on rotation — most browsers will reject this
@@ -901,12 +969,12 @@ export default function PremiumReaderPreviewContent() {
     // real prior tap; rejection is swallowed the same way either way.
     function onOrientationChange() {
       hasAutoRequestedFullscreenRef.current = false;
-      requestImmersiveFullscreenOnce();
+      requestImmersiveFullscreenOnceRef.current();
     }
-    document.addEventListener("fullscreenerror", onFullscreenError);
+    const removeErrorListener = addFullscreenErrorListener(onFullscreenError);
     window.addEventListener("orientationchange", onOrientationChange);
     return () => {
-      document.removeEventListener("fullscreenerror", onFullscreenError);
+      removeErrorListener();
       window.removeEventListener("orientationchange", onOrientationChange);
     };
   }, []);
@@ -3603,8 +3671,8 @@ export default function PremiumReaderPreviewContent() {
           case "zoomIn": v.setZoom(z => Math.min(ZOOM_MAX, z + ZOOM_STEP)); break;
           case "zoomOut": v.setZoom(z => Math.max(ZOOM_MIN, z - ZOOM_STEP)); break;
           case "fitPage": v.fitScreen(); break;
-          case "fullscreen": if (!document.fullscreenElement) document.documentElement.requestFullscreen?.(); break;
-          case "exitFullscreen": if (document.fullscreenElement) document.exitFullscreen(); break;
+          case "fullscreen": if (!getFullscreenElement()) requestFullscreenCompat(document.documentElement).catch(() => {}); break;
+          case "exitFullscreen": if (getFullscreenElement()) exitFullscreenCompat().catch(() => {}); break;
           case "read": if (v.playerMode === null) v.startReadPageFromMenu(); break;
           case "pause": if (v.playerStatus === "playing") v.pauseReader(); break;
           case "resume": if (v.playerStatus === "paused") v.resumeReader(); break;

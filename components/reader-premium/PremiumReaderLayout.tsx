@@ -4,6 +4,7 @@ import { ReactNode, forwardRef, useEffect, useImperativeHandle, useRef, useState
 import ReaderNav from "./ReaderNav";
 import { UI_TEXT } from "@/lib/i18n";
 import { useLanguage } from "@/lib/useLanguage";
+import { getFullscreenElement, requestFullscreenCompat, exitFullscreenCompat, addFullscreenChangeListener } from "@/lib/fullscreen";
 
 type PremiumReaderLayoutProps = {
   /** The whole central reading zone (toolbar + book + bottom bar) — the
@@ -66,9 +67,8 @@ const PremiumReaderLayout = forwardRef<PremiumReaderLayoutHandle, PremiumReaderL
   const t = UI_TEXT[language];
 
   useEffect(() => {
-    function handleChange() { setIsFullscreen(!!document.fullscreenElement); }
-    document.addEventListener("fullscreenchange", handleChange);
-    return () => document.removeEventListener("fullscreenchange", handleChange);
+    function handleChange() { setIsFullscreen(!!getFullscreenElement()); }
+    return addFullscreenChangeListener(handleChange);
   }, []);
 
   useEffect(() => {
@@ -112,11 +112,15 @@ const PremiumReaderLayout = forwardRef<PremiumReaderLayoutHandle, PremiumReaderL
     // correct either way: on failure the CSS fallback (bookAreaRef's own
     // fixed-inset-0 positioning in landscape) already covers the same
     // "reader root fills the screen" goal, so there's nothing further to
-    // do or surface to the user.
-    if (!document.fullscreenElement) {
-      document.documentElement.requestFullscreen().catch(() => { /* denied — CSS fallback already covers this */ });
+    // do or surface to the user. Routed through lib/fullscreen's compat
+    // wrapper so this also works on browsers that only expose a vendor-
+    // prefixed requestFullscreen/exitFullscreen (older Samsung Internet /
+    // some Android WebViews) — see that file for the full prefix list
+    // and the (unfixable) iOS Safari limitation.
+    if (!getFullscreenElement()) {
+      requestFullscreenCompat(document.documentElement).catch(() => { /* denied — CSS fallback already covers this */ });
     } else {
-      document.exitFullscreen().catch(() => { /* already left fullscreen some other way */ });
+      exitFullscreenCompat().catch(() => { /* already left fullscreen some other way */ });
     }
   }
 
