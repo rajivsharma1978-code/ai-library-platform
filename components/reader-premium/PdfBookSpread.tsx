@@ -61,11 +61,28 @@ export type PdfBookSpreadProps = {
   isPanning?: boolean;
 };
 
-// ── Render size: conservative so canvas fits on typical laptops ─────
+// ── Render size ───────────────────────────────────────────────────────
 // Parent computes fit-zoom from the card container vs this; these are
 // the max rendered dimensions used when computing the CSS transform.
-const PAGE_MAX_W = 860;
-const PAGE_MAX_H = 700;
+//
+// True-zoom fix: zoom (up to 300% in landscape) is applied entirely via
+// a CSS `transform: scale()` on top of this fixed-resolution canvas (see
+// zoomTransform below) — there is no per-zoom re-render. Previously this
+// was 860×700, meaning anything past ~100% zoom visibly softened/blurred
+// (the same bitmap just gets stretched further). Raised here instead of
+// introducing a dynamic "re-render at the current zoom level" pipeline —
+// that would need debouncing, per-zoom cache buckets, and real race
+// handling for comparatively little extra sharpness, whereas a bigger
+// fixed target is simpler and gives headroom across the realistic zoom
+// range with one render. Bounded deliberately: the offscreen capture
+// below is already taken at 2× (OS=2) and, on iOS/WebKit mobile, capped
+// at MAX_OFFSCREEN_DIM_MOBILE_WEBKIT=2200px on its larger side (a real,
+// previously-tuned canvas-crash safety limit) — 1400/1100 stays well
+// under that cap with margin on every platform, so this does not touch
+// or risk that limit, and does not change the offscreen capture (OS)
+// itself at all.
+const PAGE_MAX_W = 1400;
+const PAGE_MAX_H = 1100;
 
 // ── Render timeout / retry safety net ────────────────────────────────
 // PDF.js can hang indefinitely (no error, no rejection) on a given
@@ -875,7 +892,20 @@ export default function PdfBookSpread({
 
         <div
           className="relative z-10 flex h-full w-full max-w-[1340px] items-center justify-center rounded-[2.5rem] border border-amber-200 bg-[#fffaf0] p-3 shadow-[0_25px_70px_rgba(75,45,12,0.28)]"
-          style={{ overflow: zoom > 100 ? "auto" : "hidden", perspective: 1800 }}
+          // True-zoom fix: always "hidden", not conditionally "auto" at
+          // zoom>100. Panning here is entirely `transform: translate()`
+          // driven by the parent's `pan` state (see zoomTransform below)
+          // — never native scrollLeft/scrollTop — so `overflow:auto` was
+          // never actually scrollable by any real user gesture; it just
+          // risked the well-known flex `align-items:center`/`overflow:auto`
+          // interaction where a browser can refuse to reveal overflow on
+          // one side of centered content. `hidden` is what makes this div
+          // behave as a genuine clipped viewport onto the larger,
+          // transformed page — content outside it is invisible until
+          // panned into view, exactly the "viewport into an enlarged
+          // page" the true-zoom fix requires; it does not prevent panning
+          // itself, which the JS pan handlers own completely.
+          style={{ overflow: "hidden", perspective: 1800 }}
         >
           {imageSelectMode && !textSelectMode && (
             <div className="absolute left-4 top-4 z-40 rounded-full bg-blue-600 px-4 py-1.5 text-xs font-bold text-white shadow ndl-fade-in-scale">

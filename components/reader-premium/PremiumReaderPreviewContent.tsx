@@ -789,10 +789,33 @@ export default function PremiumReaderPreviewContent() {
   // ever landing below landscape's new 100% floor — e.g. a user at 70%
   // in portrait who then rotates would otherwise render BELOW fit-width
   // and reintroduce the exact gutters this task removes.
+  //
+  // Orientation transaction fix: this used to only clamp zoom UP when
+  // ENTERING landscape — LEAVING landscape (rotating back to portrait)
+  // never re-clamped at all, so a zoom left at e.g. 250% (valid in
+  // landscape, up to ZOOM_MAX_LANDSCAPE=300) carried straight into
+  // portrait, silently exceeding portrait's own ZOOM_MAX=200. Now
+  // symmetric: clamps into whichever orientation's valid range applies,
+  // every time orientation changes, in both directions — "preserve zoom
+  // where possible, clamp to the new orientation's bounds" per spec. Pan
+  // resets to {0,0} in both directions rather than being re-clamped
+  // against carried-over metrics — those describe the OLD orientation's
+  // card size and would be wrong for the new one; the general pan-reclamp
+  // effect above re-applies correctly once PdfBookSpread reports fresh
+  // metrics for the new orientation moments later. Also clears any
+  // gesture in flight at the moment of rotation — a pinch/pan/long-press
+  // has no valid "old orientation" card to keep resolving against.
   useEffect(() => {
-    if (!isMobileLandscape) return;
     setPan({ x: 0, y: 0 });
-    setZoom((z) => (z < ZOOM_MIN_LANDSCAPE ? ZOOM_MIN_LANDSCAPE : z));
+    setZoom((z) => isMobileLandscape
+      ? Math.min(ZOOM_MAX_LANDSCAPE, Math.max(ZOOM_MIN_LANDSCAPE, z))
+      : Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, z)));
+    pinchRef.current = null;
+    touchPanRef.current = null;
+    gestureStartRef.current = null;
+    longPressFiredRef.current = false;
+    if (longPressTimerRef.current) { clearTimeout(longPressTimerRef.current); longPressTimerRef.current = null; }
+    activePointersRef.current.clear();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isMobileLandscape]);
 
@@ -1358,6 +1381,57 @@ export default function PremiumReaderPreviewContent() {
     return Math.min(0, Math.max(-maxScroll, y));
   }
 
+  // True-zoom fix: last known {cssW, cssH, cardW, cardH} from
+  // PdfBookSpread's onPageRendered — updated on EVERY render (unlike
+  // handlePageRendered's one-shot auto-fit below, which is gated by
+  // autoFitDone and only fires once per page), so general zoom>100%
+  // panning can be clamped to the page's REAL current bounds instead of
+  // drifting unclamped (the previous behavior — there was no bound at
+  // all here before) or clamping against stale/zero metrics left over
+  // from an earlier page or orientation.
+  const renderedContentMetricsRef = useRef<{ cssW: number; cssH: number; cardW: number; cardH: number } | null>(null);
+  function clampGeneralPan(x: number, y: number, zoomPct: number): { x: number; y: number } {
+    const m = renderedContentMetricsRef.current;
+    if (!m) return { x, y };
+    const scale = zoomPct / 100;
+    const contentW = m.cssW * scale, contentH = m.cssH * scale;
+    // Content is centered at pan {0,0} inside the card (transform-origin
+    // "center center"), so the pan range on each axis is symmetric: how
+    // far the enlarged content extends past the available box, split
+    // between both sides. Zero on an axis that doesn't overflow — never
+    // forced to zero on an axis that DOES, per the "clamp only to real
+    // bounds" requirement.
+    const maxPanX = Math.max(0, (contentW - m.cardW) / 2);
+    const maxPanY = Math.max(0, (contentH - m.cardH) / 2);
+    return {
+      x: Math.min(maxPanX, Math.max(-maxPanX, x)),
+      y: Math.min(maxPanY, Math.max(-maxPanY, y)),
+    };
+  }
+  // Whether a given axis actually has ANY pan range at the given zoom —
+  // used to let a gesture on a non-overflowing axis fall through to
+  // native scroll/do nothing instead of being captured into a pan that
+  // can't go anywhere (the "vertical gestures routed into transform pan
+  // even when no pan range exists" freeze).
+  function hasGeneralPanRange(axis: "x" | "y", zoomPct: number): boolean {
+    const m = renderedContentMetricsRef.current;
+    if (!m) return false;
+    const scale = zoomPct / 100;
+    return axis === "x" ? m.cssW * scale > m.cardW + 1 : m.cssH * scale > m.cardH + 1;
+  }
+  // True-zoom fix: one re-clamp point covering every way zoom can change
+  // (toolbar +/- buttons, wheel, voice commands, the one-shot auto-fit)
+  // plus viewport/orientation changes — rather than threading a re-clamp
+  // through every individual zoom call site. Idempotent and safe to run
+  // redundantly (e.g. during an active pinch, which already clamps
+  // per-tick itself): a pan already inside bounds comes back unchanged.
+  // Page/book changes already reset pan to {0,0} elsewhere (always a
+  // valid value), so this doesn't need to key on those too.
+  useEffect(() => {
+    setPan((p) => clampGeneralPan(p.x, p.y, zoom));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [zoom, viewportWidth, viewportHeight]);
+
   function pointerDistance(a: { x: number; y: number }, b: { x: number; y: number }): number {
     return Math.hypot(a.x - b.x, a.y - b.y);
   }
@@ -1443,14 +1517,24 @@ export default function PremiumReaderPreviewContent() {
     }
 
     if (zoom > 100) {
-      e.preventDefault();
+      // True-zoom fix: previously captured (preventDefault + touchPanRef)
+      // on the very first touch the instant zoom exceeded 100%, no matter
+      // which direction the finger actually moved. That's exactly what
+      // froze the document — a vertical drag with no vertical overflow to
+      // pan into at this zoom got swallowed into a pan that goes nowhere,
+      // instead of ever reaching native scroll. Now this defers to the
+      // matching direction-lock in handlePointerMove below, which only
+      // claims (preventDefault + touchPanRef) an axis that genuinely has
+      // somewhere to pan — an axis with no range is released instead, so
+      // a vertical attempt can still reach native scroll where
+      // useNativeScrollImmersive applies.
       gestureStartRef.current = null;
       if (longPressTimerRef.current) { clearTimeout(longPressTimerRef.current); longPressTimerRef.current = null; }
-      touchPanRef.current = { x: e.clientX, y: e.clientY, px: pan.x, py: pan.y };
+      startGesture(e.clientX, e.clientY, onControl, () => updateDebug({ gestureState: "longpress" }));
       updateDebug({
-        lastEventType: "pointerdown(pan)", gestureState: "pan",
+        lastEventType: "pointerdown(zoomed)", gestureState: "tap",
         startX: e.clientX, startY: e.clientY, curX: e.clientX, curY: e.clientY, distance: 0,
-        pointerDownCount: pointerDownCountRef.current, activePointerCount: 1, preventDefaultCalled: true,
+        pointerDownCount: pointerDownCountRef.current, activePointerCount: 1,
       });
       return;
     }
@@ -1490,10 +1574,14 @@ export default function PremiumReaderPreviewContent() {
       const midX = (pts[0].x + pts[1].x) / 2;
       const midY = (pts[0].y + pts[1].y) / 2;
       setZoom(nextZoom);
-      setPan({
-        x: midX - pinchRef.current.cardCenterX - pinchRef.current.contentX * scale,
-        y: midY - pinchRef.current.cardCenterY - pinchRef.current.contentY * scale,
-      });
+      // True-zoom fix: clamp to the page's real bounds at the new zoom —
+      // previously unclamped, so a fast/large pinch could fling the
+      // content's pinch-anchored position arbitrarily far off-screen.
+      setPan(clampGeneralPan(
+        midX - pinchRef.current.cardCenterX - pinchRef.current.contentX * scale,
+        midY - pinchRef.current.cardCenterY - pinchRef.current.contentY * scale,
+        nextZoom
+      ));
       updateDebug({
         lastEventType: "pointermove(pinch)", gestureState: "pinch", activePointerCount: 2,
         zoom: nextZoom, curX: midX, curY: midY, distance: dist, preventDefaultCalled: true,
@@ -1547,15 +1635,56 @@ export default function PremiumReaderPreviewContent() {
         touchPanRef.current = { x: e.clientX, y: e.clientY, px: pan.x, py: clampLandscapePanY(pan.y), lockX: true };
         updateDebug({ lastEventType: "pointermove(vscroll-start)", gestureState: "pan" });
       }
+    } else if (zoom > 100 && gestureStartRef.current && !touchPanRef.current) {
+      // True-zoom fix: general zoom>100% direction lock (any orientation,
+      // not just landscape fit-width above — that branch and this one are
+      // mutually exclusive via if/else, since isMobileLandscape&&zoom<=105
+      // already owns the 100–105% landscape sliver). Unlike the fit-width
+      // case, real zoomed panning is free 2D drag, never axis-locked — so
+      // once the DOMINANT direction crosses the same 14px/1.3 threshold,
+      // this only asks "does that axis actually have anywhere to pan
+      // right now" (using the latest real rendered-content metrics, never
+      // a stale/zero assumption). If yes, claim the gesture exactly like
+      // before (preventDefault + touchPanRef, free on both axes — the
+      // other axis simply clamps to 0 in the tail below if it has no
+      // range of its own). If no, release gestureStartRef WITHOUT
+      // capturing or preventing default — the gesture goes nowhere on our
+      // side, so it's left free to reach native scroll where
+      // useNativeScrollImmersive applies, instead of freezing on a pan
+      // that could never move.
+      const gstart = gestureStartRef.current;
+      const gdx = Math.abs(e.clientX - gstart.x);
+      const gdy = Math.abs(e.clientY - gstart.y);
+      if (gdx > 14 || gdy > 14) {
+        const mostlyVertical = gdy > gdx * 1.3;
+        const mostlyHorizontal = gdx > gdy * 1.3;
+        const dominantHasRange = mostlyVertical ? hasGeneralPanRange("y", zoom)
+          : mostlyHorizontal ? hasGeneralPanRange("x", zoom)
+          : (hasGeneralPanRange("x", zoom) || hasGeneralPanRange("y", zoom));
+        if (dominantHasRange) {
+          if (longPressTimerRef.current) { clearTimeout(longPressTimerRef.current); longPressTimerRef.current = null; }
+          gestureStartRef.current = null;
+          touchPanRef.current = { x: e.clientX, y: e.clientY, px: pan.x, py: pan.y };
+          e.preventDefault();
+          updateDebug({ lastEventType: "pointermove(zoom-pan-start)", gestureState: "pan", preventDefaultCalled: true });
+        } else {
+          gestureStartRef.current = null;
+        }
+      }
     }
 
     if (touchPanRef.current) {
       e.preventDefault();
       const start = touchPanRef.current;
-      const nextX = start.lockX ? start.px : start.px + (e.clientX - start.x);
-      let nextY = start.py + (e.clientY - start.y);
-      if (start.lockX) nextY = clampLandscapePanY(nextY);
-      setPan({ x: nextX, y: nextY });
+      if (start.lockX) {
+        const nextY = clampLandscapePanY(start.py + (e.clientY - start.y));
+        setPan({ x: start.px, y: nextY });
+      } else {
+        // True-zoom fix: clamp to the page's real bounds at the current
+        // zoom — previously unclamped, so a fast drag could pan the
+        // content arbitrarily far past its actual edges.
+        setPan(clampGeneralPan(start.px + (e.clientX - start.x), start.py + (e.clientY - start.y), zoom));
+      }
       updateDebug({
         lastEventType: "pointermove(pan)", gestureState: "pan",
         curX: e.clientX, curY: e.clientY,
@@ -1588,10 +1717,24 @@ export default function PremiumReaderPreviewContent() {
     if (pinchRef.current) {
       if (activePointersRef.current.size < 2) {
         pinchRef.current = null;
+        // True-zoom fix: snap to exactly 100% when the pinch settles very
+        // close to it — Math.round(startZoom*ratio) during a live pinch
+        // can land a hair off (e.g. 99 or 101) even when the user's clear
+        // intent was "back to fit-width," and that alone was enough to
+        // leave touch-action effectively stuck past the 100% boundary
+        // (zoom>100 gets full JS pan capture; exactly 100 restores native
+        // scroll where useNativeScrollImmersive applies) — this is the
+        // "touch freeze after zoom" bug for the single most common case,
+        // pinching back out. Also re-clamps pan to the (possibly snapped)
+        // final zoom's real bounds — the pinch's own live pan is already
+        // clamped per-tick, but this covers the settled value.
+        const finalZoom = Math.abs(zoom - 100) <= 3 ? 100 : zoom;
+        if (finalZoom !== zoom) setZoom(finalZoom);
+        setPan((p) => clampGeneralPan(p.x, p.y, finalZoom));
         // One finger lifted mid-pinch: hand off to one-finger panning (if
         // still zoomed) instead of just going dead until the next
         // pointerdown — "after pinch, one-finger drag pans."
-        if (activePointersRef.current.size === 1 && zoom > 100) {
+        if (activePointersRef.current.size === 1 && finalZoom > 100) {
           const remaining = Array.from(activePointersRef.current.values())[0];
           touchPanRef.current = { x: remaining.x, y: remaining.y, px: pan.x, py: pan.y };
           updateDebug({ lastEventType: "pointerup(pinch->pan)", gestureState: "pan", activePointerCount: 1 });
@@ -2175,6 +2318,19 @@ export default function PremiumReaderPreviewContent() {
     // menu, per spec — it doesn't make sense to leave a page-scoped menu
     // open across content changing underneath it.
     setReadMenuOpen(false);
+    // Gesture state cleanup: a pinch/pan/long-press in flight has no
+    // valid target once the underlying page has changed out from under
+    // it — a stale pinchRef or touchPanRef surviving into the new page
+    // would keep computing pan/zoom against the OLD page's geometry.
+    // zoom itself is deliberately left untouched — staying zoomed in
+    // across a page turn is expected, existing behavior; only the
+    // transient gesture bookkeeping resets here.
+    pinchRef.current = null;
+    touchPanRef.current = null;
+    gestureStartRef.current = null;
+    longPressFiredRef.current = false;
+    if (longPressTimerRef.current) { clearTimeout(longPressTimerRef.current); longPressTimerRef.current = null; }
+    activePointersRef.current.clear();
   }, [readerPage, bookId]); // eslint-disable-line
 
   // Unified reading engine — interrupt on a MANUAL page change. The
@@ -2222,8 +2378,20 @@ export default function PremiumReaderPreviewContent() {
   // portrait-anchored (or landscape-anchored) dropdown makes no sense
   // once the header it was anchored to has been replaced by the other
   // orientation's completely different header layout.
+  //
+  // Orientation transaction fix: extended to the More sheet, Contents,
+  // and the page-strip sheet too — mobileMoreOpen in particular renders a
+  // genuinely different layout branch per orientation (dark centered
+  // glass modal in landscape vs. white bottom sheet in portrait, same as
+  // the Read menu was), so leaving it open across a rotation is the same
+  // "stale hidden pointer-events state / duplicate controls" class of bug
+  // this task calls out. Closing on rotation, not just here — spec's own
+  // "mobile chrome visibility must remain coherent" requirement.
   useEffect(() => {
     setReadMenuOpen(false);
+    setMobileMoreOpen(false);
+    setContentsOpen(false);
+    setPageStripOpen(false);
   }, [isMobileLandscape]);
 
   // P0 regression fix: Escape closes the Read menu where supported
@@ -2378,6 +2546,14 @@ export default function PremiumReaderPreviewContent() {
 
   // ── Auto-fit ────────────────────────────────────────────────────────
   const handlePageRendered = useCallback((cssW: number, cssH: number, cardW: number, cardH: number) => {
+    // True-zoom fix: track the latest real metrics on every render call —
+    // deliberately BEFORE the autoFitDone early-return below, since that
+    // guard only allows the one-shot auto-fit zoom to run once per page,
+    // but pan clamping needs the current card size on every render
+    // (resize, orientation change, zoom change all re-render the card).
+    if (cssW > 0 && cssH > 0 && cardW > 0 && cardH > 0) {
+      renderedContentMetricsRef.current = { cssW, cssH, cardW, cardH };
+    }
     if (autoFitDone.current) return;
     autoFitDone.current = true;
     if (cssW <= 0 || cssH <= 0 || cardW <= 0 || cardH <= 0) return;
@@ -4319,10 +4495,14 @@ export default function PremiumReaderPreviewContent() {
   useEffect(() => {
     if (!isPanning) return;
     function onWindowMouseMove(e: MouseEvent) {
-      setPan({
-        x: panStart.current.px + (e.clientX - panStart.current.mx),
-        y: panStart.current.py + (e.clientY - panStart.current.my),
-      });
+      // True-zoom fix: same real-bounds clamp as the touch pan path —
+      // previously unclamped here too, so a fast mouse drag could pan
+      // the content arbitrarily far past its actual edges on desktop.
+      setPan(clampGeneralPan(
+        panStart.current.px + (e.clientX - panStart.current.mx),
+        panStart.current.py + (e.clientY - panStart.current.my),
+        zoom
+      ));
     }
     function onWindowMouseUp() { setIsPanning(false); }
     window.addEventListener("mousemove", onWindowMouseMove);
@@ -4761,15 +4941,21 @@ export default function PremiumReaderPreviewContent() {
             // touch-capable laptop/tablet in the desktop layout isn't
             // stripped of native scroll/pinch it might still want.
             //
-            // iOS Safari chrome-collapse fix: at 100% zoom in
-            // useNativeScrollImmersive mode, "pan-y" tells the browser a
-            // vertical swipe is allowed to become a real native scroll —
-            // horizontal is still fully owned by the pointer handlers
-            // below (direction-locked before any preventDefault fires).
-            // Once zoomed past 100%, panning needs full JS control again
-            // on both axes, same as every other mode, so this reverts to
-            // "none" there.
-            touchAction: useNativeScrollImmersive && zoom <= 100 ? "pan-y" : isMobileViewport ? "none" : "auto",
+            // iOS Safari chrome-collapse fix + true-zoom fix: "pan-y" tells
+            // the browser a vertical swipe MAY become a real native
+            // scroll — it does not force it. The pointer handlers below
+            // still get first refusal via preventDefault the moment they
+            // decide to claim a gesture (page-turn swipe, or a zoomed pan
+            // on an axis that actually has range), at any zoom level, so
+            // this does not fight JS panning. What it fixes: previously
+            // this dropped to "none" the instant zoom exceeded 100%,
+            // which — combined with handlePointerDown's old unconditional
+            // preventDefault there — meant a vertical drag with NO
+            // vertical pan range at the current zoom had nowhere to go at
+            // all (not JS pan, not native scroll): the touch-freeze bug.
+            // Kept scoped to useNativeScrollImmersive only — Android and
+            // every other mode keep exactly "none"/"auto" as before.
+            touchAction: useNativeScrollImmersive ? "pan-y" : isMobileViewport ? "none" : "auto",
             overscrollBehavior: "contain",
             // Suppresses iOS Safari's long-press text/image callout only
             // on this element — never globally — so it doesn't fight the
