@@ -160,3 +160,19 @@ export function getMobileBrowser(): MobileBrowserLabel {
 export function isFullscreenIncapableIOS(): boolean {
   return getMobileBrowser() === "ios-safari" && !isFullscreenApiSupported();
 }
+
+/** True when the page is running as a launched-from-Home-Screen /
+ * installed PWA (iOS's legacy `navigator.standalone` plus the standard
+ * `display-mode: standalone` media query, which covers Android/desktop
+ * installed PWAs too). In this mode the OS has already stripped all
+ * browser chrome unconditionally — there is no address bar for a scroll
+ * gesture to collapse, and the reader should keep its existing
+ * fixed-inset immersive shell rather than opt into native-scroll mode
+ * (which exists specifically to let a REAL Safari tab's chrome collapse
+ * on scroll — nothing to collapse here). */
+export function isStandaloneDisplayMode(): boolean {
+  if (typeof window === "undefined") return false;
+  const nav = navigator as Navigator & { standalone?: boolean };
+  const mq = typeof window.matchMedia === "function" && window.matchMedia("(display-mode: standalone)").matches;
+  return !!mq || nav.standalone === true;
+}

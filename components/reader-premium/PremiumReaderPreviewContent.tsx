@@ -40,7 +40,7 @@ import { UI_TEXT, type Language } from "@/lib/i18n";
 import { useLanguage } from "@/lib/useLanguage";
 import {
   getFullscreenElement, isFullscreenApiSupported, requestFullscreenCompat, exitFullscreenCompat,
-  addFullscreenChangeListener, addFullscreenErrorListener,
+  addFullscreenChangeListener, addFullscreenErrorListener, getMobileBrowser, isStandaloneDisplayMode,
 } from "@/lib/fullscreen";
 
 const PdfBookSpread = dynamic(
@@ -687,6 +687,14 @@ export default function PremiumReaderPreviewContent() {
   // already had) until the client-only check below runs, so nothing
   // flashes hidden-then-shown on a supported browser.
   const [fullscreenSupported, setFullscreenSupported] = useState(true);
+  // iOS Safari chrome-collapse fix: which mobile browser this is (best-
+  // effort UA label, see lib/fullscreen.ts) and whether the page is
+  // running standalone (launched from Home Screen). Both are read once
+  // on mount — used ONLY to pick the landscape immersive strategy below
+  // (native-scroll vs the existing fixed-inset shell), never to gate
+  // core gesture/zoom/page logic.
+  const [mobileBrowser, setMobileBrowser] = useState<ReturnType<typeof getMobileBrowser>>("other");
+  const [isStandaloneMode, setIsStandaloneMode] = useState(false);
   // Tracks viewport width for responsive behavior only (never touches
   // reader/PDF logic) — tablet gets a narrower/compact AI panel by
   // default, mobile additionally renders it as a full-height overlay
@@ -708,6 +716,8 @@ export default function PremiumReaderPreviewContent() {
     function onFsChange() { setIsFullscreenLayout(!!getFullscreenElement()); }
     const removeFsListener = addFullscreenChangeListener(onFsChange);
     setFullscreenSupported(isFullscreenApiSupported());
+    setMobileBrowser(getMobileBrowser());
+    setIsStandaloneMode(isStandaloneDisplayMode());
     setViewportWidth(window.innerWidth);
     setViewportHeight(window.innerHeight);
     function onResize() { setViewportWidth(window.innerWidth); setViewportHeight(window.innerHeight); }
@@ -754,6 +764,18 @@ export default function PremiumReaderPreviewContent() {
   // check on top of isMobileViewport identifies "phone, rotated
   // sideways" without touching the short-edge classification above.
   const isMobileLandscape = isMobileViewport && viewportWidth > viewportHeight;
+  // iOS Safari chrome-collapse fix: the ONE case where a real Safari tab
+  // has actual browser chrome (URL bar/tabs) that a genuine scroll
+  // gesture can collapse — an iPhone/iPad running Safari in a normal
+  // tab, not launched standalone from the Home Screen, and not already
+  // holding true Fullscreen API state (which removes all chrome itself
+  // and has no scroll-driven collapse to preserve). Standalone and true-
+  // fullscreen already have no address bar to collapse either way, and
+  // Android's own chrome-hide behavior is unrelated to document scroll —
+  // both keep the existing fixed-inset immersive shell completely
+  // unchanged (see bookAreaRef's style and the scroll-lock effect below).
+  const isIosSafariFamily = mobileBrowser === "ios-safari" || mobileBrowser === "ipad-safari";
+  const useNativeScrollImmersive = isMobileLandscape && isIosSafariFamily && !isStandaloneMode && !isFullscreenLayout;
   // Landscape fit-width follow-up: which zoom range is actually in
   // effect right now — read at every call site that clamps/steps zoom
   // (the pinch handler, the landscape More panel's +/− buttons) instead
@@ -867,19 +889,25 @@ export default function PremiumReaderPreviewContent() {
   // reader is in an immersive state — true Fullscreen API active
   // (isFullscreenLayout) OR the CSS-fallback immersive landscape mode
   // used when true fullscreen isn't granted/available (isMobileLandscape,
-  // e.g. iPhone Safari, or before the user's first tap grants it on
-  // Android). Without this, the underlying document can still rubber-
-  // band/scroll on a stray gesture, which is what lets Android/Samsung
-  // Internet's URL bar reappear even while the reader itself looks full-
-  // screen — this closes that gap. Every inline style touched is saved
-  // and restored to its EXACT prior value on cleanup (covers both
-  // "user exits fullscreen" and "component unmounts mid-immersive"), so
-  // navigating away or leaving landscape always hands the page back
-  // exactly as it was. Desktop is unaffected outside true fullscreen
-  // (isMobileLandscape is always false there), and true fullscreen on
-  // desktop already has no scrollable body to lock in the first place.
+  // e.g. before the user's first tap grants it on Android). Without
+  // this, the underlying document can still rubber-band/scroll on a
+  // stray gesture, which is what lets Android/Samsung Internet's URL bar
+  // reappear even while the reader itself looks full-screen — this
+  // closes that gap. Every inline style touched is saved and restored to
+  // its EXACT prior value on cleanup (covers both "user exits fullscreen"
+  // and "component unmounts mid-immersive"), so navigating away or
+  // leaving landscape always hands the page back exactly as it was.
+  // Desktop is unaffected outside true fullscreen (isMobileLandscape is
+  // always false there), and true fullscreen on desktop already has no
+  // scrollable body to lock in the first place.
+  //
+  // iOS Safari chrome-collapse fix: explicitly EXCLUDES
+  // useNativeScrollImmersive — that mode's entire point is to let a real
+  // vertical scroll reach Safari so it can collapse its own chrome;
+  // locking body/html here would silently defeat it. Android/standalone/
+  // true-fullscreen are untouched — they still lock exactly as before.
   useEffect(() => {
-    const immersive = isFullscreenLayout || isMobileLandscape;
+    const immersive = (isFullscreenLayout || isMobileLandscape) && !useNativeScrollImmersive;
     if (!immersive) return;
     const { body } = document;
     const html = document.documentElement;
@@ -896,7 +924,18 @@ export default function PremiumReaderPreviewContent() {
       body.style.overscrollBehavior = prev.bodyOverscroll;
       html.style.overscrollBehavior = prev.htmlOverscroll;
     };
-  }, [isFullscreenLayout, isMobileLandscape]);
+  }, [isFullscreenLayout, isMobileLandscape, useNativeScrollImmersive]);
+
+  // iOS Safari chrome-collapse fix: mirrors useNativeScrollImmersive onto
+  // <html> so app/globals.css can relax the reader shell's height/
+  // overflow (see html[data-ndl-native-scroll] there) without threading
+  // this flag through PremiumReaderLayout's props — same established
+  // pattern as data-ndl-immersive-hidden above.
+  useEffect(() => {
+    if (useNativeScrollImmersive) document.documentElement.setAttribute("data-ndl-native-scroll", "true");
+    else document.documentElement.removeAttribute("data-ndl-native-scroll");
+    return () => { document.documentElement.removeAttribute("data-ndl-native-scroll"); };
+  }, [useNativeScrollImmersive]);
 
   // Landscape accessibility fix: the Accessibility glass panel is
   // portaled outside this component's own subtree (see
@@ -1416,7 +1455,18 @@ export default function PremiumReaderPreviewContent() {
       return;
     }
 
-    e.preventDefault();
+    // iOS Safari chrome-collapse fix: in useNativeScrollImmersive mode,
+    // direction is not known yet at pointerdown — calling preventDefault
+    // here unconditionally is exactly what stops the browser from ever
+    // treating a subsequent vertical drag as a native scroll (once
+    // preventDefault is called on an early event in the sequence, no
+    // amount of touch-action:pan-y afterward brings native scrolling
+    // back for that gesture). handlePointerMove below direction-locks
+    // and calls preventDefault itself, but only once a horizontal
+    // page-turn swipe is confirmed — a vertical one is handed to the
+    // browser untouched. Every other mode keeps the original always-
+    // preventDefault behavior unchanged.
+    if (!useNativeScrollImmersive) e.preventDefault();
     startGesture(e.clientX, e.clientY, onControl, () => updateDebug({ gestureState: "longpress" }));
     updateDebug({
       lastEventType: "pointerdown", gestureState: "tap",
@@ -1468,7 +1518,30 @@ export default function PremiumReaderPreviewContent() {
       const gstart = gestureStartRef.current;
       const gdx = Math.abs(e.clientX - gstart.x);
       const gdy = Math.abs(e.clientY - gstart.y);
-      if (gdy > 14 && gdy > gdx * 1.3) {
+      // iOS Safari chrome-collapse fix: same 14px/1.3-ratio direction
+      // lock as the non-native branch below, but the outcome differs on
+      // the vertical axis — a vertical-dominant gesture is handed to the
+      // BROWSER'S OWN native scroll (nothing was preventDefault-ed at
+      // pointerdown in this mode, see handlePointerDown) instead of the
+      // internal touchPanRef PDF-pan fallback, which is what actually
+      // lets Safari collapse its chrome on an ordinary upward swipe. A
+      // horizontal-dominant gesture claims the touch now via
+      // preventDefault (its first real chance to, since pointerdown
+      // skipped it) so it becomes a page-turn swipe, exactly like every
+      // other mode's swipe is claimed at pointerdown instead. Falls
+      // through to the shared tail logic below either way (matching the
+      // non-native branch's own fall-through), which is a no-op once
+      // gestureStartRef is nulled and otherwise just keeps long-press
+      // cancellation/debug state correct while the direction is still
+      // ambiguous.
+      if (useNativeScrollImmersive) {
+        if (gdy > 14 && gdy > gdx * 1.3) {
+          if (longPressTimerRef.current) { clearTimeout(longPressTimerRef.current); longPressTimerRef.current = null; }
+          gestureStartRef.current = null; // hand off to native scroll — no preventDefault, no PDF pan
+        } else if (gdx > 14 && gdx > gdy * 1.3) {
+          e.preventDefault();
+        }
+      } else if (gdy > 14 && gdy > gdx * 1.3) {
         if (longPressTimerRef.current) { clearTimeout(longPressTimerRef.current); longPressTimerRef.current = null; }
         gestureStartRef.current = null;
         touchPanRef.current = { x: e.clientX, y: e.clientY, px: pan.x, py: clampLandscapePanY(pan.y), lockX: true };
@@ -4658,7 +4731,22 @@ export default function PremiumReaderPreviewContent() {
             // gesture handlers, same element, only its OWN CSS position
             // changes, so swipe/pinch/long-press (attached to this exact
             // node) are completely unaffected.
-            ...(isMobileLandscape
+            // iOS Safari chrome-collapse fix: useNativeScrollImmersive
+            // deliberately does NOT use position:fixed here — a fixed
+            // element is removed from normal document flow, which is
+            // exactly what stops a real Safari tab's own scroll-driven
+            // chrome-collapse from ever engaging (there is nothing left
+            // for the document to scroll). min-height:100dvh keeps the
+            // same "fill the screen" visual result via ordinary in-flow
+            // sizing instead — ties into the surrounding shell's own
+            // overflow:hidden being relaxed too (see PremiumReaderLayout's
+            // ndl-reader-shell/ndl-reader-section classes + app/globals.css's
+            // html[data-ndl-native-scroll] rules). Android/standalone/
+            // true-fullscreen keep the original fixed-inset shell exactly
+            // as before — nothing here changes for them.
+            ...(useNativeScrollImmersive
+              ? { minHeight: "100dvh", width: "100%" }
+              : isMobileLandscape
               ? { position: "fixed" as const, inset: 0, width: "100vw", height: "100dvh", zIndex: 40 }
               : { height: "100%" }),
             display: "flex", flexDirection: "column",
@@ -4672,7 +4760,16 @@ export default function PremiumReaderPreviewContent() {
             // desktop/tablet keep the browser's default touch-action so a
             // touch-capable laptop/tablet in the desktop layout isn't
             // stripped of native scroll/pinch it might still want.
-            touchAction: isMobileViewport ? "none" : "auto",
+            //
+            // iOS Safari chrome-collapse fix: at 100% zoom in
+            // useNativeScrollImmersive mode, "pan-y" tells the browser a
+            // vertical swipe is allowed to become a real native scroll —
+            // horizontal is still fully owned by the pointer handlers
+            // below (direction-locked before any preventDefault fires).
+            // Once zoomed past 100%, panning needs full JS control again
+            // on both axes, same as every other mode, so this reverts to
+            // "none" there.
+            touchAction: useNativeScrollImmersive && zoom <= 100 ? "pan-y" : isMobileViewport ? "none" : "auto",
             overscrollBehavior: "contain",
             // Suppresses iOS Safari's long-press text/image callout only
             // on this element — never globally — so it doesn't fight the

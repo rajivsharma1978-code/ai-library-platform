@@ -134,12 +134,17 @@ const PremiumReaderLayout = forwardRef<PremiumReaderLayoutHandle, PremiumReaderL
       // address bar doesn't leave chrome stranded above or below the
       // real visible viewport. Desktop/tablet keep h-screen (100vh)
       // completely unchanged — hideNav is false there, always.
-      className={`${hideNav ? "h-dvh" : "h-screen"} w-full overflow-hidden bg-[radial-gradient(circle_at_top,#fff8e8_0%,#f3e6c8_45%,#eaddc0_100%)] text-slate-950`}
+      // ndl-reader-shell: a pure CSS hook, no behavior of its own — lets
+      // app/globals.css's html[data-ndl-native-scroll] rule (iOS Safari
+      // chrome-collapse fix) relax this shell's height/overflow for a
+      // real Safari tab in landscape, without threading that flag through
+      // this component's props. Every other environment ignores it.
+      className={`ndl-reader-shell ${hideNav ? "h-dvh" : "h-screen"} w-full overflow-hidden bg-[radial-gradient(circle_at_top,#fff8e8_0%,#f3e6c8_45%,#eaddc0_100%)] text-slate-950`}
     >
       <div className="flex h-full">
         {!hideNav && <ReaderNav forceCollapsed={isFullscreen} />}
 
-        <section className="relative h-full min-w-0 flex-1 overflow-hidden">
+        <section className="ndl-reader-section relative h-full min-w-0 flex-1 overflow-hidden">
           {center}
         </section>
 

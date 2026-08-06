@@ -299,6 +299,29 @@ html[data-ndl-immersive-hidden="true"] [data-dock-handle] {
   transition: opacity 0.2s ease;
 }
 
+/* iOS Safari chrome-collapse fix: PremiumReaderPreviewContent sets this
+   attribute on <html> only for a real Safari tab (not standalone, not
+   true Fullscreen API) in landscape — see useNativeScrollImmersive
+   there. The Premium Reader shell is normally overflow:hidden with a
+   fixed height (h-dvh/h-screen) so nothing outside its own PDF-pan
+   transform ever scrolls; that is exactly what stops Safari's native
+   scroll-driven chrome collapse from ever engaging, because there is no
+   real document overflow for it to consume. Relaxing height/overflow
+   here — scoped to this one attribute — restores genuine document flow
+   so an ordinary upward swipe reaches Safari itself. Every other
+   environment (standalone, true fullscreen, Android) never sets this
+   attribute and keeps the original fixed-inset shell untouched. */
+html[data-ndl-native-scroll="true"] body {
+  overflow: visible;
+  overscroll-behavior: auto;
+}
+html[data-ndl-native-scroll="true"] .ndl-reader-shell,
+html[data-ndl-native-scroll="true"] .ndl-reader-section {
+  height: auto;
+  min-height: 100dvh;
+  overflow: visible;
+}
+
 /* ── Paper Mode (Phase B3) ────────────────────────────────────────────
    A warm, low-glare page tint — distinct from Dark Mode/Sepia, styled
    after e-reader "paper white" themes. CSS-only, same pattern as Reading
